@@ -1,4 +1,3 @@
-
 # Get Started
 
 There are two ways of using this reverse proxy: _as a library or as a CLI._

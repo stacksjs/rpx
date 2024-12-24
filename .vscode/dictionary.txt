@@ -2,6 +2,7 @@ antfu
 biomejs
 booleanish
 bumpp
+bunfig
 bunx
 changelogen
 changelogithub

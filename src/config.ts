@@ -1,7 +1,7 @@
 import type { ReverseProxyConfig } from './types'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { loadConfig } from 'bun-config'
+import { loadConfig } from 'bunfig'
 
 export const defaultConfig: ReverseProxyConfig = {
   from: 'localhost:5173',
