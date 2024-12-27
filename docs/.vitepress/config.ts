@@ -81,7 +81,7 @@ export default withPwa(
       ['meta', { name: 'author', content: 'Stacks.js, Inc.' }],
       ['meta', {
         name: 'tags',
-        content: 'rpx, stacksjs, reverse proxy, lightweight, zero-config',
+        content: 'rpx, stacksjs, reverse proxy, modern, lightweight, zero-config, local development',
       }],
 
       ['meta', { property: 'og:type', content: 'website' }],
