@@ -20,6 +20,7 @@ findstr
 heroicons
 HSTS
 iconify
+localtunnels
 lockb
 mkcert
 nosniff
@@ -34,8 +35,10 @@ prefetch
 preinstall
 proxied
 shikijs
+shoutout
 socio
 Solana
+sponsorware
 stacksjs
 tlsx
 twoslash
