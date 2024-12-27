@@ -19,6 +19,7 @@ const analyticsHead: HeadConfig[] = [
 ]
 
 const nav = [
+  { text: 'News', link: 'https://stacksjs.org/news' },
   {
     text: 'Changelog',
     link: 'https://github.com/stacksjs/rpx/blob/main/CHANGELOG.md',
@@ -31,6 +32,7 @@ const nav = [
       { text: 'Sponsors', link: '/sponsors' },
       { text: 'Partners', link: '/partners' },
       { text: 'Postcardware', link: '/postcardware' },
+      { text: 'License', link: '/license' },
       {
         items: [
           {
@@ -51,13 +53,16 @@ const sidebar = [
   {
     text: 'Get Started',
     items: [
-      { text: 'Introduction', link: '/intro' },
+      { text: 'Intro', link: '/intro' },
       { text: 'Installation', link: '/install' },
       { text: 'Usage', link: '/usage' },
-      { text: 'Configuration', link: '/config' },
+      { text: 'Config', link: '/config' },
     ],
   },
+  { text: 'Showcase', link: '/Showcase' },
 ]
+const description = 'A modern, fast reverse proxy. For a better local development environment.'
+const title = 'ts-collect | A modern, fast reverse proxy. For a better local development environment.'
 
 export default withPwa(
   defineConfig({
@@ -71,9 +76,17 @@ export default withPwa(
       ['link', { rel: 'icon', type: 'image/svg+xml', href: './images/logo-mini.svg' }],
       ['link', { rel: 'icon', type: 'image/png', href: './images/logo.png' }],
       ['meta', { name: 'theme-color', content: '#0A0ABC' }],
+      ['meta', { name: 'title', content: title }],
+      ['meta', { name: 'description', content: description }],
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:locale', content: 'en' }],
-      ['meta', { property: 'og:title', content: 'rpx | A better developer environment.' }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', {
+        name: 'tags',
+        content: 'rpx, stacksjs, reverse proxy, lightweight, zero-config',
+      }],
+
       ['meta', { property: 'og:site_name', content: 'rpx' }],
       ['meta', { property: 'og:image', content: './images/og-image.jpg' }],
       ['meta', { property: 'og:url', content: 'https://reverse-proxy.sh/' }],
@@ -82,7 +95,10 @@ export default withPwa(
     ],
 
     themeConfig: {
-      logo: './images/logo-transparent.svg',
+      logo: {
+        light: './images/logo-transparent.svg',
+        dark: './images/logo-white-transparent.svg',
+      },
 
       nav,
       sidebar,
