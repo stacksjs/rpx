@@ -78,14 +78,16 @@ export default withPwa(
       ['meta', { name: 'theme-color', content: '#0A0ABC' }],
       ['meta', { name: 'title', content: title }],
       ['meta', { name: 'description', content: description }],
-      ['meta', { property: 'og:type', content: 'website' }],
-      ['meta', { property: 'og:locale', content: 'en' }],
-      ['meta', { property: 'og:title', content: title }],
-      ['meta', { property: 'og:description', content: description }],
+      ['meta', { name: 'author', content: 'Stacks.js, Inc.' }],
       ['meta', {
         name: 'tags',
         content: 'rpx, stacksjs, reverse proxy, lightweight, zero-config',
       }],
+
+      ['meta', { property: 'og:type', content: 'website' }],
+      ['meta', { property: 'og:locale', content: 'en' }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
 
       ['meta', { property: 'og:site_name', content: 'rpx' }],
       ['meta', { property: 'og:image', content: './images/og-image.jpg' }],
