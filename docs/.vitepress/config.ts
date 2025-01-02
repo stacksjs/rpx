@@ -68,9 +68,10 @@ export default withPwa(
   defineConfig({
     lang: 'en-US',
     title: 'rpx',
-    description: 'A modern, fast reverse proxy. For a better local development environment.',
+    description,
     metaChunk: true,
     cleanUrls: true,
+    lastUpdated: true,
 
     head: [
       ['link', { rel: 'icon', type: 'image/svg+xml', href: './images/logo-mini.svg' }],
@@ -97,6 +98,9 @@ export default withPwa(
     ],
 
     themeConfig: {
+      search: {
+        provider: 'local'
+      },
       logo: {
         light: './images/logo-transparent.svg',
         dark: './images/logo-white-transparent.svg',
@@ -112,7 +116,7 @@ export default withPwa(
 
       footer: {
         message: 'Released under the MIT License.',
-        copyright: 'Copyright © 2024-present Stacks.js, Inc.',
+        copyright: 'Copyright © 2025-present Stacks.js, Inc.',
       },
 
       socialLinks: [
