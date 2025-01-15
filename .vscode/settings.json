@@ -30,11 +30,6 @@
     "xml",
     "css"
   ],
-  "eslint.options": {
-    "flags": [
-      "unstable_ts_config"
-    ]
-  },
   "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
   "[shellscript]": {
     "editor.defaultFormatter": "foxundermoon.shell-format"

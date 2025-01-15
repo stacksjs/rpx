@@ -99,7 +99,7 @@ export default withPwa(
 
     themeConfig: {
       search: {
-        provider: 'local'
+        provider: 'local',
       },
       logo: {
         light: './images/logo-transparent.svg',
