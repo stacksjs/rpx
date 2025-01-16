@@ -1,9 +1,9 @@
-import type { ReverseProxyConfig } from './types'
+import type { ProxyConfig } from './types'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { loadConfig } from 'bunfig'
 
-export const defaultConfig: ReverseProxyConfig = {
+export const defaultConfig: ProxyConfig = {
   from: 'localhost:5173',
   to: 'stacks.localhost',
   cleanUrls: false,
@@ -21,8 +21,10 @@ export const defaultConfig: ReverseProxyConfig = {
   verbose: true,
 }
 
+// @ts-expect-error dtsx issue
 // eslint-disable-next-line antfu/no-top-level-await
-export const config: ReverseProxyConfig = await loadConfig({
-  name: 'reverse-proxy',
+export const config: ProxyConfig = await loadConfig({
+  name: 'rpx',
+  cwd: resolve(__dirname, '..'),
   defaultConfig,
 })

@@ -1,4 +1,4 @@
-import type { MultiReverseProxyConfig, ReverseProxyConfigs, ReverseProxyOption, ReverseProxyOptions, SingleReverseProxyConfig } from './types'
+import type { MultiProxyConfig, ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig } from './types'
 import * as fs from 'node:fs/promises'
 
 export function debugLog(category: string, message: string, verbose?: boolean): void {
@@ -11,7 +11,7 @@ export function debugLog(category: string, message: string, verbose?: boolean): 
 /**
  * Extracts hostnames from proxy configuration
  */
-export function extractHostname(options: ReverseProxyOption | ReverseProxyOptions): string[] {
+export function extractHostname(options: ProxyOption | ProxyOptions): string[] {
   if (isMultiProxyOptions(options)) {
     return options.proxies.map((proxy) => {
       const domain = proxy.to || 'stacks.localhost'
@@ -43,7 +43,7 @@ export function isValidRootCA(value: unknown): value is RootCA {
   )
 }
 
-export function getPrimaryDomain(options?: ReverseProxyOption | ReverseProxyOptions): string {
+export function getPrimaryDomain(options?: ProxyOption | ProxyOptions): string {
   if (!options)
     return 'stacks.localhost'
 
@@ -59,22 +59,26 @@ export function getPrimaryDomain(options?: ReverseProxyOption | ReverseProxyOpti
 /**
  * Type guard for multi-proxy configuration
  */
-export function isMultiProxyConfig(options: ReverseProxyConfigs): options is MultiReverseProxyConfig {
-  return 'proxies' in options && Array.isArray(options.proxies)
+export function isMultiProxyConfig(options: ProxyConfigs | ProxyOptions): options is MultiProxyConfig {
+  return !!(options && 'proxies' in options && Array.isArray((options as MultiProxyConfig).proxies))
 }
 
 /**
  * Type guard to check if options are for multi-proxy configuration
  */
-export function isMultiProxyOptions(options: ReverseProxyOption | ReverseProxyOptions): options is MultiReverseProxyConfig {
-  return 'proxies' in options && Array.isArray((options as MultiReverseProxyConfig).proxies)
+export function isMultiProxyOptions(options: ProxyOption | ProxyOptions): options is MultiProxyConfig {
+  return 'proxies' in options && Array.isArray((options as MultiProxyConfig).proxies)
 }
 
 /**
  * Type guard to check if options are for single-proxy configuration
  */
-export function isSingleProxyOptions(options: ReverseProxyOption | ReverseProxyOptions): options is SingleReverseProxyConfig {
-  return 'to' in options && typeof (options as SingleReverseProxyConfig).to === 'string'
+export function isSingleProxyOptions(options: ProxyOption | ProxyOptions): options is SingleProxyConfig {
+  return 'to' in options && typeof (options as SingleProxyConfig).to === 'string'
+}
+
+export function isSingleProxyConfig(options: ProxyConfigs | ProxyOptions): options is SingleProxyConfig {
+  return !!(options && 'to' in options && !('proxies' in options))
 }
 
 /**

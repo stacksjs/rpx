@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 
-describe('@stacksjs/reverse-proxy', () => {
+describe('@stacksjs/rpx', () => {
   beforeAll(() => {
     process.env.APP_ENV = 'test'
   })

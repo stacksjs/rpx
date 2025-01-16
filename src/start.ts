@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import type { IncomingHttpHeaders, SecureServerOptions } from 'node:http2'
 import type { ServerOptions } from 'node:https'
-import type { CleanupOptions, ProxySetupOptions, ReverseProxyOption, ReverseProxyOptions, SingleReverseProxyConfig, SSLConfig } from './types'
+import type { CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig } from './types'
 import * as http from 'node:http'
 import * as http2 from 'node:http2'
 import * as https from 'node:https'
@@ -13,7 +13,10 @@ import { version } from '../package.json'
 import { config } from './config'
 import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
-import { debugLog, isMultiProxyConfig } from './utils'
+import { ProcessManager } from './process-manager'
+import { debugLog } from './utils'
+
+const processManager = new ProcessManager()
 
 // Keep track of all running servers for cleanup
 const activeServers: Set<http.Server | https.Server> = new Set()
@@ -27,6 +30,9 @@ type AnyServerResponse = http.ServerResponse | http2.Http2ServerResponse
  */
 export async function cleanup(options?: CleanupOptions): Promise<void> {
   debugLog('cleanup', 'Starting cleanup process', options?.verbose)
+  // Stop all watched processes
+  await processManager.stopAll(options?.verbose)
+
   console.log(`\n`)
   log.info('Shutting down proxy servers...')
 
@@ -149,13 +155,14 @@ async function findAvailablePort(startPort: number, hostname: string, verbose?: 
 /**
  * Test connection to a server
  */
-async function testConnection(hostname: string, port: number, verbose?: boolean): Promise<void> {
-  debugLog('connection', `Testing connection to ${hostname}:${port}`, verbose)
-  return new Promise<void>((resolve, reject) => {
+async function testConnection(hostname: string, port: number, verbose?: boolean, retries = 5): Promise<void> {
+  debugLog('connection', `Testing connection to ${hostname}:${port} (retries left: ${retries})`, verbose)
+
+  const tryConnect = () => new Promise<void>((resolve, reject) => {
     const socket = net.connect({
       host: hostname,
       port,
-      timeout: 5000, // 5 second timeout
+      timeout: 2000, // 2 second timeout per attempt
     })
 
     socket.once('connect', () => {
@@ -167,18 +174,31 @@ async function testConnection(hostname: string, port: number, verbose?: boolean)
     socket.once('timeout', () => {
       debugLog('connection', `Connection to ${hostname}:${port} timed out`, verbose)
       socket.destroy()
-      reject(new Error(`Connection to ${hostname}:${port} timed out`))
+      reject(new Error('Connection timed out'))
     })
 
     socket.once('error', (err) => {
       debugLog('connection', `Failed to connect to ${hostname}:${port}: ${err}`, verbose)
       socket.destroy()
-      reject(new Error(`Failed to connect to ${hostname}:${port}: ${err.message}`))
+      reject(err)
     })
   })
+
+  try {
+    await tryConnect()
+  }
+  catch (err: any) {
+    if (retries > 0) {
+      debugLog('connection', `Retrying connection in 2 seconds... (${retries} retries left)`, verbose)
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      return testConnection(hostname, port, verbose, retries - 1)
+    }
+
+    throw new Error(`Failed to connect to ${hostname}:${port} after multiple attempts: ${err.message}`)
+  }
 }
 
-export async function startServer(options: SingleReverseProxyConfig): Promise<void> {
+export async function startServer(options: SingleProxyConfig): Promise<void> {
   debugLog('server', `Starting server with options: ${JSON.stringify(options)}`, options.verbose)
 
   // Parse URLs early to get the hostnames
@@ -290,7 +310,7 @@ export async function startServer(options: SingleReverseProxyConfig): Promise<vo
 
   debugLog('server', `Setting up reverse proxy with SSL config for ${toUrl.hostname}`, options.verbose)
 
-  await setupReverseProxy({
+  await setupProxy({
     ...options,
     from: options.from || 'localhost:5173',
     to: toUrl.hostname,
@@ -507,7 +527,7 @@ async function createProxyServer(
 
         if (!vitePluginUsage) {
           console.log('')
-          console.log(`  ${colors.green(colors.bold('reverse-proxy'))} ${colors.green(`v${version}`)}`)
+          console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
           console.log('')
           console.log(`  ${colors.green('➜')}  ${colors.dim(from)} ${colors.dim('➜')} ${ssl ? 'https' : 'http'}://${to}`)
           if (listenPort !== (ssl ? 443 : 80))
@@ -537,7 +557,7 @@ async function createProxyServer(
   return setupServer(server)
 }
 
-export async function setupReverseProxy(options: ProxySetupOptions): Promise<void> {
+export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   debugLog('setup', `Setting up reverse proxy: ${JSON.stringify(options)}`, options.verbose)
 
   const { from, to, fromPort, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, portManager } = options
@@ -609,7 +629,7 @@ export function startHttpRedirectServer(verbose?: boolean): void {
   debugLog('redirect', 'HTTP redirect server started', verbose)
 }
 
-export function startProxy(options: ReverseProxyOption): void {
+export function startProxy(options: ProxyOption): void {
   const mergedOptions = {
     ...config,
     ...options,
@@ -617,7 +637,7 @@ export function startProxy(options: ReverseProxyOption): void {
 
   debugLog('proxy', `Starting proxy with options: ${JSON.stringify(mergedOptions)}`, mergedOptions?.verbose)
 
-  const serverOptions: SingleReverseProxyConfig = {
+  const serverOptions: SingleProxyConfig = {
     from: mergedOptions.from,
     to: mergedOptions.to,
     cleanUrls: mergedOptions.cleanUrls,
@@ -641,18 +661,90 @@ export function startProxy(options: ReverseProxyOption): void {
   })
 }
 
-export async function startProxies(options?: ReverseProxyOptions): Promise<void> {
-  debugLog('proxies', 'Starting proxy setup', options?.verbose)
+export async function startProxies(options?: ProxyOptions): Promise<void> {
+  debugLog('proxies', 'Starting proxy setup')
+
+  const userConfig = config
+  debugLog('config', `User config: ${JSON.stringify(userConfig, null, 2)}`)
 
   const mergedOptions = {
-    ...config,
+    ...userConfig,
     ...options,
+  } as ProxyOption
+
+  debugLog('config', `Starting with config: ${JSON.stringify(mergedOptions, null, 2)}`, mergedOptions?.verbose)
+  debugLog('config', `Is multi-proxy? ${'proxies' in mergedOptions}`, mergedOptions?.verbose)
+
+  // Start dev servers first if configured
+  if ('proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)) {
+    debugLog('servers', `Found ${mergedOptions.proxies.length} proxies in config`, mergedOptions?.verbose)
+    for (const proxy of mergedOptions.proxies) {
+      if (proxy.start) {
+        const proxyId = `${proxy.from}-${proxy.to}`
+        try {
+          debugLog('watch', `Starting command for ${proxyId} with command: ${proxy.start.command}`, mergedOptions.verbose)
+          log.info(`Starting command for ${proxyId}...`)
+
+          await processManager.startProcess(proxyId, proxy.start, mergedOptions.verbose)
+
+          // Parse the URL to get hostname and port
+          const fromUrl = new URL(proxy.from.startsWith('http') ? proxy.from : `http://${proxy.from}`)
+          const hostname = fromUrl.hostname || 'localhost'
+          const port = Number(fromUrl.port) || 80
+
+          // Wait for the server to be ready
+          try {
+            await testConnection(hostname, port, mergedOptions.verbose)
+            debugLog('watch', `Dev server is ready at ${hostname}:${port}`, mergedOptions.verbose)
+          } catch (err) {
+            debugLog('watch', `Dev server failed to initialize: ${err}`, mergedOptions.verbose)
+            throw new Error(`Dev server failed to initialize: ${err}`)
+          }
+        }
+        catch (err) {
+          debugLog('watch', `Failed to start command for ${proxyId}: ${err}`, mergedOptions.verbose)
+          throw new Error(`Failed to start command for ${proxyId}: ${err}`)
+        }
+      }
+      else {
+        debugLog('watch', `No start command for proxy ${proxy.from} -> ${proxy.to}`, mergedOptions.verbose)
+      }
+    }
+  }
+  else if ('start' in mergedOptions && mergedOptions.start) {
+    debugLog('watch', 'Found start command in single proxy config', mergedOptions.verbose)
+    const proxyId = `${mergedOptions.from}-${mergedOptions.to}`
+    try {
+      debugLog('watch', `Starting command: ${mergedOptions.start.command}`, mergedOptions.verbose)
+      await processManager.startProcess(proxyId, mergedOptions.start, mergedOptions.verbose)
+
+      // Parse the URL to get hostname and port
+      const fromUrl = new URL(mergedOptions.from?.startsWith('http') ? mergedOptions.from : `http://${mergedOptions.from}`)
+      const hostname = fromUrl.hostname || 'localhost'
+      const port = Number(fromUrl.port) || 80
+
+      // Wait for the server to be ready
+      try {
+        await testConnection(hostname, port, mergedOptions.verbose)
+        debugLog('watch', `Dev server is ready at ${hostname}:${port}`, mergedOptions.verbose)
+      } catch (err) {
+        debugLog('watch', `Dev server failed to initialize: ${err}`, mergedOptions.verbose)
+        throw new Error(`Dev server failed to initialize: ${err}`)
+      }
+    }
+    catch (err) {
+      debugLog('watch', `Failed to run start command: ${err}`, mergedOptions.verbose)
+      throw new Error(`Failed to run start command: ${err}`)
+    }
+  }
+  else {
+    debugLog('watch', 'No start command found in config', mergedOptions.verbose)
   }
 
   // Get primary domain for certificates
-  const primaryDomain = isMultiProxyConfig(mergedOptions)
-    ? mergedOptions.proxies[0].to || 'stacks.localhost'
-    : mergedOptions.to || 'stacks.localhost'
+  const primaryDomain = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
+    ? mergedOptions.proxies[0]?.to
+    : ('to' in mergedOptions ? mergedOptions.to : 'stacks.localhost')
 
   // Resolve SSL configuration if HTTPS is enabled
   if (mergedOptions.https) {
@@ -666,10 +758,9 @@ export async function startProxies(options?: ReverseProxyOptions): Promise<void>
       debugLog('ssl', `No valid certificates found for ${primaryDomain}, generating new ones`, mergedOptions.verbose)
       await generateCertificate(mergedOptions)
 
-      // After generation, try to load the certificates again
       const sslConfig = await checkExistingCertificates(mergedOptions)
       if (!sslConfig) {
-        throw new Error(`Failed to load SSL certificates after generation for ${primaryDomain}. Please check file permissions and paths.`)
+        throw new Error(`Failed to load SSL certificates after generation for ${primaryDomain}`)
       }
 
       mergedOptions._cachedSSLConfig = sslConfig
@@ -677,38 +768,51 @@ export async function startProxies(options?: ReverseProxyOptions): Promise<void>
   }
 
   // Prepare proxy configurations
-  const proxyOptions = isMultiProxyConfig(mergedOptions)
-    ? mergedOptions.proxies.map(proxy => ({
+  const proxyOptions = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
+    ? mergedOptions.proxies.map((proxy: ProxyConfig) => ({
         ...proxy,
         https: mergedOptions.https,
         cleanup: mergedOptions.cleanup,
-        cleanUrls: mergedOptions.cleanUrls,
+        cleanUrls: proxy.cleanUrls ?? ('cleanUrls' in mergedOptions ? mergedOptions.cleanUrls : false),
         vitePluginUsage: mergedOptions.vitePluginUsage,
         verbose: mergedOptions.verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
       }))
     : [{
-        from: mergedOptions.from || 'localhost:5173',
-        to: mergedOptions.to || 'stacks.localhost',
-        cleanUrls: mergedOptions.cleanUrls || false,
+        from: 'from' in mergedOptions ? mergedOptions.from : 'localhost:5173',
+        to: 'to' in mergedOptions ? mergedOptions.to : 'stacks.localhost',
+        cleanUrls: 'cleanUrls' in mergedOptions ? mergedOptions.cleanUrls : false,
         https: mergedOptions.https,
         cleanup: mergedOptions.cleanup,
         vitePluginUsage: mergedOptions.vitePluginUsage,
         verbose: mergedOptions.verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
+        start: mergedOptions.start,
       }]
 
   // Extract domains for cleanup
-  const domains = proxyOptions.map(opt => opt.to || 'stacks.localhost')
+  const domains = proxyOptions.map((opt: ProxyOption) => opt.to || 'stacks.localhost')
   const sslConfig = mergedOptions._cachedSSLConfig
 
   // Setup cleanup handler
-  const cleanupHandler = () => cleanup({
-    domains,
-    hosts: typeof mergedOptions.cleanup === 'boolean' ? mergedOptions.cleanup : mergedOptions.cleanup?.hosts,
-    certs: typeof mergedOptions.cleanup === 'boolean' ? mergedOptions.cleanup : mergedOptions.cleanup?.certs,
-    verbose: mergedOptions.verbose || false,
-  })
+  const cleanupHandler = async () => {
+    debugLog('cleanup', 'Starting cleanup handler', mergedOptions.verbose)
+
+    try {
+      // Stop all watched processes first
+      await processManager.stopAll(mergedOptions.verbose)
+    }
+    catch (err) {
+      debugLog('cleanup', `Error stopping processes: ${err}`, mergedOptions.verbose)
+    }
+
+    await cleanup({
+      domains,
+      hosts: typeof mergedOptions.cleanup === 'boolean' ? mergedOptions.cleanup : mergedOptions.cleanup?.hosts,
+      certs: typeof mergedOptions.cleanup === 'boolean' ? mergedOptions.cleanup : mergedOptions.cleanup?.certs,
+      verbose: mergedOptions.verbose || false,
+    })
+  }
 
   // Register cleanup handlers
   process.on('SIGINT', cleanupHandler)

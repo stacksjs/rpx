@@ -1,4 +1,4 @@
-import type { ReverseProxyConfigs, ReverseProxyOption, ReverseProxyOptions, SingleReverseProxyConfig, SSLConfig, TlsConfig } from './types'
+import type { ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig, SSLConfig, TlsConfig } from './types'
 import fs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -13,7 +13,7 @@ let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
 /**
  * Resolves SSL paths based on configuration
  */
-export function resolveSSLPaths(options: ReverseProxyConfigs, defaultConfig: typeof config): TlsConfig {
+export function resolveSSLPaths(options: ProxyConfigs, defaultConfig: typeof config): TlsConfig {
   const domain = isMultiProxyConfig(options)
     ? options.proxies[0].to || 'stacks.localhost'
     : options.to || 'stacks.localhost'
@@ -75,7 +75,7 @@ export function generateWildcardPatterns(domain: string): string[] {
 /**
  * Generates SSL file paths based on domain
  */
-export function generateSSLPaths(options?: ReverseProxyOptions): {
+export function generateSSLPaths(options?: ProxyOptions): {
   caCertPath: string
   certPath: string
   keyPath: string
@@ -101,7 +101,7 @@ export function generateSSLPaths(options?: ReverseProxyOptions): {
   }
 }
 
-export function getAllDomains(options: ReverseProxyOption | ReverseProxyOptions): Set<string> {
+export function getAllDomains(options: ProxyOption | ProxyOptions): Set<string> {
   const domains = new Set<string>()
 
   if (isMultiProxyOptions(options)) {
@@ -128,7 +128,7 @@ export function getAllDomains(options: ReverseProxyOption | ReverseProxyOptions)
 /**
  * Load SSL certificates from files or use provided strings
  */
-export async function loadSSLConfig(options: ReverseProxyOption): Promise<SSLConfig | null> {
+export async function loadSSLConfig(options: ProxyOption): Promise<SSLConfig | null> {
   debugLog('ssl', `Loading SSL configuration`, options.verbose)
 
   const mergedOptions = {
@@ -174,7 +174,7 @@ export async function loadSSLConfig(options: ReverseProxyOption): Promise<SSLCon
   }
 }
 
-export async function generateCertificate(options: ReverseProxyOptions): Promise<void> {
+export async function generateCertificate(options: ProxyOptions): Promise<void> {
   if (cachedSSLConfig) {
     debugLog('ssl', 'Using cached SSL configuration', options.verbose)
     return
@@ -183,7 +183,7 @@ export async function generateCertificate(options: ReverseProxyOptions): Promise
   // Get all unique domains from the configuration
   const domains: string[] = isMultiProxyOptions(options)
     ? options.proxies.map(proxy => proxy.to)
-    : [(options as SingleReverseProxyConfig).to]
+    : [(options as SingleProxyConfig).to]
 
   debugLog('ssl', `Generating certificate for domains: ${domains.join(', ')}`, options.verbose)
 
@@ -224,7 +224,7 @@ export function getSSLConfig(): { key: string, cert: string, ca?: string } | nul
 }
 
 // needs to accept the options
-export async function checkExistingCertificates(options?: ReverseProxyOptions): Promise<SSLConfig | null> {
+export async function checkExistingCertificates(options?: ProxyOptions): Promise<SSLConfig | null> {
   const name = getPrimaryDomain(options)
   const paths = generateSSLPaths(options)
 
@@ -255,7 +255,7 @@ export async function checkExistingCertificates(options?: ReverseProxyOptions): 
   }
 }
 
-export function httpsConfig(options: ReverseProxyOption | ReverseProxyOptions, verbose?: boolean): TlsConfig {
+export function httpsConfig(options: ProxyOption | ProxyOptions, verbose?: boolean): TlsConfig {
   const primaryDomain = getPrimaryDomain(options)
   debugLog('ssl', `Primary domain: ${primaryDomain}`, verbose)
 

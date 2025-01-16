@@ -1,9 +1,9 @@
 # Configuration
 
-The Reverse Proxy can be configured using a `reverse-proxy.config.ts` _(or `reverse-proxy.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.
+The Reverse Proxy can be configured using a `rpx.config.ts` _(or `rpx.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.
 
 ```ts
-// reverse-proxy.config.{ts,js}
+// rpx.config.{ts,js}
 import type { ReverseProxyOptions } from '@stacksjs/rpx'
 import os from 'node:os'
 import path from 'node:path'

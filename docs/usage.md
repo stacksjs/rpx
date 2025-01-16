@@ -38,7 +38,7 @@ startProxy(config)
 In case you are trying to start multiple proxies, you may use this configuration:
 
 ```ts
-// reverse-proxy.config.{ts,js}
+// rpx.config.{ts,js}
 import type { ReverseProxyOptions } from '@stacksjs/rpx'
 import os from 'node:os'
 import path from 'node:path'

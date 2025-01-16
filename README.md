@@ -51,21 +51,26 @@ export interface CleanupConfig {
   certs: boolean // clean up certificates, defaults to false
 }
 
-export interface ReverseProxyConfig {
-  from: string // domain to proxy from, defaults to localhost:3000
+export interface ProxyConfig {
+  from: string // domain to proxy from, defaults to localhost:5173
   to: string // domain to proxy to, defaults to stacks.localhost
   cleanUrls?: boolean // removes the .html extension from URLs, defaults to false
   https: boolean | TlsConfig // automatically uses https, defaults to true, also redirects http to https
   cleanup?: boolean | CleanupConfig // automatically cleans up /etc/hosts, defaults to false
+  start?: StartOptions
   verbose: boolean // log verbose output, defaults to false
 }
 
-const config: ReverseProxyOptions = {
-  from: 'localhost:3000',
+const config: ProxyOptions = {
+  from: 'localhost:5173',
   to: 'my-docs.localhost',
   cleanUrls: true,
   https: true,
   cleanup: false,
+  start: {
+    command: 'bun run dev:docs',
+    lazy: true,
+  }
 }
 
 startProxy(config)
@@ -74,12 +79,12 @@ startProxy(config)
 In case you are trying to start multiple proxies, you may use this configuration:
 
 ```ts
-// reverse-proxy.config.{ts,js}
-import type { ReverseProxyOptions } from '@stacksjs/rpx'
+// rpx.config.{ts,js}
+import type { ProxyOptions } from '@stacksjs/rpx'
 import os from 'node:os'
 import path from 'node:path'
 
-const config: ReverseProxyOptions = {
+const config: ProxyOptions = {
   https: { // https: true -> also works with sensible defaults
     caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.ca.crt`),
     certPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt`),
@@ -96,6 +101,13 @@ const config: ReverseProxyOptions = {
       from: 'localhost:5173',
       to: 'my-app.localhost',
       cleanUrls: true,
+      start: {
+        command: 'bun run dev',
+        cwd: '/path/to/my-app',
+        env: {
+          NODE_ENV: 'development',
+        },
+      },
     },
     {
       from: 'localhost:5174',
@@ -120,15 +132,15 @@ rpx --version
 
 ## Configuration
 
-The Reverse Proxy can be configured using a `reverse-proxy.config.ts` _(or `reverse-proxy.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.
+The Reverse Proxy can be configured using a `rpx.config.ts` _(or `rpx.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.
 
 ```ts
-// reverse-proxy.config.{ts,js}
-import type { ReverseProxyOptions } from '@stacksjs/rpx'
+// rpx.config.{ts,js}
+import type { ProxyOptions } from '@stacksjs/rpx'
 import os from 'node:os'
 import path from 'node:path'
 
-const config: ReverseProxyOptions = {
+const config: ProxyOptions = {
   from: 'localhost:5173',
   to: 'stacks.localhost',
 

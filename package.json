@@ -65,7 +65,7 @@
     "@types/bun": "^1.1.16",
     "@vite-pwa/vitepress": "^0.5.3",
     "bun-plugin-dtsx": "^0.21.9",
-    "bunfig": "^0.5.2",
+    "bunfig": "^0.5.3",
     "cac": "^6.7.14",
     "consola": "^3.4.0",
     "typescript": "^5.7.3",
