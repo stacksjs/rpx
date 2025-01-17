@@ -62,7 +62,7 @@ const sidebar = [
   { text: 'Showcase', link: '/Showcase' },
 ]
 const description = 'A modern, fast reverse proxy. For a better local development environment.'
-const title = 'ts-collect | A modern, fast reverse proxy. For a better local development environment.'
+const title = 'rpx | A modern, fast reverse proxy. For a better local development environment.'
 
 export default withPwa(
   defineConfig({
