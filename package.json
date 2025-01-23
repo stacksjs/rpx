@@ -59,7 +59,7 @@
   },
   "devDependencies": {
     "@iconify-json/carbon": "^1.2.5",
-    "@shikijs/vitepress-twoslash": "^1.27.2",
+    "@shikijs/vitepress-twoslash": "^2.1.0",
     "@stacksjs/eslint-config": "^3.13.1-beta.2",
     "@stacksjs/tlsx": "^0.10.0",
     "@types/bun": "^1.1.17",
