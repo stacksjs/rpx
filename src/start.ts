@@ -696,7 +696,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           try {
             await testConnection(hostname, port, mergedOptions.verbose)
             debugLog('watch', `Dev server is ready at ${hostname}:${port}`, mergedOptions.verbose)
-          } catch (err) {
+          }
+          catch (err) {
             debugLog('watch', `Dev server failed to initialize: ${err}`, mergedOptions.verbose)
             throw new Error(`Dev server failed to initialize: ${err}`)
           }
@@ -727,7 +728,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       try {
         await testConnection(hostname, port, mergedOptions.verbose)
         debugLog('watch', `Dev server is ready at ${hostname}:${port}`, mergedOptions.verbose)
-      } catch (err) {
+      }
+      catch (err) {
         debugLog('watch', `Dev server failed to initialize: ${err}`, mergedOptions.verbose)
         throw new Error(`Dev server failed to initialize: ${err}`)
       }
