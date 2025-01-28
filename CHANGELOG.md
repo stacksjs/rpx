@@ -1,6 +1,57 @@
 # Changelog
 
 
+## v0.9.1...main
+
+[compare changes](https://github.com/stacksjs/rpx/compare/v0.9.1...main)
+
+### 🚀 Enhancements
+
+- Add start option ([6ce8217](https://github.com/stacksjs/rpx/commit/6ce8217))
+- **ci:** Add `publish-commit` workflow ([ac87fba](https://github.com/stacksjs/rpx/commit/ac87fba))
+
+### 📖 Documentation
+
+- Update unocss ([374424a](https://github.com/stacksjs/rpx/commit/374424a))
+- Add analytics ([6ee18ef](https://github.com/stacksjs/rpx/commit/6ee18ef))
+- Update intro, usage and install ([847c33e](https://github.com/stacksjs/rpx/commit/847c33e))
+- Enhance install docs ([8a1415a](https://github.com/stacksjs/rpx/commit/8a1415a))
+- Enhance docs context ([3475b27](https://github.com/stacksjs/rpx/commit/3475b27))
+- Enhance docs config ([0f95a37](https://github.com/stacksjs/rpx/commit/0f95a37))
+- Improve docs config ([040ab86](https://github.com/stacksjs/rpx/commit/040ab86))
+- Update install section ([ed08896](https://github.com/stacksjs/rpx/commit/ed08896))
+- Add doc blocks ([401f2df](https://github.com/stacksjs/rpx/commit/401f2df))
+- Adjust keywords ([33962ae](https://github.com/stacksjs/rpx/commit/33962ae))
+- Adjust code theme ([3e8244e](https://github.com/stacksjs/rpx/commit/3e8244e))
+- Improve showcase ([1340e58](https://github.com/stacksjs/rpx/commit/1340e58))
+- Improve showcase ([6c5566e](https://github.com/stacksjs/rpx/commit/6c5566e))
+- Improve sponsor docs ([c872a22](https://github.com/stacksjs/rpx/commit/c872a22))
+- Adjust title ([f001b98](https://github.com/stacksjs/rpx/commit/f001b98))
+
+### 🏡 Chore
+
+- Enhance team css ([4680bf8](https://github.com/stacksjs/rpx/commit/4680bf8))
+- Enahnce css ([2252a82](https://github.com/stacksjs/rpx/commit/2252a82))
+- Enhance team description ([bc85d49](https://github.com/stacksjs/rpx/commit/bc85d49))
+- Minor updates ([53d4957](https://github.com/stacksjs/rpx/commit/53d4957))
+- Update readme ([7092c72](https://github.com/stacksjs/rpx/commit/7092c72))
+- Add bunfig ([eb129dd](https://github.com/stacksjs/rpx/commit/eb129dd))
+- Revert unconfig ([7ae9314](https://github.com/stacksjs/rpx/commit/7ae9314))
+- Adjust renovate config ([fc109ec](https://github.com/stacksjs/rpx/commit/fc109ec))
+- Update eslint ([87d9090](https://github.com/stacksjs/rpx/commit/87d9090))
+- Improve sponsor.md ([771089a](https://github.com/stacksjs/rpx/commit/771089a))
+- Add dev deps ([b7599ea](https://github.com/stacksjs/rpx/commit/b7599ea))
+- Lint ([db1f1de](https://github.com/stacksjs/rpx/commit/db1f1de))
+- Adjust lockfile name ([54dc1d2](https://github.com/stacksjs/rpx/commit/54dc1d2))
+- Update bun ([b564405](https://github.com/stacksjs/rpx/commit/b564405))
+- Improve ctrl c exit handling ([22acca6](https://github.com/stacksjs/rpx/commit/22acca6))
+- Update eslint config ([a9c0a78](https://github.com/stacksjs/rpx/commit/a9c0a78))
+
+### ❤️ Contributors
+
+- Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
+- Cab-mikee ([@cab-mikee](http://github.com/cab-mikee))
+
 ## v0.9.0...main
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.9.0...main)
