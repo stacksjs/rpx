@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process'
 import type { StartOptions } from './types'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
+import { consola as log } from 'consola'
 import { debugLog } from './utils'
 
 export interface ManagedProcess {
@@ -13,6 +14,7 @@ export interface ManagedProcess {
 
 export class ProcessManager {
   private processes: Map<string, ManagedProcess> = new Map()
+  private isShuttingDown = false
 
   async startProcess(id: string, options: StartOptions, verbose?: boolean): Promise<void> {
     if (this.processes.has(id)) {
@@ -44,20 +46,25 @@ export class ProcessManager {
 
     return new Promise((resolve, reject) => {
       childProcess.on('error', (err) => {
-        debugLog('start', `Process ${id} failed to start: ${err}`, verbose)
-        this.processes.delete(id)
-        reject(err)
-      })
-
-      childProcess.on('exit', (code) => {
-        if (code !== null && code !== 0) {
-          debugLog('start', `Process ${id} exited with code ${code}`, verbose)
+        if (!this.isShuttingDown) {
+          debugLog('start', `Process ${id} failed to start: ${err}`, verbose)
           this.processes.delete(id)
-          reject(new Error(`Process ${id} exited with code ${code}`))
+          reject(err)
+          // Trigger cleanup on process error
+          process.emit('SIGINT')
         }
       })
 
-      // Add stdout/stderr handlers if verbose
+      childProcess.on('exit', (code) => {
+        if (!this.isShuttingDown && code !== null && code !== 0) {
+          debugLog('start', `Process ${id} exited with code ${code}`, verbose)
+          this.processes.delete(id)
+          reject(new Error(`Process ${id} exited with code ${code}`))
+          // Trigger cleanup on non-zero exit
+          process.emit('SIGINT')
+        }
+      })
+
       if (verbose) {
         childProcess.stdout?.on('data', (data) => {
           debugLog('process', `[${id}] ${data.toString().trim()}`, true)
@@ -70,7 +77,7 @@ export class ProcessManager {
 
       // Resolve after a delay to allow the process to start
       setTimeout(() => {
-        if (childProcess.killed) {
+        if (!this.isShuttingDown && childProcess.killed) {
           this.processes.delete(id)
           reject(new Error(`Process ${id} was killed during startup`))
         }
@@ -103,26 +110,49 @@ export class ProcessManager {
         resolve()
       })
 
-      managed.process.kill('SIGTERM')
+      try {
+        managed.process.kill('SIGTERM')
 
-      // Force kill after 5 seconds if process hasn't exited
-      setTimeout(() => {
-        if (managed.process) {
-          debugLog('start', `Force killing process ${id}`, verbose)
-          managed.process.kill('SIGKILL')
-        }
-      }, 5000)
+        // Force kill after 3 seconds if process hasn't exited
+        setTimeout(() => {
+          if (managed.process) {
+            debugLog('start', `Force killing process ${id}`, verbose)
+            try {
+              managed.process.kill('SIGKILL')
+            }
+            // eslint-disable-next-line unused-imports/no-unused-vars
+            catch (err) {
+              // Ignore errors during force kill
+            }
+          }
+        }, 3000)
+      }
+      catch (err) {
+        debugLog('start', `Error stopping process ${id}: ${err}`, verbose)
+        this.processes.delete(id)
+        resolve()
+      }
     })
   }
 
   async stopAll(verbose?: boolean): Promise<void> {
+    if (this.isShuttingDown) {
+      debugLog('start', 'Already shutting down, skipping duplicate stopAll call', verbose)
+      return
+    }
+
+    this.isShuttingDown = true
     debugLog('start', 'Stopping all processes', verbose)
 
     const promises = Array.from(this.processes.keys()).map(id =>
-      this.stopProcess(id, verbose),
+      this.stopProcess(id, verbose).catch((err) => {
+        log.error(`Failed to stop process ${id}:`, err)
+      }),
     )
 
-    await Promise.all(promises)
+    await Promise.allSettled(promises)
+    this.processes.clear()
+    this.isShuttingDown = false
   }
 
   isRunning(id: string): boolean {

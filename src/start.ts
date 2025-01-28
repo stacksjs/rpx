@@ -25,88 +25,105 @@ type AnyServerType = http.Server | https.Server | http2.Http2SecureServer
 type AnyIncomingMessage = http.IncomingMessage | http2.Http2ServerRequest
 type AnyServerResponse = http.ServerResponse | http2.Http2ServerResponse
 
-/**
- * Cleanup function to close all servers, cleanup hosts file, and remove certificates if configured
- */
+let isCleaningUp = false
+
 export async function cleanup(options?: CleanupOptions): Promise<void> {
+  if (isCleaningUp) {
+    debugLog('cleanup', 'Cleanup already in progress, skipping', options?.verbose)
+    return
+  }
+
+  isCleaningUp = true
   debugLog('cleanup', 'Starting cleanup process', options?.verbose)
-  // Stop all watched processes
-  await processManager.stopAll(options?.verbose)
-
-  console.log(`\n`)
-  log.info('Shutting down proxy servers...')
-
-  // Create an array to store all cleanup promises
-  const cleanupPromises: Promise<void>[] = []
-
-  // Add server closing promises
-  const serverClosePromises = Array.from(activeServers).map(server =>
-    new Promise<void>((resolve) => {
-      server.close(() => {
-        debugLog('cleanup', 'Server closed successfully', options?.verbose)
-        resolve()
-      })
-    }),
-  )
-  cleanupPromises.push(...serverClosePromises)
-
-  // hosts file cleanup if configured
-  if (options?.hosts && options.domains?.length) {
-    debugLog('cleanup', 'Cleaning up hosts file entries', options?.verbose)
-
-    const domainsToClean = options.domains.filter(domain => !domain.includes('localhost'))
-
-    if (domainsToClean.length > 0) {
-      log.info('Cleaning up hosts file entries...')
-      cleanupPromises.push(
-        removeHosts(domainsToClean, options?.verbose)
-          .then(() => {
-            debugLog('cleanup', `Removed hosts entries for ${domainsToClean.join(', ')}`, options?.verbose)
-          })
-          .catch((err) => {
-            debugLog('cleanup', `Failed to remove hosts entries: ${err}`, options?.verbose)
-            log.warn(`Failed to clean up hosts file entries for ${domainsToClean.join(', ')}:`, err)
-          }),
-      )
-    }
-  }
-
-  // certificate cleanup if configured
-  if (options?.certs && options.domains?.length) {
-    debugLog('cleanup', 'Cleaning up SSL certificates', options?.verbose)
-    log.info('Cleaning up SSL certificates...')
-
-    const certCleanupPromises = options.domains.map(async (domain) => {
-      try {
-        await cleanupCertificates(domain, options?.verbose)
-        debugLog('cleanup', `Removed certificates for ${domain}`, options?.verbose)
-      }
-      catch (err) {
-        console.log('checkError', err)
-        debugLog('cleanup', `Failed to remove certificates for ${domain}: ${err}`, options?.verbose)
-        log.warn(`Failed to clean up certificates for ${domain}:`, err)
-      }
-    })
-
-    cleanupPromises.push(...certCleanupPromises)
-  }
 
   try {
-    await Promise.all(cleanupPromises)
+    // Stop all watched processes first
+    await processManager.stopAll(options?.verbose)
+
+    log.info('Shutting down proxy servers...')
+
+    // Create an array to store all cleanup promises
+    const cleanupPromises: Promise<void>[] = []
+
+    // Add server closing promises
+    const serverClosePromises = Array.from(activeServers).map(server =>
+      new Promise<void>((resolve) => {
+        server.close(() => {
+          debugLog('cleanup', 'Server closed successfully', options?.verbose)
+          resolve()
+        })
+      }),
+    )
+    cleanupPromises.push(...serverClosePromises)
+
+    // hosts file cleanup if configured
+    if (options?.hosts && options.domains?.length) {
+      debugLog('cleanup', 'Cleaning up hosts file entries', options?.verbose)
+      const domainsToClean = options.domains.filter(domain => !domain.includes('localhost'))
+
+      if (domainsToClean.length > 0) {
+        log.info('Cleaning up hosts file entries...')
+        cleanupPromises.push(
+          removeHosts(domainsToClean, options?.verbose)
+            .then(() => {
+              debugLog('cleanup', `Removed hosts entries for ${domainsToClean.join(', ')}`, options?.verbose)
+            })
+            .catch((err) => {
+              debugLog('cleanup', `Failed to remove hosts entries: ${err}`, options?.verbose)
+              log.warn(`Failed to clean up hosts file entries for ${domainsToClean.join(', ')}:`, err)
+            }),
+        )
+      }
+    }
+
+    // certificate cleanup if configured
+    if (options?.certs && options.domains?.length) {
+      debugLog('cleanup', 'Cleaning up SSL certificates', options?.verbose)
+      log.info('Cleaning up SSL certificates...')
+
+      const certCleanupPromises = options.domains.map(async (domain) => {
+        try {
+          await cleanupCertificates(domain, options?.verbose)
+          debugLog('cleanup', `Removed certificates for ${domain}`, options?.verbose)
+        }
+        catch (err) {
+          debugLog('cleanup', `Failed to remove certificates for ${domain}: ${err}`, options?.verbose)
+          log.warn(`Failed to clean up certificates for ${domain}:`, err)
+        }
+      })
+
+      cleanupPromises.push(...certCleanupPromises)
+    }
+
+    await Promise.allSettled(cleanupPromises)
     debugLog('cleanup', 'All cleanup tasks completed successfully', options?.verbose)
     log.success('All cleanup tasks completed successfully')
-    process.exit(0)
   }
   catch (err) {
     debugLog('cleanup', `Error during cleanup: ${err}`, options?.verbose)
     log.error('Error during cleanup:', err)
-    process.exit(1)
+  }
+  finally {
+    isCleaningUp = false
+    process.exit(0)
   }
 }
 
 // Register cleanup handlers
-process.on('SIGINT', cleanup)
-process.on('SIGTERM', cleanup)
+let isHandlingSignal = false
+
+function signalHandler() {
+  if (isHandlingSignal) {
+    // Force exit if we get a second signal
+    process.exit(1)
+    return
+  }
+  isHandlingSignal = true
+  cleanup().catch(() => process.exit(1))
+}
+
+process.on('SIGINT', signalHandler)
+process.on('SIGTERM', signalHandler)
 process.on('uncaughtException', (err) => {
   debugLog('process', `Uncaught exception: ${err}`, true)
   log.error('Uncaught exception:', err)
