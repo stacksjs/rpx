@@ -62,4 +62,4 @@ _Then run:_
 ./rpx start
 ```
 
-To learn more, head over to the [documentation](https://reverse-proxy.sh/).
+Within the next section of the documentation, the Showcase section, you will find a list of examples of how to use the Reverse Proxy in different scenarios.

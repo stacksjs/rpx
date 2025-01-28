@@ -82,8 +82,24 @@ rpx --help
 rpx --version
 ```
 
-## Testing
+## HMR
 
-```bash
-bun test
+In order to use Hot Module Replacement (HMR) with Vite and `rpx`, you need to set these HMR options:
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  server: {
+    hmr: {
+      host: 'stacks.localhost',
+      port: 443,
+    },
+  },
+})
 ```
+
+We are soon looking to improve `rpx` to seamlessly work with Vite and other tools. Stay tuned & follow along on [GitHub](https://github.com/stacksjs/rpx/issues/26).
+
+Continue reading the documentation to learn more about the [configuration](./config.md) options.
