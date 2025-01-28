@@ -546,7 +546,7 @@ async function createProxyServer(
           console.log('')
           console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
           console.log('')
-          console.log(`  ${colors.green('➜')}  ${colors.dim(from)} ${colors.dim('➜')} ${ssl ? ' https' : ' http'}://${to}`)
+          console.log(`  ${colors.green('➜')}  ${colors.dim(from)} ${colors.dim('➜')} ${colors.cyan(ssl ? ` https://${to}` : ' http://to')}`)
           if (listenPort !== (ssl ? 443 : 80))
             console.log(`  ${colors.green('➜')}  Listening on port ${listenPort}`)
           if (ssl) {
