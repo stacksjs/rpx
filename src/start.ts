@@ -542,24 +542,14 @@ async function createProxyServer(
       serverInstance.listen(listenPort, hostname, () => {
         debugLog('server', `Server listening on port ${listenPort}`, verbose)
 
-        if (!vitePluginUsage) {
-          console.log('')
-          console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
-          console.log('')
-          console.log(`  ${colors.green('➜')}  ${colors.dim(from)} ${colors.dim('➜')} ${colors.cyan(ssl ? ` https://${to}` : ' http://to')}`)
-          if (listenPort !== (ssl ? 443 : 80))
-            console.log(`  ${colors.green('➜')}  Listening on port ${listenPort}`)
-          if (ssl) {
-            console.log(`  ${colors.green('➜')}  SSL enabled with:`)
-            console.log(`     - TLS 1.2/1.3`)
-            console.log(`     - Modern cipher suite`)
-            console.log(`     - HTTP/2 enabled`)
-            console.log(`     - HSTS enabled`)
-          }
-          if (cleanUrls) {
-            console.log(`  ${colors.green('➜')}  Clean URLs enabled`)
-          }
-        }
+        logToConsole({
+          from,
+          to,
+          vitePluginUsage,
+          listenPort,
+          ssl: !!ssl,
+          cleanUrls,
+        })
 
         resolve()
       })
@@ -863,6 +853,39 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       debugLog('proxies', `Failed to start proxy for ${option.to}: ${err}`, option.verbose)
       console.error(`Failed to start proxy for ${option.to}:`, err)
       cleanupHandler()
+    }
+  }
+}
+
+interface OutputOptions {
+  from?: string
+  to?: string
+  vitePluginUsage?: boolean
+  listenPort?: number
+  ssl?: boolean
+  cleanUrls?: boolean
+}
+
+function logToConsole(options?: OutputOptions) {
+  if (!options?.vitePluginUsage) { // the Vite plugin handles the console output
+    console.log('')
+    console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
+    console.log('')
+    console.log(`  ${colors.green('➜')}  ${colors.dim(options?.from)} ${colors.dim('➜')} ${colors.cyan(options?.ssl ? ` https://${options?.to}` : ` http://${options?.to}`)}`)
+
+    if (options?.listenPort !== (options?.ssl ? 443 : 80))
+      console.log(`  ${colors.green('➜')}  Listening on port ${options?.listenPort}`)
+
+    if (options?.ssl) {
+      console.log(`  ${colors.green('➜')}  SSL enabled with:`)
+      console.log(`     - TLS 1.2/1.3`)
+      console.log(`     - Modern cipher suite`)
+      console.log(`     - HTTP/2 enabled`)
+      console.log(`     - HSTS enabled`)
+    }
+
+    if (options?.cleanUrls) {
+      console.log(`  ${colors.green('➜')}  Clean URLs enabled`)
     }
   }
 }
