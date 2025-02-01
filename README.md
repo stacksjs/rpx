@@ -6,20 +6,20 @@
 <!-- [![npm downloads][npm-downloads-src]][npm-downloads-href] -->
 <!-- [![Codecov][codecov-src]][codecov-href] -->
 
-# A Better Developer Experience
+# rpx
 
-> A zero-config reverse proxy for local development with SSL support, custom domains, and more.
+> A zero-config reverse proxy for local development with SSL support, custom domains, and more—for a better local developer experience.
 
 ## Features
 
-- Simple, lightweight Reverse Proxy
-- Custom Domains _(with wildcard support)_
-- Zero-Config Setup
-- SSL Support _(HTTPS by default)_
-- Auto HTTP-to-HTTPS Redirection
-- `/etc/hosts` Management
-- Clean URLs _(removes `.html` extension)_
-- CLI and Library Support
+- 🔀 Simple, lightweight Reverse Proxy
+- ♾️ Custom Domains _(with wildcard support)_
+- 0️⃣ Zero-Config Setup
+- 🔒 SSL Support _(HTTPS by default)_
+- 🛣️ Auto HTTP-to-HTTPS Redirection
+- ✏️ `/etc/hosts` Management
+- 🧼 Clean URLs _(removes `.html` extension)_
+- 🤖 CLI & Library Support
 
 ## Install
 
@@ -201,9 +201,9 @@ For casual chit-chat with others using this package:
 
 ## Postcardware
 
-Two things are true: Stacks OSS will always stay open-source, and we do love to receive postcards from wherever Stacks is used! 🌍 _We also publish them on our website. And thank you, Spatie_
+Two things are true: Stacks OSS will always stay open-source, and we do love to receive postcards from wherever Stacks is used! _We also publish them on our website. And thank you, Spatie_
 
-Our address: Stacks.js, 12665 Village Ln #2306, Playa Vista, CA 90094
+Our address: Stacks.js, 12665 Village Ln #2306, Playa Vista, CA 90094 🌎
 
 ## Sponsors
 
