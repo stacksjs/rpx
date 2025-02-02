@@ -4,7 +4,7 @@
     "": {
       "name": "@stacksjs/rpx",
       "devDependencies": {
-        "@iconify-json/carbon": "^1.2.5",
+        "@iconify-json/carbon": "^1.2.6",
         "@shikijs/vitepress-twoslash": "^2.2.0",
         "@stacksjs/eslint-config": "^3.15.1-beta.4",
         "@stacksjs/tlsx": "^0.10.0",
@@ -341,7 +341,7 @@
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.1", "", {}, "sha512-c7hNEllBlenFTHBky65mhq8WD2kbN9Q6gk0bTk8lSBvc554jpXSkST1iePudpt7+A/AQvuHs9EMqjHDXMY1lrA=="],
 
-    "@iconify-json/carbon": ["@iconify-json/carbon@1.2.5", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-aI3TEzOrUDGhs74zIT3ym/ZQBUEziyu8JifntX2Hb4siVzsP5sQ/QEfVdmcCUj37kQUYT3TYBSeAw2vTfCJx9w=="],
+    "@iconify-json/carbon": ["@iconify-json/carbon@1.2.6", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-Oat/TUfu1Cpg/inoi6ZIVvNjWoKQJFugpDB6LqpahENf4f2pZKMOUR2B9MCQlje77iRRI5nWQzvUO2kJlXFStw=="],
 
     "@iconify-json/simple-icons": ["@iconify-json/simple-icons@1.2.21", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-aqbIuVshMZ2fNEhm25//9DoKudboXF3CpoEQJJlHl9gVSVNOTr4cgaCIZvgSEYmys2HHEfmhcpoZIhoEFZS8SQ=="],
 
