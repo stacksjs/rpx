@@ -58,13 +58,13 @@
     "preview:docs": "bun --bun vitepress preview docs"
   },
   "devDependencies": {
-    "@iconify-json/carbon": "^1.2.5",
-    "@shikijs/vitepress-twoslash": "^2.2.0",
+    "@iconify-json/carbon": "^1.2.6",
+    "@shikijs/vitepress-twoslash": "^2.3.2",
     "@stacksjs/eslint-config": "^3.15.1-beta.4",
     "@stacksjs/tlsx": "^0.10.0",
     "@types/bun": "^1.2.2",
     "@vite-pwa/vitepress": "^0.5.3",
-    "bumpp": "^10.0.1",
+    "bumpp": "^10.0.3",
     "bun-plugin-dtsx": "^0.21.9",
     "bunfig": "^0.5.3",
     "cac": "^6.7.14",
