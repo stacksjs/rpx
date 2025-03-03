@@ -61,14 +61,14 @@
     "@stacksjs/docs": "^0.69.3",
     "@stacksjs/eslint-config": "^3.15.1-beta.4",
     "@stacksjs/tlsx": "^0.10.0",
-    "@types/bun": "^1.2.3",
+    "@types/bun": "^1.2.4",
     "bumpp": "^10.0.3",
     "bun-plugin-dtsx": "^0.21.9",
-    "bunfig": "^0.8.1",
+    "bunfig": "^0.8.2",
     "cac": "^6.7.14",
-    "changelogen": "^0.5.7",
+    "changelogen": "^0.6.1",
     "consola": "^3.4.0",
-    "typescript": "^5.7.3",
+    "typescript": "^5.8.2",
     "unocss": "^66.0.0"
   },
   "overrides": {
