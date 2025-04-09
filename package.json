@@ -49,13 +49,20 @@
     "lint:fix": "bunx --bun eslint . --fix",
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
     "changelog": "changelogen --output CHANGELOG.md",
-    "prepublishOnly": "bun --bun run build && bun run compile:all",
+    "prepublishOnly": "bun --bun run build && bun run compile:all && bun run zip",
     "release": "bun run changelog && bumpp package.json --all",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "dev:docs": "bun --bun vitepress dev docs",
     "build:docs": "bun --bun vitepress build docs",
-    "preview:docs": "bun --bun vitepress preview docs"
+    "preview:docs": "bun --bun vitepress preview docs",
+    "zip": "bun run zip:all",
+    "zip:all": "bun run zip:linux-x64 && bun run zip:linux-arm64 && bun run zip:windows-x64 && bun run zip:darwin-x64 && bun run zip:darwin-arm64",
+    "zip:linux-x64": "zip -j bin/rpx-linux-x64.zip bin/rpx-linux-x64",
+    "zip:linux-arm64": "zip -j bin/rpx-linux-arm64.zip bin/rpx-linux-arm64",
+    "zip:windows-x64": "zip -j bin/rpx-windows-x64.zip bin/rpx-windows-x64.exe",
+    "zip:darwin-x64": "zip -j bin/rpx-darwin-x64.zip bin/rpx-darwin-x64",
+    "zip:darwin-arm64": "zip -j bin/rpx-darwin-arm64.zip bin/rpx-darwin-arm64"
   },
   "devDependencies": {
     "@stacksjs/docs": "^0.69.3",

@@ -17,6 +17,10 @@
 
 Please see our [releases](https://github.com/stacksjs/stacks/releases) page for more information on what has changed recently.
 
+## Stargazers
+
+[![Stargazers](https://starchart.cc/stacksjs/rpx.svg?variant=adaptive)](https://starchart.cc/stacksjs/rpx)
+
 ## Contributing
 
 Please review the [Contributing Guide](https://github.com/stacksjs/contributing) for details.
