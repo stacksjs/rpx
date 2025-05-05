@@ -26,10 +26,8 @@
   ],
   "exports": {
     ".": {
-      "import": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/src/index.js"
-      }
+      "types": "./dist/index.d.ts",
+      "import": "./dist/src/index.js"
     }
   },
   "module": "./dist/src/index.js",
