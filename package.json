@@ -65,18 +65,18 @@
     "zip:darwin-arm64": "zip -j bin/rpx-darwin-arm64.zip bin/rpx-darwin-arm64"
   },
   "devDependencies": {
-    "@stacksjs/docs": "^0.69.3",
+    "@stacksjs/docs": "^0.70.23",
     "@stacksjs/eslint-config": "^3.15.1-beta.4",
     "@stacksjs/tlsx": "^0.10.0",
-    "@types/bun": "^1.2.3",
-    "bumpp": "^10.0.3",
+    "@types/bun": "^1.2.12",
+    "bumpp": "^10.1.0",
     "bun-plugin-dtsx": "^0.21.9",
-    "bunfig": "^0.8.1",
+    "bunfig": "^0.8.4",
     "cac": "^6.7.14",
-    "changelogen": "^0.5.7",
-    "consola": "^3.4.0",
-    "typescript": "^5.7.3",
-    "unocss": "^66.0.0"
+    "changelogen": "^0.6.1",
+    "consola": "^3.4.2",
+    "typescript": "^5.8.3",
+    "unocss": "^66.1.0"
   },
   "overrides": {
     "unconfig": "0.3.10"
