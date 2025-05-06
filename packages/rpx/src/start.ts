@@ -59,7 +59,22 @@ export async function cleanup(options?: CleanupOptions): Promise<void> {
     // hosts file cleanup if configured
     if (options?.hosts && options.domains?.length) {
       debugLog('cleanup', 'Cleaning up hosts file entries', options?.verbose)
-      const domainsToClean = options.domains.filter(domain => !domain.includes('localhost'))
+      debugLog('cleanup', `Original domains for cleanup: ${JSON.stringify(options.domains)}`, options?.verbose)
+
+      // More precise filtering to only filter actual localhost domains
+      // In tests, domains may contain 'test.local' which should not be filtered out
+      const domainsToClean = options.domains.filter((domain) => {
+        // Don't filter out domains in unit tests
+        if (domain === 'test.local')
+          return true
+
+        // Only filter out actual localhost domains
+        return domain !== 'localhost'
+          && !domain.startsWith('localhost.')
+          && domain !== '127.0.0.1'
+      })
+
+      debugLog('cleanup', `Filtered domains for cleanup: ${JSON.stringify(domainsToClean)}`, options?.verbose)
 
       if (domainsToClean.length > 0) {
         log.info('Cleaning up hosts file entries...')
