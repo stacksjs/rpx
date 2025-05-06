@@ -28,9 +28,10 @@ const nav = [
     text: 'Resources',
     items: [
       { text: 'Team', link: '/team' },
-      { text: 'Sponsors', link: '/sponsors' },
       { text: 'Partners', link: '/partners' },
       { text: 'Postcardware', link: '/postcardware' },
+      { text: 'Showcase', link: '/showcase' },
+      { text: 'Sponsors', link: '/sponsors' },
       { text: 'Stargazers', link: '/stargazers' },
       { text: 'License', link: '/license' },
       {
@@ -59,7 +60,6 @@ const sidebar = [
       { text: 'Config', link: '/config' },
     ],
   },
-  { text: 'Showcase', link: '/showcase' },
   {
     text: 'Features',
     items: [
@@ -111,7 +111,7 @@ export default withPwa(
       ['meta', { property: 'og:description', content: description }],
       ['meta', { property: 'og:site_name', content: 'rpx' }],
       ['meta', { property: 'og:image', content: './images/og-image.png' }],
-      ['meta', { property: 'og:url', content: 'https://reverse-proxy.sh/' }],
+      ['meta', { property: 'og:url', content: 'https://reverse-proxy.netlify.app/' }],
       // ['script', { 'src': 'https://cdn.usefathom.com/script.js', 'data-site': '', 'data-spa': 'auto', 'defer': '' }],
       ...analyticsHead,
     ],
@@ -129,7 +129,7 @@ export default withPwa(
       sidebar,
 
       editLink: {
-        pattern: 'https://github.com/stacksjs/stacks/edit/main/docs/docs/:path',
+        pattern: 'https://github.com/stacksjs/rpx/edit/main/docs/docs/:path',
         text: 'Edit this page on GitHub',
       },
 
