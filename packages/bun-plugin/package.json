@@ -1,9 +1,8 @@
 {
-  "name": "rpx",
+  "name": "bun-plugin-rpx",
   "type": "module",
   "version": "0.10.0",
-  "private": true,
-  "description": "A modern and smart reverse proxy.",
+  "description": "A modern and smart reverse proxy. Bun plugin.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
   "homepage": "https://github.com/stacksjs/rpx",
@@ -21,6 +20,7 @@
     "environment",
     "proxy",
     "bun",
+    "bun-plugin",
     "stacks",
     "typescript",
     "javascript"
@@ -37,43 +37,26 @@
     "rpx": "./dist/bin/cli.js",
     "reverse-proxy": "./dist/bin/cli.js"
   },
-  "files": ["README.md", "dist"],
+  "files": [
+    "README.md",
+    "dist"
+  ],
   "scripts": {
+    "build": "bun build.ts",
     "lint": "bunx --bun eslint .",
     "lint:fix": "bunx --bun eslint . --fix",
-    "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
     "changelog": "changelogen --output CHANGELOG.md",
-    "release": "bun run changelog && bumpp package.json --all",
+    "prepublishOnly": "bun --bun run build",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit",
-    "dev:docs": "bun --bun vitepress dev docs",
-    "build:docs": "bun --bun vitepress build docs",
-    "preview:docs": "bun --bun vitepress preview docs"
+    "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {
-    "@stacksjs/docs": "^0.70.23",
-    "@stacksjs/eslint-config": "^4.10.2-beta.3",
-    "@stacksjs/tlsx": "^0.10.0",
-    "@types/bun": "^1.2.12",
-    "bumpp": "^10.1.0",
-    "bun-plugin-dtsx": "^0.21.9",
-    "bunfig": "^0.8.4",
-    "cac": "^6.7.14",
-    "changelogen": "^0.6.1",
-    "consola": "^3.4.2",
-    "typescript": "^5.8.3",
-    "unocss": "^66.1.0"
-  },
-  "overrides": {
-    "unconfig": "0.3.10"
+    "bun-plugin-dtsx": "^0.21.9"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
   },
   "lint-staged": {
     "*.{js,ts}": "bunx eslint . --fix"
-  },
-  "workspaces": [
-    "packages/*"
-  ]
+  }
 }

@@ -6,7 +6,7 @@
 *.pem
 coverage
 dist
-bin/rpx*
+packages/rpx/bin/rpx*
 lib-cov
 logs
 node_modules

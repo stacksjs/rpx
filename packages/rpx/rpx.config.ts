@@ -1,4 +1,4 @@
-import type { ProxyOptions } from './packages/rpx/src/types'
+import type { ProxyOptions } from './src/types'
 
 const config: ProxyOptions = {
   https: true,
