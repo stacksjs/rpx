@@ -90,7 +90,6 @@ export default withPwa(
       ['meta', { property: 'og:locale', content: 'en' }],
       ['meta', { property: 'og:title', content: title }],
       ['meta', { property: 'og:description', content: description }],
-
       ['meta', { property: 'og:site_name', content: 'rpx' }],
       ['meta', { property: 'og:image', content: './images/og-image.png' }],
       ['meta', { property: 'og:url', content: 'https://reverse-proxy.sh/' }],
