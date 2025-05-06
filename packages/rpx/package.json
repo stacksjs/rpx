@@ -67,17 +67,11 @@
   },
   "devDependencies": {
     "@stacksjs/tlsx": "^0.10.0",
-    "bumpp": "^10.1.0",
     "bun-plugin-dtsx": "^0.21.12",
     "bunfig": "^0.8.4",
     "cac": "^6.7.14",
-    "changelogen": "^0.6.1",
     "consola": "^3.4.2",
-    "typescript": "^5.8.3",
-    "unocss": "^66.1.0"
-  },
-  "overrides": {
-    "unconfig": "0.3.10"
+    "typescript": "^5.8.3"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"

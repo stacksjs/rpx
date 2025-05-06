@@ -1,11 +1,11 @@
-import type { ProxyOption, StartOptions } from '../src/types'
+import type { BaseProxyConfig, ProxyOption, StartOptions } from '../packages/rpx/src/types'
 import process from 'node:process'
 import { CAC } from 'cac'
-import { version } from '../../../package.json'
-import { config } from '../src/config'
-import { processManager } from '../src/process-manager'
-import { startProxies, startProxy } from '../src/start'
-import { isMultiProxyConfig } from '../src/utils'
+import { version } from '../package.json'
+import { config } from '../packages/rpx/src/config'
+import { processManager } from '../packages/rpx/src/process-manager'
+import { startProxies, startProxy } from '../packages/rpx/src/start'
+import { isMultiProxyConfig } from '../packages/rpx/src/utils'
 
 const cli = new CAC('rpx')
 
@@ -90,7 +90,7 @@ cli
   .action(async (proxyId: string, options: { verbose?: boolean }) => {
     // Find the proxy configuration
     const proxyConfig = isMultiProxyConfig(config)
-      ? config.proxies.find(p => p.to === proxyId || `${p.from}-${p.to}` === proxyId)
+      ? config.proxies.find((p: BaseProxyConfig) => p.to === proxyId || `${p.from}-${p.to}` === proxyId)
       : config.to === proxyId ? config : null
 
     if (!proxyConfig?.start) {

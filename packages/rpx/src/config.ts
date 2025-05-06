@@ -21,7 +21,6 @@ export const defaultConfig: ProxyConfig = {
   verbose: true,
 }
 
-// @ts-expect-error dtsx issue
 // eslint-disable-next-line antfu/no-top-level-await
 export const config: ProxyConfig = await loadConfig({
   name: 'rpx',
