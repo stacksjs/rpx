@@ -51,7 +51,7 @@
     "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {
-    "bun-plugin-dtsx": "^0.21.9"
+    "bun-plugin-dtsx": "^0.21.12"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
