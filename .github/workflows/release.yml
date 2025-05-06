@@ -43,10 +43,10 @@ jobs:
         uses: stacksjs/action-releaser@v1.0.0
         with:
           files: |
-            bin/rpx-linux-x64.zip
-            bin/rpx-linux-arm64.zip
-            bin/rpx-windows-x64.zip
-            bin/rpx-darwin-x64.zip
-            bin/rpx-darwin-arm64.zip
+            ./packages/rpx/bin/rpx-linux-x64.zip
+            ./packages/rpx/bin/rpx-linux-arm64.zip
+            ./packages/rpx/bin/rpx-windows-x64.zip
+            ./packages/rpx/bin/rpx-darwin-x64.zip
+            ./packages/rpx/bin/rpx-darwin-arm64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
