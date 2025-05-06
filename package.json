@@ -46,6 +46,7 @@
     "release": "bun run changelog && bumpp package.json --all",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
+    "build": "for dir in packages/*; do if [ -f \"$dir/package.json\" ]; then echo \"Building $dir\" && bun run --cwd $dir build; fi; done",
     "dev:docs": "bun --bun vitepress dev docs",
     "build:docs": "bun --bun vitepress build docs",
     "preview:docs": "bun --bun vitepress preview docs"
