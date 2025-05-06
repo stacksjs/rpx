@@ -8,7 +8,6 @@ import * as Hosts from '../src/hosts'
 import * as Https from '../src/https'
 import { ProcessManager } from '../src/process-manager'
 import * as Start from '../src/start'
-import { debugLog } from '../src/utils'
 
 describe('start', () => {
   // Mock dependencies
