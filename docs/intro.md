@@ -12,6 +12,46 @@
 - SSL Support _(HTTPS by default)_
 - Auto HTTP-to-HTTPS Redirection
 - Self `/etc/hosts` Management
+- Bun Plugin for seamless integration
+
+## Usage Options
+
+### CLI
+
+```bash
+# Simple usage
+rpx --from localhost:3000 --to my-app.test
+
+# With HTTPS (enabled by default)
+rpx --from localhost:5173 --to my-app.test --https
+```
+
+### Library
+
+```typescript
+import { startProxy } from '@stacksjs/rpx'
+
+startProxy({
+  from: 'localhost:3000',
+  to: 'my-app.test',
+  https: true
+})
+```
+
+### Bun Plugin
+
+```typescript
+import rpxPlugin from 'bun-plugin-rpx'
+
+export default {
+  plugins: [
+    rpxPlugin({
+      domain: 'my-app.test', // Optional, uses package.json name if not specified
+      https: true // Optional, default is true
+    })
+  ]
+}
+```
 
 ## Changelog
 

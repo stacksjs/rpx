@@ -2,6 +2,8 @@
 
 The Reverse Proxy can be configured using a `rpx.config.ts` _(or `rpx.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.
 
+## Library/CLI Configuration
+
 ```ts
 // rpx.config.{ts,js}
 import type { ReverseProxyOptions } from '@stacksjs/rpx'
@@ -61,5 +63,44 @@ _Then run:_
 ```bash
 ./rpx start
 ```
+
+## Bun Plugin Configuration
+
+When using the Bun plugin, you can configure it with these options:
+
+```ts
+import rpxPlugin from 'bun-plugin-rpx'
+
+export default {
+  plugins: [
+    rpxPlugin({
+      /**
+       * The domain to use instead of localhost:port
+       * @example 'my-app.test', 'awesome.localhost'
+       * @default '$projectName.localhost'
+       */
+      domain: 'my-app.test',
+
+      /**
+       * Allow HTTPS
+       * @default true
+       */
+      https: true,
+
+      /**
+       * Enable debug logging
+       * @default false
+       */
+      verbose: false
+    })
+  ]
+}
+```
+
+The plugin will automatically:
+1. Read your project's name from package.json if no domain is provided
+2. Intercept the Bun server to detect the port
+3. Run rpx with the appropriate parameters
+4. Clean up when the server is stopped
 
 Within the next section of the documentation, the Showcase section, you will find a list of examples of how to use the Reverse Proxy in different scenarios.

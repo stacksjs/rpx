@@ -59,7 +59,27 @@ const sidebar = [
       { text: 'Config', link: '/config' },
     ],
   },
-  { text: 'Showcase', link: '/Showcase' },
+  { text: 'Showcase', link: '/showcase' },
+  {
+    text: 'Features',
+    items: [
+      { text: 'Custom Domains', link: '/features/custom-domains' },
+      { text: 'HTTPS Support', link: '/features/https-support' },
+      { text: 'Hosts Management', link: '/features/hosts-management' },
+      { text: 'Bun Plugin', link: '/features/bun-plugin' },
+      { text: 'Multiple Proxies', link: '/features/multiple-proxies' },
+    ],
+  },
+  {
+    text: 'Advanced',
+    items: [
+      { text: 'SSL Configuration', link: '/advanced/ssl-configuration' },
+      { text: 'Custom Certificates', link: '/advanced/custom-certificates' },
+      { text: 'Cleanup Strategies', link: '/advanced/cleanup-strategies' },
+      { text: 'Frameworks Integration', link: '/advanced/frameworks-integration' },
+    ],
+  },
+  { text: 'API Reference', link: '/api-reference' },
 ]
 const description = 'A modern, fast reverse proxy. For a better local development environment.'
 const title = 'rpx | A modern, fast reverse proxy. For a better local development environment.'

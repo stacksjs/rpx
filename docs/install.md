@@ -14,6 +14,9 @@ npm install --save-dev @stacksjs/rpx
 
 # or, install globally via
 npm i -g @stacksjs/rpx
+
+# for the Bun plugin
+npm install --save-dev bun-plugin-rpx
 ```
 
 ```sh [bun]
@@ -23,6 +26,9 @@ bun install --dev @stacksjs/rpx
 
 # or, install globally via
 bun add --global @stacksjs/rpx
+
+# for the Bun plugin
+bun install --dev bun-plugin-rpx
 ```
 
 ```sh [pnpm]
@@ -31,6 +37,9 @@ pnpm add --save-dev @stacksjs/rpx
 
 # or, install globally via
 pnpm add --global @stacksjs/rpx
+
+# for the Bun plugin
+pnpm add --save-dev bun-plugin-rpx
 ```
 
 ```sh [yarn]
@@ -39,6 +48,9 @@ yarn add --dev @stacksjs/rpx
 
 # or, install globally via
 yarn global add @stacksjs/rpx
+
+# for the Bun plugin
+yarn add --dev bun-plugin-rpx
 ```
 
 ```sh [brew]
@@ -51,7 +63,7 @@ pkgx rpx # coming soon
 
 :::
 
-Read more about how to use it in the Usage section of the documentation.
+Read more about how to use it in the [Usage](/usage) section of the documentation or check out the [Bun Plugin](/features/bun-plugin) documentation.
 
 ## Binaries
 

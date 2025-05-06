@@ -1,6 +1,6 @@
 # Get Started
 
-There are two ways of using this reverse proxy: _as a library or as a CLI._
+There are three ways of using this reverse proxy: _as a library, as a CLI, or as a Bun plugin_.
 
 ## Library
 
@@ -81,6 +81,33 @@ rpx --from localhost:8080 --to my-project.test --keyPath ./key.pem --certPath ./
 rpx --help
 rpx --version
 ```
+
+## Bun Plugin
+
+If you're using Bun for your project, you can use the `bun-plugin-rpx` for seamless integration:
+
+```ts
+// bunfig.toml or in your Bun server setup
+import rpxPlugin from 'bun-plugin-rpx'
+
+export default {
+  plugins: [
+    rpxPlugin({
+      domain: 'my-awesome-app.test', // Optional custom domain
+      https: true, // Optional, defaults to true
+      verbose: false // Optional debug logging
+    })
+  ]
+}
+```
+
+The plugin will automatically:
+- Map your Bun dev server port to your custom domain
+- Set up HTTPS if enabled
+- Handle hosts file entries
+- Clean up when the server stops
+
+See the [Bun Plugin](/features/bun-plugin) documentation for more details.
 
 ## HMR
 
