@@ -43,7 +43,7 @@
     "lint:fix": "bunx --bun eslint . --fix",
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
     "changelog": "changelogen --output CHANGELOG.md",
-    "release": "bun run changelog && bumpp package.json --all",
+    "release": "bun run changelog && bumpp -r --all --execute \"bun scripts/update-tap-version.ts\"",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "build": "for dir in packages/*; do if [ -f \"$dir/package.json\" ]; then echo \"Building $dir\" && bun run --cwd $dir build; fi; done",
