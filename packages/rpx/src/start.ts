@@ -120,7 +120,10 @@ export async function cleanup(options?: CleanupOptions): Promise<void> {
   }
   finally {
     isCleaningUp = false
-    process.exit(0)
+    // Only exit the process if not running in a test environment
+    if (process.env.NODE_ENV !== 'test' && process.env.BUN_ENV !== 'test') {
+      process.exit(0)
+    }
   }
 }
 
@@ -366,6 +369,7 @@ async function createProxyServer(
   vitePluginUsage?: boolean,
   verbose?: boolean,
   cleanUrls?: boolean,
+  changeOrigin?: boolean,
 ): Promise<void> {
   debugLog('proxy', `Creating proxy server ${from} -> ${to} with cleanUrls: ${cleanUrls}`, verbose)
 
@@ -409,12 +413,21 @@ async function createProxyServer(
       }
     }
 
+    // Normalize request headers
+    const normalizedHeaders = normalizeHeaders(req.headers)
+
+    // Handle changeOrigin option - modify the host header to match the target
+    if (changeOrigin) {
+      normalizedHeaders.host = `${sourceUrl.hostname}:${fromPort}`
+      debugLog('request', `Changed origin: setting host header to ${normalizedHeaders.host}`, verbose)
+    }
+
     const proxyOptions = {
       hostname: sourceUrl.hostname,
       port: fromPort,
       path,
       method,
-      headers: normalizeHeaders(req.headers),
+      headers: normalizedHeaders,
     }
 
     debugLog('request', `Proxy request options: ${JSON.stringify(proxyOptions)}`, verbose)
@@ -546,11 +559,8 @@ async function createProxyServer(
     server = http.createServer(requestHandler)
   }
 
-  // Update the activeServers Set type
-  const activeServers = new Set<http.Server | https.Server>()
-
   function setupServer(serverInstance: AnyServerType) {
-    // Type assertion since we know these servers are compatible
+    // Use the module-level activeServers set
     activeServers.add(serverInstance as http.Server | https.Server)
 
     return new Promise<void>((resolve, reject) => {
@@ -582,7 +592,7 @@ async function createProxyServer(
 export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   debugLog('setup', `Setting up reverse proxy: ${JSON.stringify(options)}`, options.verbose)
 
-  const { from, to, fromPort, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, portManager } = options
+  const { from, to, fromPort, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, portManager, changeOrigin, cleanUrls } = options
   const httpPort = 80
   const httpsPort = 443
   const hostname = '0.0.0.0'
@@ -620,7 +630,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       log.info(`You can use 'sudo lsof -i :${targetPort}' (Unix) or 'netstat -ano | findstr :${targetPort}' (Windows) to check what's using the port.`)
     }
 
-    await createProxyServer(from, to, fromPort, finalPort, hostname, sourceUrl, ssl, vitePluginUsage, verbose)
+    await createProxyServer(from, to, fromPort, finalPort, hostname, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin)
   }
   catch (err) {
     debugLog('setup', `Setup failed: ${err}`, verbose)
@@ -666,6 +676,7 @@ export function startProxy(options: ProxyOption): void {
     https: httpsConfig(mergedOptions),
     cleanup: mergedOptions.cleanup,
     vitePluginUsage: mergedOptions.vitePluginUsage,
+    changeOrigin: mergedOptions.changeOrigin,
     verbose: mergedOptions.verbose,
   }
 
@@ -799,6 +810,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         cleanup: mergedOptions.cleanup,
         cleanUrls: proxy.cleanUrls ?? ('cleanUrls' in mergedOptions ? mergedOptions.cleanUrls : false),
         vitePluginUsage: mergedOptions.vitePluginUsage,
+        changeOrigin: proxy.changeOrigin ?? mergedOptions.changeOrigin,
         verbose: mergedOptions.verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
       }))
@@ -809,9 +821,10 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         https: mergedOptions.https,
         cleanup: mergedOptions.cleanup,
         vitePluginUsage: mergedOptions.vitePluginUsage,
+        start: mergedOptions.start,
+        changeOrigin: mergedOptions.changeOrigin,
         verbose: mergedOptions.verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
-        start: mergedOptions.start,
       }]
 
   // Extract domains for cleanup
@@ -862,6 +875,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         vitePluginUsage: option.vitePluginUsage || false,
         verbose: option.verbose || false,
         _cachedSSLConfig: sslConfig,
+        changeOrigin: option.changeOrigin || false,
       })
     }
     catch (err) {

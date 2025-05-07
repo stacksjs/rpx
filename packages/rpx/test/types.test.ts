@@ -171,6 +171,18 @@ describe('types', () => {
       expect(option.https).toBe(true)
       expect(option.from).toBeUndefined()
     })
+
+    it('should support changeOrigin option', () => {
+      const option: ProxyOption = {
+        from: 'localhost:3000',
+        to: 'example.com',
+        changeOrigin: true,
+      }
+
+      expect(option.from).toBe('localhost:3000')
+      expect(option.to).toBe('example.com')
+      expect(option.changeOrigin).toBe(true)
+    })
   })
 
   describe('ProxyOptions', () => {

@@ -19,6 +19,7 @@ export const defaultConfig: ProxyConfig = {
   },
   vitePluginUsage: false,
   verbose: true,
+  changeOrigin: false,
 }
 
 // eslint-disable-next-line antfu/no-top-level-await

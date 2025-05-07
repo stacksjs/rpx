@@ -32,6 +32,7 @@ export interface SharedProxyConfig {
   _cachedSSLConfig?: SSLConfig | null
   start?: StartOptions
   cleanUrls: boolean
+  changeOrigin?: boolean // default: false - changes the origin of the host header to the target URL
 }
 
 export type SharedProxyOptions = Partial<SharedProxyConfig>

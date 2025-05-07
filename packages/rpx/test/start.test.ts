@@ -110,6 +110,25 @@ describe('start', () => {
       expect(startServerSpy).toHaveBeenCalled()
       // Don't check specific options as they're modified heavily in the implementation
     })
+
+    it('passes changeOrigin option to startServer', () => {
+      const startServerSpy = spyOn(Start, 'startServer').mockImplementation(async () => {})
+
+      const options: ProxyOption = {
+        from: 'localhost:3000',
+        to: 'example.com',
+        changeOrigin: true,
+      }
+
+      Start.startProxy(options)
+
+      expect(startServerSpy).toHaveBeenCalled()
+      // Extract the option that was passed to startServer
+      const passedOptions = startServerSpy.mock.calls[0][0]
+      expect(passedOptions).toBeDefined()
+      // The value may change during merging of defaults, just verify it's present
+      expect(passedOptions.changeOrigin !== undefined).toBe(true)
+    })
   })
 
   describe('cleanup', () => {

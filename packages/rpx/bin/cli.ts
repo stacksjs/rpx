@@ -21,6 +21,7 @@ interface CLIOptions {
   startCommand?: string
   startCwd?: string
   startEnv?: string
+  changeOrigin?: boolean
   verbose?: boolean
 }
 
@@ -36,11 +37,13 @@ cli
   .option('--start-command <command>', 'Command to start the dev server')
   .option('--start-cwd <path>', 'Current working directory for the dev server')
   .option('--start-env <env>', 'Environment variables for the dev server')
+  .option('--change-origin', 'Change the origin of the host header to the target URL')
   .option('--verbose', 'Enable verbose logging')
   .example('rpx start --from localhost:5173 --to my-project.localhost')
   .example('rpx start --from localhost:3000 --to my-project.localhost/api')
   .example('rpx start --from localhost:3000 --to localhost:3001')
   .example('rpx start --from localhost:5173 --to my-project.test --key-path /absolute/path/to/key --cert-path /absolute/path/to/cert')
+  .example('rpx start --from localhost:5173 --to my-project.localhost --change-origin')
   .action(async (options?: CLIOptions) => {
     if (!options?.from || !options.to) {
       return startProxies(config)
@@ -60,6 +63,7 @@ cli
         hosts: options.hostsCleanup || false,
       },
       verbose: options.verbose || false,
+      changeOrigin: options.changeOrigin || false,
     }
 
     // Add start options if provided
