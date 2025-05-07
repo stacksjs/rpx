@@ -1,24 +1,30 @@
-name: CI
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
 
-jobs:
-  release:
-    name: release
-    runs-on: ubuntu-latest
+permissions:
+  contents: write
+  packages: write
+  id-token: write
 
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ env.VERSION }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install Bun
+      - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Use cached node_modules
+      - name: Use Cached node_modules
         uses: actions/cache@v4
         with:
           path: node_modules
@@ -29,18 +35,18 @@ jobs:
       - name: Install Dependencies
         run: bun install
 
+      - name: Extract tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
       - name: Publish to npm
         run: bun publish --access public
         env:
           BUN_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
 
-      - name: Create GitHub release
-        run: bunx changelogithub
-        env:
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-
-      - name: Attach Binaries
-        uses: stacksjs/action-releaser@v1.0.0
+      - name: Create GitHub Release
+        id: create_release
+        uses: stacksjs/action-releaser@v1.1.0
         with:
           files: |
             ./packages/rpx/bin/rpx-linux-x64.zip
@@ -50,3 +56,18 @@ jobs:
             ./packages/rpx/bin/rpx-darwin-arm64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate SHA256 checksums
+        run: |
+          mkdir -p checksums
+          sha256sum ./packages/rpx/bin/rpx-linux-x64.zip > checksums/linux-x64.sha256
+          sha256sum ./packages/rpx/bin/rpx-linux-arm64.zip > checksums/linux-arm64.sha256
+          sha256sum ./packages/rpx/bin/rpx-darwin-x64.zip > checksums/darwin-x64.sha256
+          sha256sum ./packages/rpx/bin/rpx-darwin-arm64.zip > checksums/darwin-arm64.sha256
+
+      - name: Upload Checksums Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: checksums/
+          retention-days: 1
