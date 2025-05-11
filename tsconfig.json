@@ -5,6 +5,11 @@
     "moduleDetection": "force",
     "module": "esnext",
     "moduleResolution": "bundler",
+    "paths": {
+      "bun-plugin-rpx": ["./packages/bun-plugin/src"],
+      "@stacksjs/rpx": ["./packages/rpx/src"],
+      "@stacksjs/rpx/*": ["./packages/rpx/src/*"]
+    },
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "strict": true,
