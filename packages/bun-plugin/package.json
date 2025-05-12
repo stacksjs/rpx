@@ -28,15 +28,11 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/src/index.js"
+      "import": "./dist/index.js"
     }
   },
-  "module": "./dist/src/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "rpx": "./dist/bin/cli.js",
-    "reverse-proxy": "./dist/bin/cli.js"
-  },
   "files": [
     "README.md",
     "dist"
@@ -49,6 +45,9 @@
     "prepublishOnly": "bun --bun run build",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@stacksjs/rpx": "workspace:*"
   },
   "devDependencies": {
     "bun-plugin-dtsx": "^0.21.12"

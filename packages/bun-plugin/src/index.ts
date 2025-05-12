@@ -1,60 +1,53 @@
-import type { BunPlugin, ServeOptions } from 'bun'
-import { spawn } from 'node:child_process'
+import type { BunPlugin } from 'bun'
+import type { PluginBuilder, RpxPluginOptions } from './types'
 import path from 'node:path'
 import process from 'node:process'
-
-interface RpxPluginOptions {
-  /**
-   * The domain to use instead of localhost:port
-   * @example 'my-app.test', 'awesome.localhost'
-   * @default '$projectName.localhost'
-   */
-  domain?: string
-
-  /**
-   * Allow HTTPS
-   * @default true
-   */
-  https?: boolean
-
-  /**
-   * Enable debug logging
-   * @default false
-   */
-  verbose?: boolean
-}
-
-interface ServeFunction {
-  (options?: ServeOptions): {
-    start: (...args: unknown[]) => Promise<{ port: number }>
-    stop: () => Promise<void>
-  }
-}
-
-interface PluginBuilder {
-  serve: ServeFunction
-}
-
-const defaultOptions: Required<RpxPluginOptions> = {
-  domain: '',
-  https: true,
-  verbose: false,
-}
+import {
+  cleanup,
+  httpsConfig,
+  startProxies,
+} from '@stacksjs/rpx'
+import colors from 'picocolors'
+import { execAsync, needsSudoAccess } from './utils'
 
 /**
  * A Bun plugin to provide custom domain names for local development
  * instead of using localhost:port
  */
-export function plugin(options: RpxPluginOptions = {}): BunPlugin {
-  const pluginOpts: Required<RpxPluginOptions> = { ...defaultOptions, ...options }
+function RpxBunPlugin(options: RpxPluginOptions = {}): BunPlugin {
+  const {
+    enabled = true,
+    domain: userDomain,
+    https = false,
+    verbose = false,
+    cleanUrls = false,
+    cleanup: cleanupOpts = {
+      hosts: true,
+      certs: false,
+    },
+  } = options
 
   // Store server instance and port to clean up later
   let serverPort: number | null = null
-  let rpxProcess: ReturnType<typeof spawn> | null = null
+  let domain: string = ''
+  let isProxyStarted = false
+  let isCleaningUp = false
+  let hasSudoAccess = false
+  let cleanupPromise: Promise<void> | null = null
+
+  const debug = (...args: any[]) => {
+    if (verbose)
+      console.error('[bun-plugin-rpx]', ...args)
+  }
 
   return {
     name: 'bun-plugin-rpx',
     async setup(build) {
+      if (!enabled) {
+        debug('Plugin is disabled, skipping setup')
+        return
+      }
+
       // Get the project name from package.json as a fallback domain
       let projectName = ''
       try {
@@ -69,118 +62,173 @@ export function plugin(options: RpxPluginOptions = {}): BunPlugin {
       }
 
       // Use provided domain or fallback to projectName.localhost
-      const domain = pluginOpts.domain || `${projectName}.localhost`
+      domain = userDomain || `${projectName}.localhost`
+
+      // Check if we need sudo access early
+      if (https || (!domain.includes('localhost') && !domain.includes('127.0.0.1'))) {
+        try {
+          const needsSudo = await needsSudoAccess({
+            domain,
+            https,
+            verbose,
+          })
+
+          if (needsSudo) {
+            debug('Sudo access required for setup')
+            hasSudoAccess = await checkInitialSudo()
+
+            if (!hasSudoAccess) {
+              process.stdout.write('\nSudo access required for proxy setup.\n')
+
+              const sudo = Bun.spawn(['sudo', 'true'], {
+                stdio: ['inherit', 'inherit', 'inherit'],
+              })
+
+              const exitCode = await sudo.exited
+              hasSudoAccess = exitCode === 0
+
+              if (!hasSudoAccess) {
+                console.error('Failed to get sudo access. Please try again.')
+                process.exit(1)
+              }
+            }
+          }
+        }
+        catch (error) {
+          console.error('Error checking sudo requirements:', error)
+        }
+      }
 
       // Hook into serve to intercept port and start rpx
       const buildWithServe = build as unknown as PluginBuilder
       const originalServe = buildWithServe.serve
 
-      buildWithServe.serve = (options?: ServeOptions) => {
+      buildWithServe.serve = (options?) => {
         // Store the original serve function result
         const server = originalServe(options)
         const originalStart = server.start
 
-        server.start = async (...args: unknown[]) => {
+        server.start = async (...args) => {
           // Start the original server
           const result = await originalStart.apply(server, args)
 
           // Get the port from the server
           serverPort = result.port
 
-          if (serverPort) {
-            await startRpx(domain, serverPort, pluginOpts.https, pluginOpts.verbose)
+          if (serverPort && !isProxyStarted) {
+            await startRpx(serverPort)
+            isProxyStarted = true
           }
 
           return result
         }
 
-        // Handle server stop to clean up rpx
-        const originalStop = server.stop
-        server.stop = async () => {
-          if (rpxProcess) {
-            rpxProcess.kill()
-            rpxProcess = null
-          }
-
-          return originalStop.apply(server)
-        }
-
         return server
       }
 
-      // Handle build process exit
-      process.on('exit', cleanup)
-      process.on('SIGINT', () => {
-        cleanup()
-        process.exit(0)
-      })
-      process.on('SIGTERM', () => {
-        cleanup()
-        process.exit(0)
+      // Setup exit handler
+      const exitHandler = async () => {
+        if (!domain || isCleaningUp) {
+          debug('Skipping cleanup - no domain or already cleaning')
+          return
+        }
+
+        isCleaningUp = true
+        debug('Starting cleanup process')
+
+        try {
+          cleanupPromise = cleanup({
+            domains: [domain],
+            hosts: typeof cleanupOpts === 'boolean' ? cleanupOpts : cleanupOpts?.hosts,
+            certs: typeof cleanupOpts === 'boolean' ? cleanupOpts : cleanupOpts?.certs,
+            verbose,
+          })
+
+          await cleanupPromise
+          debug('Cleanup completed successfully')
+        }
+        catch (error) {
+          console.error('Error during cleanup:', error)
+        }
+        finally {
+          isCleaningUp = false
+          cleanupPromise = null
+        }
+      }
+
+      // Handle process exit - cleanup is handled by the rpx library
+      process.once('SIGINT', exitHandler)
+      process.once('SIGTERM', exitHandler)
+      process.once('beforeExit', exitHandler)
+      process.once('exit', async () => {
+        if (cleanupPromise) {
+          try {
+            await cleanupPromise
+          }
+          catch (error) {
+            console.error('Cleanup failed during exit:', error)
+            process.exit(1)
+          }
+        }
       })
     },
   }
 
   /**
-   * Start rpx process
+   * Start rpx proxy
    */
-  async function startRpx(domain: string, port: number, https: boolean, verbose: boolean) {
-    // Find rpx binary - it should be installed as a dependency
+  async function startRpx(port: number) {
+    if (!port) {
+      debug('No port provided, cannot start proxy')
+      return
+    }
+
     try {
-      const rpxBinary = 'rpx'
+      debug(`Starting RPX: ${domain} -> localhost:${port}`)
 
-      // Build the command to run rpx
-      const args = [
-        `--from=localhost:${port}`,
-        `--to=${domain}`,
-      ]
+      // Configure and start the proxy
+      const serverUrl = `localhost:${port}`
 
-      // Add HTTPS flag if needed
+      const config = {
+        from: serverUrl,
+        to: domain,
+        https: https ? httpsConfig({ to: domain }) : false,
+        cleanup: cleanupOpts ?? true,
+        cleanUrls,
+        verbose,
+      }
+
+      const colorUrl = (url: string) => colors.cyan(url.replace(/:(\d+)\//, (_, port) => `:${colors.bold(port)}/`))
+
+      await startProxies(config)
+
+      // Display the proxy URL information
+      const protocol = https ? 'https' : 'http'
+      const proxiedUrl = `${protocol}://${domain}/`
+
+      console.error(`\n  ${colors.green('➜')}  ${colors.bold('Local')}:   http://localhost:${port}`)
+      console.error(`  ${colors.green('➜')}  ${colors.bold('Proxied URL')}: ${colorUrl(proxiedUrl)}`)
+
       if (https) {
-        args.push('--https')
+        console.error(`  ${colors.green('➜')}  ${colors.bold('SSL')}: ${colors.dim('TLS 1.2/1.3, HTTP/2')}`)
       }
-
-      // Add verbose flag if needed
-      if (verbose) {
-        args.push('--verbose')
-      }
-
-      // Start rpx process
-      rpxProcess = spawn(rpxBinary, args, {
-        stdio: verbose ? 'inherit' : 'ignore',
-        detached: false,
-      })
-
-      // Log startup information
-      console.error(`\n🌐 rpx: ${https ? 'https' : 'http'}://${domain} -> localhost:${port}\n`)
-
-      // Handle process events
-      rpxProcess.on('error', (err) => {
-        console.error(`rpx error: ${err.message}`)
-        rpxProcess = null
-      })
-
-      rpxProcess.on('exit', (code) => {
-        if (code !== 0 && code !== null) {
-          console.error(`rpx exited with code ${code}`)
-        }
-        rpxProcess = null
-      })
     }
     catch (error) {
       console.error('Failed to start rpx:', error)
-    }
-  }
-
-  /**
-   * Clean up rpx process
-   */
-  function cleanup() {
-    if (rpxProcess) {
-      rpxProcess.kill()
-      rpxProcess = null
+      process.exit(1)
     }
   }
 }
 
-export default plugin
+async function checkInitialSudo(): Promise<boolean> {
+  try {
+    await execAsync('sudo -n true')
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+export { RpxBunPlugin }
+export default RpxBunPlugin
