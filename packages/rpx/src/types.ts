@@ -33,6 +33,7 @@ export interface SharedProxyConfig {
   start?: StartOptions
   cleanUrls: boolean
   changeOrigin?: boolean // default: false - changes the origin of the host header to the target URL
+  regenerateUntrustedCerts?: boolean // If true, will regenerate and re-trust certs that exist but are not trusted by the system.
 }
 
 export type SharedProxyOptions = Partial<SharedProxyConfig>

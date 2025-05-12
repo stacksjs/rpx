@@ -20,6 +20,11 @@ export const defaultConfig: ProxyConfig = {
   vitePluginUsage: false,
   verbose: true,
   changeOrigin: false,
+  /**
+   * If true, will regenerate and re-trust certs that exist but are not trusted by the system.
+   * If false, will use the existing cert even if not trusted (may result in browser warnings).
+   */
+  regenerateUntrustedCerts: true,
 }
 
 // eslint-disable-next-line antfu/no-top-level-await

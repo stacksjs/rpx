@@ -2,6 +2,7 @@ import type { ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig, SSLCon
 import fs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import process from 'node:process'
 // @ts-expect-error dtsx issue
 import { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate as generateCert } from '@stacksjs/tlsx'
 import { consola as log } from 'consola'
@@ -208,6 +209,20 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
   // Add to system trust store with all necessary options
   await addCertToSystemTrustStoreAndSaveCert(hostCert, caCert.certificate, hostConfig)
 
+  // Ensure the cert is actually trusted (macOS only for now)
+  const shouldRegenerate = options.regenerateUntrustedCerts !== false // default true
+  if (shouldRegenerate) {
+    const trusted = await isCertTrusted(hostConfig.certPath, options)
+    if (!trusted) {
+      log.warn('Certificate was not trusted after initial add. Attempting to re-add to trust store...')
+      await addCertToSystemTrustStoreAndSaveCert(hostCert, caCert.certificate, hostConfig)
+      const trustedAgain = await isCertTrusted(hostConfig.certPath, options)
+      if (!trustedAgain) {
+        log.error('Failed to trust certificate after multiple attempts.')
+      }
+    }
+  }
+
   // Cache the SSL config for reuse
   cachedSSLConfig = {
     key: hostCert.privateKey,
@@ -244,6 +259,16 @@ export async function checkExistingCertificates(options?: ProxyOptions): Promise
       }
       catch (err) {
         debugLog('ssl', `Failed to read CA cert: ${err}`, options?.verbose)
+      }
+    }
+
+    // Check if the cert is trusted
+    const shouldRegenerate = options?.regenerateUntrustedCerts !== false // default true
+    if (shouldRegenerate) {
+      const trusted = await isCertTrusted(paths.certPath, options)
+      if (!trusted) {
+        debugLog('ssl', `Certificate at ${paths.certPath} is not trusted`, options?.verbose)
+        return null
       }
     }
 
@@ -333,4 +358,100 @@ export async function cleanupCertificates(domain: string, verbose?: boolean): Pr
 
   // Delete all files concurrently
   await Promise.all(filesToDelete.map(file => safeDeleteFile(file, verbose)))
+}
+
+/**
+ * Checks if a certificate is trusted by the system (macOS only for now)
+ * If options.regenerateUntrustedCerts is false, always returns true (skips trust check)
+ */
+export async function isCertTrusted(certPath: string, options?: { regenerateUntrustedCerts?: boolean }): Promise<boolean> {
+  if (options?.regenerateUntrustedCerts === false) {
+    return true
+  }
+  const platform = process.platform
+  if (platform === 'darwin') {
+    // macOS: Use the 'security' CLI to check if the cert is in the System keychain
+    try {
+      const { exec } = await import('node:child_process')
+      return await new Promise((resolve) => {
+        exec(
+          `security verify-cert -c "${certPath}" 2>&1`,
+          (error, stdout, _stderr) => {
+            if (error) {
+              resolve(false)
+            }
+            else {
+              resolve(stdout.includes('certificate verification successful'))
+            }
+          },
+        )
+      })
+    }
+    catch {
+      return false
+    }
+  }
+  else if (platform === 'linux') {
+    // Linux: Try to use certutil (NSS) or check /etc/ssl/certs
+    try {
+      const { exec } = await import('node:child_process')
+      // Try certutil (NSS database, e.g. for Chrome/Firefox)
+      return await new Promise((resolve) => {
+        exec(
+          `certutil -L -d sql:/etc/pki/nssdb | grep -F "$(openssl x509 -in \"${certPath}\" -noout -subject)"`,
+          (error, stdout, _stderr) => {
+            if (!error && stdout && stdout.length > 0) {
+              resolve(true)
+            }
+            else {
+              // Fallback: check if the cert is symlinked in /etc/ssl/certs
+              exec(
+                `openssl x509 -in "${certPath}" -noout -hash`,
+                async (hashErr, hashStdout, _hashStderr) => {
+                  if (hashErr)
+                    return resolve(false)
+                  const hash = hashStdout.trim().split('\n')[0]
+                  const certLink = `/etc/ssl/certs/${hash}.0`
+                  try {
+                    await fs.access(certLink)
+                    resolve(true)
+                  }
+                  catch {
+                    resolve(false)
+                  }
+                },
+              )
+            }
+          },
+        )
+      })
+    }
+    catch {
+      return false
+    }
+  }
+  else if (platform === 'win32') {
+    // Windows: Use certutil to verify the cert is in the Root store
+    try {
+      const { exec } = await import('node:child_process')
+      return await new Promise((resolve) => {
+        exec(
+          `certutil -verifystore -user Root "${certPath}"`,
+          (error, stdout, _stderr) => {
+            if (!error && stdout && stdout.includes('Certificate is valid')) {
+              resolve(true)
+            }
+            else {
+              resolve(false)
+            }
+          },
+        )
+      })
+    }
+    catch {
+      return false
+    }
+  }
+  // Unsupported platform
+  return false
 }

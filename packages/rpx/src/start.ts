@@ -302,20 +302,14 @@ export async function startServer(options: SingleProxyConfig): Promise<void> {
         })
       }
 
-      // Try to load existing certificates
-      try {
-        debugLog('ssl', `Attempting to load SSL configuration for ${toUrl.hostname}`, options.verbose)
-        sslConfig = await loadSSLConfig({
-          ...options,
-          to: toUrl.hostname,
-          https: options.https,
-        })
-      }
-      catch (loadError) {
-        debugLog('ssl', `Failed to load certificates, will generate new ones: ${loadError}`, options.verbose)
-      }
+      // Always check for existing and trusted certificates
+      sslConfig = await checkExistingCertificates({
+        ...options,
+        to: toUrl.hostname,
+        https: options.https,
+      })
 
-      // Generate new certificates if loading failed or returned null
+      // Generate new certificates if loading failed, returned null, or not trusted
       if (!sslConfig) {
         debugLog('ssl', `Generating new certificates for ${toUrl.hostname}`, options.verbose)
         await generateCertificate({
@@ -326,7 +320,7 @@ export async function startServer(options: SingleProxyConfig): Promise<void> {
         })
 
         // Try loading again after generation
-        sslConfig = await loadSSLConfig({
+        sslConfig = await checkExistingCertificates({
           ...options,
           to: toUrl.hostname,
           https: options.https,
@@ -783,23 +777,20 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
   // Resolve SSL configuration if HTTPS is enabled
   if (mergedOptions.https) {
-    const existingSSLConfig = await checkExistingCertificates(mergedOptions)
+    let existingSSLConfig = await checkExistingCertificates(mergedOptions)
 
-    if (existingSSLConfig) {
-      debugLog('ssl', `Using existing certificates for ${primaryDomain}`, mergedOptions.verbose)
-      mergedOptions._cachedSSLConfig = existingSSLConfig
-    }
-    else {
-      debugLog('ssl', `No valid certificates found for ${primaryDomain}, generating new ones`, mergedOptions.verbose)
+    if (!existingSSLConfig) {
+      debugLog('ssl', `No valid or trusted certificates found for ${primaryDomain}, generating new ones`, mergedOptions.verbose)
       await generateCertificate(mergedOptions)
-
-      const sslConfig = await checkExistingCertificates(mergedOptions)
-      if (!sslConfig) {
+      existingSSLConfig = await checkExistingCertificates(mergedOptions)
+      if (!existingSSLConfig) {
         throw new Error(`Failed to load SSL certificates after generation for ${primaryDomain}`)
       }
-
-      mergedOptions._cachedSSLConfig = sslConfig
     }
+    else {
+      debugLog('ssl', `Using existing and trusted certificates for ${primaryDomain}`, mergedOptions.verbose)
+    }
+    mergedOptions._cachedSSLConfig = existingSSLConfig
   }
 
   // Prepare proxy configurations
