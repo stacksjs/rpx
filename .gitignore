@@ -4,6 +4,7 @@
 *.log
 *.tgz
 *.pem
+*.mjs
 coverage
 dist
 packages/rpx/bin/rpx*

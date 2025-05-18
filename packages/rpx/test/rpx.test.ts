@@ -36,10 +36,16 @@ describe('@stacksjs/rpx', () => {
     expect(typeof rpx.removeHosts).toBe('function')
 
     // Check HTTPS configuration functions
-    expect(rpx.generateSSLPaths).toBeDefined()
-    expect(typeof rpx.generateSSLPaths).toBe('function')
     expect(rpx.httpsConfig).toBeDefined()
     expect(typeof rpx.httpsConfig).toBe('function')
+
+    // Check port management functions
+    expect(rpx.portManager).toBeDefined()
+    expect(rpx.DefaultPortManager).toBeDefined()
+    expect(rpx.isPortInUse).toBeDefined()
+    expect(typeof rpx.isPortInUse).toBe('function')
+    expect(rpx.findAvailablePort).toBeDefined()
+    expect(typeof rpx.findAvailablePort).toBe('function')
   })
 
   it('has default export as startProxies function', async () => {

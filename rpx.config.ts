@@ -1,11 +1,28 @@
-import type { ProxyOptions } from './packages/rpx/src/types'
+import type { ProxyOptions } from '@stacksjs/rpx'
+import os from 'node:os'
+import path from 'node:path'
 
 const config: ProxyOptions = {
-  https: true,
-
-  // If true, will regenerate and re-trust certs that exist but are not trusted by the system.
-  // If false, will use the existing cert even if not trusted (may result in browser warnings).
-  regenerateUntrustedCerts: true,
+  https: {
+    // Custom SSL settings for better browser compatibility
+    domain: 'rpx.localhost',
+    hostCertCN: 'rpx.localhost',
+    altNameIPs: ['127.0.0.1', '::1'],
+    altNameURIs: ['localhost'],
+    organizationName: 'RPX Development',
+    countryName: 'US',
+    stateName: 'California',
+    localityName: 'Local Development',
+    commonName: 'rpx.localhost',
+    validityDays: 825, // Longer validity for development
+    subjectAltNames: [
+      { type: 2, value: 'rpx.localhost' },
+      { type: 2, value: '*.rpx.localhost' },
+      { type: 2, value: 'localhost' },
+    ],
+    // Use standard paths that are easier to manage
+    basePath: path.join(os.homedir(), '.stacks', 'ssl'),
+  },
 
   cleanup: {
     hosts: true,
@@ -15,7 +32,7 @@ const config: ProxyOptions = {
   proxies: [
     {
       from: 'localhost:5173',
-      to: 'stacks.localhost',
+      to: 'rpx.localhost',
       cleanUrls: true,
       start: {
         command: 'bun run dev:docs',
@@ -25,7 +42,7 @@ const config: ProxyOptions = {
   ],
 
   vitePluginUsage: false,
-  verbose: false,
+  verbose: true, // Enable verbose mode for better debugging
 }
 
 export default config

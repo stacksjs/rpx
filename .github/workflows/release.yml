@@ -54,5 +54,14 @@ jobs:
             ./packages/rpx/bin/rpx-windows-x64.zip
             ./packages/rpx/bin/rpx-darwin-x64.zip
             ./packages/rpx/bin/rpx-darwin-arm64.zip
+          # --- Homebrew tap update support ---
+          # Path to your Homebrew formula template (update this path as needed)
+          # homebrewFormula: .github/homebrew-formula.rb
+          # The owner/repo of your Homebrew tap (update this value as needed)
+          # homebrewRepo: stacksjs/homebrew-tap
+          # Optionally uncomment and set these if you need custom values:
+          # homebrewBranch: main
+          # homebrewPath: Formula
+          # homebrewCommitFormat: "update: {{ formula }} to {{ version }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,11 +1,16 @@
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
-// import Inspect from 'vite-plugin-inspect'
 import UnoCSS from 'unocss/vite'
 import IconsResolver from 'unplugin-icons/resolver'
 import Icons from 'unplugin-icons/vite'
 import Components from 'unplugin-vue-components/vite'
 import { defineConfig } from 'vite'
-import { SimplifiedVitePlugin } from 'vite-plugin-rpx'
+
+// Path to the mkcert-generated certificates
+const sslDir = resolve(homedir(), '.stacks', 'ssl')
+const certPath = resolve(sslDir, 'docs.stacks.localhost.crt')
+const keyPath = resolve(sslDir, 'docs.stacks.localhost.key')
 
 export default defineConfig({
   build: {
@@ -25,16 +30,17 @@ export default defineConfig({
   },
 
   server: {
-    // Let Vite handle HMR natively
-    // This avoids infinite WebSocket port allocation loops
+    // Configure HTTPS with our trusted certificates
+    https: {
+      key: readFileSync(keyPath),
+      cert: readFileSync(certPath),
+    },
+    host: 'docs.stacks.localhost',
+    strictPort: true,
   },
 
   plugins: [
-    // custom
-    // MarkdownTransform(),
-    // Contributors(contributions),
-
-    // plugins
+    // Custom components
     Components({
       dirs: resolve(__dirname, 'theme/components'),
       include: [/\.vue$/, /\.vue\?vue/, /\.md$/],
@@ -53,24 +59,10 @@ export default defineConfig({
     }),
 
     UnoCSS(resolve(__dirname, 'unocss.config.ts')),
-
-    // SimplifiedVitePlugin({
-    //   domain: 'docs.stacks.localhost', // pretty test URL
-    //   https: true,
-    //   cleanUrls: true,
-    //   verbose: true,
-    //   // Force trust the certificate in the system keychain and regenerate if needed
-    //   trustCertificate: true,
-    //   regenerateUntrustedCerts: true,
-    //   sslDir: '~/.stacks/ssl', // Use the correct SSL directory
-    // }),
-
-    // Inspect(),
   ],
 
   optimizeDeps: {
     exclude: [
-      // 'vue',
       'body-scroll-lock',
     ],
   },

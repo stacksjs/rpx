@@ -6,228 +6,143 @@
 <!-- [![npm downloads][npm-downloads-src]][npm-downloads-href] -->
 <!-- [![Codecov][codecov-src]][codecov-href] -->
 
-# rpx
+# Simplified Vite Plugin for Pretty URLs and HTTPS
 
-> A zero-config reverse proxy for local development with SSL support, custom domains, and more—for a better local developer experience.
+This plugin provides a simplified approach to adding pretty URLs and HTTPS support to your Vite applications without the complexity of a full reverse proxy setup.
 
 ## Features
 
-- 🔀 Simple, lightweight Reverse Proxy
-- ♾️ Custom Domains _(with wildcard support)_
-- 0️⃣ Zero-Config Setup
-- 🔒 SSL Support _(HTTPS by default)_
-- 🛣️ Auto HTTP-to-HTTPS Redirection
-- ✏️ `/etc/hosts` Management
-- 🧼 Clean URLs _(removes `.html` extension)_
-- 🤖 CLI & Library Support
+- **Pretty URLs**: Automatically serve `/about` as `/about.html` or `/about/index.html`
+- **HTTPS Support**: Generate and use self-signed certificates
+- **Custom Domain**: Add entries to `/etc/hosts` for local domains
+- **No WebSocket Issues**: Works without the WebSocket port allocation loops that can happen with reverse proxies
 
-## Install
+## Installation
 
 ```bash
-bun install -d @stacksjs/rpx
+npm install vite-plugin-pretty-urls-https
+# or
+yarn add vite-plugin-pretty-urls-https
+# or
+bun add vite-plugin-pretty-urls-https
 ```
 
-<!-- _Alternatively, you can install:_
+## Usage
 
-```bash
-brew install rpx # wip
-pkgx install rpx # wip
-``` -->
+### In your vite.config.js:
 
-## Get Started
+```js
+import { defineConfig } from 'vite'
+import { SimplifiedVitePlugin } from 'vite-plugin-pretty-urls-https'
 
-There are two ways of using this reverse proxy: _as a library or as a CLI._
+export default defineConfig({
+  plugins: [
+    SimplifiedVitePlugin({
+      // Enable/disable the plugin (default: true)
+      enabled: true,
 
-### Library
+      // Custom domain (default: 'localhost')
+      domain: 'myapp.localhost',
 
-Given the npm package is installed:
+      // Enable HTTPS (default: false)
+      https: true,
 
-```ts
-import type { TlsConfig } from '@stacksjs/rpx'
-import { startProxy } from '@stacksjs/rpx'
-
-export interface CleanupConfig {
-  hosts: boolean // clean up /etc/hosts, defaults to false
-  certs: boolean // clean up certificates, defaults to false
-}
-
-export interface ProxyConfig {
-  from: string // domain to proxy from, defaults to localhost:5173
-  to: string // domain to proxy to, defaults to stacks.localhost
-  cleanUrls?: boolean // removes the .html extension from URLs, defaults to false
-  https: boolean | TlsConfig // automatically uses https, defaults to true, also redirects http to https
-  cleanup?: boolean | CleanupConfig // automatically cleans up /etc/hosts, defaults to false
-  start?: StartOptions
-  verbose: boolean // log verbose output, defaults to false
-}
-
-const config: ProxyOptions = {
-  from: 'localhost:5173',
-  to: 'my-docs.localhost',
-  cleanUrls: true,
-  https: true,
-  cleanup: false,
-  start: {
-    command: 'bun run dev:docs',
-    lazy: true,
-  }
-}
-
-startProxy(config)
-```
-
-In case you are trying to start multiple proxies, you may use this configuration:
-
-```ts
-// rpx.config.{ts,js}
-import type { ProxyOptions } from '@stacksjs/rpx'
-import os from 'node:os'
-import path from 'node:path'
-
-const config: ProxyOptions = {
-  https: { // https: true -> also works with sensible defaults
-    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.ca.crt`),
-    certPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt`),
-    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt.key`),
-  },
-
-  cleanup: {
-    hosts: true,
-    certs: false,
-  },
-
-  proxies: [
-    {
-      from: 'localhost:5173',
-      to: 'my-app.localhost',
+      // Enable clean URLs (default: false)
       cleanUrls: true,
-      start: {
-        command: 'bun run dev',
-        cwd: '/path/to/my-app',
-        env: {
-          NODE_ENV: 'development',
-        },
-      },
-    },
-    {
-      from: 'localhost:5174',
-      to: 'my-api.local',
-    },
-  ],
 
-  verbose: true,
-}
+      // Base SSL certificate directory (default: '~/.stacksjs/ssl')
+      sslDir: '~/.stacksjs/ssl',
 
-export default config
+      // Enable verbose logging (default: false)
+      verbose: true
+    })
+  ]
+})
 ```
 
-### CLI
+## Migrating from rpx
 
-```bash
-rpx --from localhost:3000 --to my-project.localhost
-rpx --from localhost:8080 --to my-project.test --keyPath ./key.pem --certPath ./cert.pem
-rpx --help
-rpx --version
+If you're currently using rpx and facing WebSocket port allocation issues, here's how to migrate to this simplified plugin:
+
+### 1. Before (rpx)
+
+```js
+import { VitePluginRpx } from '@stacksjs/vite-plugin-rpx'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [
+    VitePluginRpx({
+      domain: 'myapp.localhost',
+      https: true,
+      cleanUrls: true
+    })
+  ]
+})
 ```
 
-## Configuration
+### 2. After (simplified plugin)
 
-The Reverse Proxy can be configured using a `rpx.config.ts` _(or `rpx.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.
+```js
+import { defineConfig } from 'vite'
+import { SimplifiedVitePlugin } from 'vite-plugin-pretty-urls-https'
 
-```ts
-// rpx.config.{ts,js}
-import type { ProxyOptions } from '@stacksjs/rpx'
-import os from 'node:os'
-import path from 'node:path'
-
-const config: ProxyOptions = {
-  from: 'localhost:5173',
-  to: 'stacks.localhost',
-
-  https: {
-    domain: 'stacks.localhost',
-    hostCertCN: 'stacks.localhost',
-    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.ca.crt`),
-    certPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt`),
-    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt.key`),
-    altNameIPs: ['127.0.0.1'],
-    altNameURIs: ['localhost'],
-    organizationName: 'stacksjs.org',
-    countryName: 'US',
-    stateName: 'California',
-    localityName: 'Playa Vista',
-    commonName: 'stacks.localhost',
-    validityDays: 180,
-    verbose: false,
-  },
-
-  verbose: false,
-}
-
-export default config
+export default defineConfig({
+  plugins: [
+    SimplifiedVitePlugin({
+      domain: 'myapp.localhost',
+      https: true,
+      cleanUrls: true
+    })
+  ]
+})
 ```
 
-_Then run:_
+Key differences:
+- No WebSocket port allocation issues
+- No separate proxy server running
+- More streamlined approach
+- Still retains pretty URLs and HTTPS functionality
 
-```bash
-./rpx start
+## Difference from the complex proxy version
+
+This plugin directly modifies Vite's server configuration rather than creating a separate proxy server:
+
+1. **HTTPS**: Adds HTTPS directly to Vite's dev server
+2. **Pretty URLs**: Uses middleware to rewrite URLs on the fly
+3. **No WebSocket Issues**: Avoids the WebSocket port allocation problems that occur with proxies
+
+## How it works
+
+Unlike the full rpx package which creates a reverse proxy, this plugin:
+
+1. **Pretty URLs**: Uses Vite middleware to try different URL patterns when a file isn't found
+2. **HTTPS**: Configures Vite's built-in HTTPS server with certificates
+3. **Custom Domain**: Adds entries to your hosts file (with permission)
+
+This approach is much simpler and avoids the complex port allocation logic that can lead to WebSocket issues.
+
+## Troubleshooting
+
+### Certificate Issues
+
+If your browser doesn't trust the certificates:
+
+1. Navigate to `https://yourapp.localhost`
+2. Accept the security warning
+3. The certificate should be stored in your system keychain
+
+If you need to regenerate certificates, delete the files from the SSL directory (default: `~/.stacksjs/ssl`).
+
+### Hosts File
+
+The plugin attempts to add entries to your `/etc/hosts` file but may require sudo. If you see permission errors, manually add:
+
 ```
-
-To learn more, head over to the [documentation](https://reverse-proxy.sh/).
-
-## Testing
-
-```bash
-bun test
+127.0.0.1 yourapp.localhost
+::1 yourapp.localhost
 ```
-
-## Changelog
-
-Please see our [releases](https://github.com/stacksjs/stacks/releases) page for more information on what has changed recently.
-
-## Contributing
-
-Please review the [Contributing Guide](https://github.com/stacksjs/contributing) for details.
-
-## Community
-
-For help, discussion about best practices, or any other conversation that would benefit from being searchable:
-
-[Discussions on GitHub](https://github.com/stacksjs/stacks/discussions)
-
-For casual chit-chat with others using this package:
-
-[Join the Stacks Discord Server](https://discord.gg/stacksjs)
-
-## Postcardware
-
-“Software that is free, but hopes for a postcard.” We love receiving postcards from around the world showing where `rpx` is being used! We showcase them on our website too.
-
-Our address: Stacks.js, 12665 Village Ln #2306, Playa Vista, CA 90094, United States 🌎
-
-## Sponsors
-
-We would like to extend our thanks to the following sponsors for funding Stacks development. If you are interested in becoming a sponsor, please reach out to us.
-
-- [JetBrains](https://www.jetbrains.com/)
-- [The Solana Foundation](https://solana.com/)
-
-## Credits
-
-- [Chris Breuer](https://github.com/chrisbbreuer)
-- [All Contributors](../../contributors)
 
 ## License
 
-The MIT License (MIT). Please see [LICENSE](https://github.com/stacksjs/stacks/tree/main/LICENSE.md) for more information.
-
-Made with 💙
-
-<!-- Badges -->
-[npm-version-src]: https://img.shields.io/npm/v/@stacksjs/rpx?style=flat-square
-[npm-version-href]: https://npmjs.com/package/@stacksjs/rpx
-[github-actions-src]: https://img.shields.io/github/actions/workflow/status/stacksjs/rpx/ci.yml?style=flat-square&branch=main
-[github-actions-href]: https://github.com/stacksjs/rpx/actions?query=workflow%3Aci
-
-<!-- [codecov-src]: https://img.shields.io/codecov/c/gh/stacksjs/rpx/main?style=flat-square
-[codecov-href]: https://codecov.io/gh/stacksjs/rpx -->
+MIT

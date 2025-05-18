@@ -20,6 +20,7 @@ export interface CleanupConfig {
   hosts: boolean // default: true, if hosts file should be cleaned up
   certs: boolean // default: false, if certificates should be cleaned up
   verbose: boolean // default: false
+  vitePluginUsage?: boolean // default: false, if cleanup was initiated by the Vite plugin
 }
 
 export type CleanupOptions = Partial<CleanupConfig>

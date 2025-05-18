@@ -11,7 +11,7 @@ const config: ProxyOptions = {
   proxies: [
     {
       from: 'localhost:5173',
-      to: 'stacks.localhost',
+      to: 'rpx.localhost',
       cleanUrls: true,
       start: {
         command: 'bun run dev:docs',

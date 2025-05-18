@@ -1,22 +1,30 @@
 /* eslint-disable no-console */
 import type { IncomingHttpHeaders, SecureServerOptions } from 'node:http2'
 import type { ServerOptions } from 'node:https'
-import type { CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig } from './types'
+import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
+import { exec } from 'node:child_process'
+import * as fs from 'node:fs'
 import * as http from 'node:http'
 import * as http2 from 'node:http2'
 import * as https from 'node:https'
 import * as net from 'node:net'
-import process from 'node:process'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import * as process from 'node:process'
+import * as tls from 'node:tls'
 import { consola as log } from 'consola'
 import colors from 'picocolors'
 import { version } from '../package.json'
 import { config } from './config'
 import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
+import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
 import { ProcessManager } from './process-manager'
 import { debugLog } from './utils'
 
 const processManager = new ProcessManager()
+// Create a global port manager for coordinating port usage
+const globalPortManager = new DefaultPortManager('0.0.0.0')
 
 // Keep track of all running servers for cleanup
 const activeServers: Set<http.Server | https.Server> = new Set()
@@ -26,15 +34,23 @@ type AnyIncomingMessage = http.IncomingMessage | http2.Http2ServerRequest
 type AnyServerResponse = http.ServerResponse | http2.Http2ServerResponse
 
 let isCleaningUp = false
+let cleanupPromiseResolve: (() => void) | null = null
+let cleanupPromise: Promise<void> | null = null
 
 export async function cleanup(options?: CleanupOptions): Promise<void> {
   if (isCleaningUp) {
     debugLog('cleanup', 'Cleanup already in progress, skipping', options?.verbose)
-    return
+    // Return the existing cleanup promise if it exists
+    return cleanupPromise || Promise.resolve()
   }
 
   isCleaningUp = true
   debugLog('cleanup', 'Starting cleanup process', options?.verbose)
+
+  // Create a new cleanup promise that can be returned to all callers
+  cleanupPromise = new Promise<void>((resolve) => {
+    cleanupPromiseResolve = resolve
+  })
 
   try {
     // Stop all watched processes first
@@ -119,73 +135,55 @@ export async function cleanup(options?: CleanupOptions): Promise<void> {
     log.error('Error during cleanup:', err)
   }
   finally {
+    if (cleanupPromiseResolve)
+      cleanupPromiseResolve()
+    cleanupPromiseResolve = null
     isCleaningUp = false
+
     // Only exit the process if not running in a test environment
-    if (process.env.NODE_ENV !== 'test' && process.env.BUN_ENV !== 'test') {
+    // and we're not being called from the Vite plugin
+    const isVitePluginCall = options && 'vitePluginUsage' in options && options.vitePluginUsage === true
+    if (process.env.NODE_ENV !== 'test' && process.env.BUN_ENV !== 'test' && !isVitePluginCall) {
+      // Use a more forceful exit to ensure all handles are closed
       process.exit(0)
     }
   }
+
+  return cleanupPromise
 }
 
 // Register cleanup handlers
 let isHandlingSignal = false
 
-function signalHandler() {
+function signalHandler(signal: string) {
   if (isHandlingSignal) {
     // Force exit if we get a second signal
+    debugLog('signal', `Received second ${signal} signal, forcing exit`, true)
     process.exit(1)
     return
   }
+
   isHandlingSignal = true
-  cleanup().catch(() => process.exit(1))
+  debugLog('signal', `Received ${signal} signal, initiating cleanup`, true)
+
+  cleanup()
+    .catch((err) => {
+      debugLog('signal', `Cleanup failed after ${signal}: ${err}`, true)
+      process.exit(1)
+    })
+    .finally(() => {
+      isHandlingSignal = false
+    })
 }
 
-process.on('SIGINT', signalHandler)
-process.on('SIGTERM', signalHandler)
+// Use a unified approach to handle signals
+process.once('SIGINT', () => signalHandler('SIGINT'))
+process.once('SIGTERM', () => signalHandler('SIGTERM'))
 process.on('uncaughtException', (err) => {
   debugLog('process', `Uncaught exception: ${err}`, true)
   log.error('Uncaught exception:', err)
-  cleanup()
+  signalHandler('uncaughtException')
 })
-
-/**
- * Check if a port is in use
- */
-function isPortInUse(port: number, hostname: string, verbose?: boolean): Promise<boolean> {
-  debugLog('port', `Checking if port ${port} is in use on ${hostname}`, verbose)
-  return new Promise((resolve) => {
-    const server = net.createServer()
-
-    server.once('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        debugLog('port', `Port ${port} is in use`, verbose)
-        resolve(true)
-      }
-    })
-
-    server.once('listening', () => {
-      debugLog('port', `Port ${port} is available`, verbose)
-      server.close()
-      resolve(false)
-    })
-
-    server.listen(port, hostname)
-  })
-}
-
-/**
- * Find next available port
- */
-async function findAvailablePort(startPort: number, hostname: string, verbose?: boolean): Promise<number> {
-  debugLog('port', `Finding available port starting from ${startPort}`, verbose)
-  let port = startPort
-  while (await isPortInUse(port, hostname, verbose)) {
-    debugLog('port', `Port ${port} is in use, trying ${port + 1}`, verbose)
-    port++
-  }
-  debugLog('port', `Found available port: ${port}`, verbose)
-  return port
-}
 
 /**
  * Test connection to a server
@@ -193,11 +191,21 @@ async function findAvailablePort(startPort: number, hostname: string, verbose?: 
 async function testConnection(hostname: string, port: number, verbose?: boolean, retries = 5): Promise<void> {
   debugLog('connection', `Testing connection to ${hostname}:${port} (retries left: ${retries})`, verbose)
 
+  // Add a maximum retry timeout to prevent hanging indefinitely
+  const maxTestDuration = 15000 // 15 seconds maximum for the entire test process
+  const startTime = Date.now()
+
+  // Check if we should bypass the connection test (for special cases)
+  if (process.env.RPX_BYPASS_CONNECTION_TEST === 'true') {
+    debugLog('connection', `Bypassing connection test for ${hostname}:${port} due to RPX_BYPASS_CONNECTION_TEST flag`, verbose)
+    return
+  }
+
   const tryConnect = () => new Promise<void>((resolve, reject) => {
     const socket = net.connect({
       host: hostname,
       port,
-      timeout: 2000, // 2 second timeout per attempt
+      timeout: 3000, // Increase timeout to 3 seconds per attempt for better reliability
     })
 
     socket.once('connect', () => {
@@ -223,13 +231,66 @@ async function testConnection(hostname: string, port: number, verbose?: boolean,
     await tryConnect()
   }
   catch (err: any) {
-    if (retries > 0) {
-      debugLog('connection', `Retrying connection in 2 seconds... (${retries} retries left)`, verbose)
+    // Check if we've exceeded the maximum test duration
+    if (Date.now() - startTime > maxTestDuration) {
+      debugLog('connection', `Connection test timed out after ${maxTestDuration}ms, but continuing anyway`, verbose)
+      log.warn(`Connection test to ${hostname}:${port} timed out, but RPX will try to proceed anyway.`)
+      return // Continue with setup despite timeout
+    }
+
+    // If we're dealing with a server that takes time to start up
+    if (err.code === 'ECONNREFUSED' && retries > 0) {
+      debugLog('connection', `Connection refused, server might be starting up. Retrying in 2 seconds... (${retries} retries left)`, verbose)
       await new Promise(resolve => setTimeout(resolve, 2000))
       return testConnection(hostname, port, verbose, retries - 1)
     }
 
-    throw new Error(`Failed to connect to ${hostname}:${port} after multiple attempts: ${err.message}`)
+    // For other errors, retry with a different approach
+    if (retries > 0) {
+      // Try a more resilient HTTP check if traditional socket connection fails
+      try {
+        debugLog('connection', `Trying HTTP request to ${hostname}:${port}`, verbose)
+        await new Promise<void>((resolve, reject) => {
+          const req = http.request({
+            hostname,
+            port,
+            path: '/',
+            method: 'HEAD',
+            timeout: 5000,
+          }, (res) => {
+            // Any response is considered success (even 404, 500, etc)
+            debugLog('connection', `Received HTTP response with status: ${res.statusCode}`, verbose)
+            resolve()
+          })
+
+          req.on('error', e => reject(e))
+          req.on('timeout', () => {
+            req.destroy()
+            reject(new Error('HTTP request timed out'))
+          })
+
+          req.end()
+        })
+
+        debugLog('connection', `HTTP request to ${hostname}:${port} succeeded`, verbose)
+        return // HTTP request succeeded, continue with setup
+      }
+      catch (httpErr) {
+        debugLog('connection', `HTTP request to ${hostname}:${port} failed: ${httpErr}`, verbose)
+
+        // Still retry the regular socket connection approach
+        debugLog('connection', `Retrying socket connection in 2 seconds... (${retries} retries left)`, verbose)
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        return testConnection(hostname, port, verbose, retries - 1)
+      }
+    }
+
+    // For production environments, we might want to be more strict
+    // But for typical usage, let's be permissive and just warn
+    const errorMessage = `Failed to connect to ${hostname}:${port} after ${5 - retries} attempts: ${err.message}`
+    debugLog('connection', `${errorMessage}. To bypass this check set RPX_BYPASS_CONNECTION_TEST=true`, verbose)
+    log.warn(errorMessage)
+    log.warn(`RPX will try to continue anyway. If you're sure this is correct, you can set RPX_BYPASS_CONNECTION_TEST=true to skip this check.`)
   }
 }
 
@@ -238,7 +299,7 @@ export async function startServer(options: SingleProxyConfig): Promise<void> {
 
   // Parse URLs early to get the hostnames
   const fromUrl = new URL((options.from?.startsWith('http') ? options.from : `http://${options.from}`) || 'localhost:5173')
-  const toUrl = new URL((options.to?.startsWith('http') ? options.to : `http://${options.to}`) || 'stacks.localhost')
+  const toUrl = new URL((options.to?.startsWith('http') ? options.to : `http://${options.to}`) || 'rpx.localhost')
   const fromPort = Number.parseInt(fromUrl.port) || (fromUrl.protocol.includes('https:') ? 443 : 80)
 
   // Check and update hosts file for custom domains
@@ -288,7 +349,9 @@ export async function startServer(options: SingleProxyConfig): Promise<void> {
   catch (err) {
     debugLog('server', `Connection test failed: ${err}`, options.verbose)
     log.error((err as Error).message)
-    process.exit(1)
+    // Don't exit process, continue with proxy setup
+    log.warn('Continuing with proxy setup despite connection test failure...')
+    log.info('If you need to bypass connection testing, set environment variable RPX_BYPASS_CONNECTION_TEST=true')
   }
 
   let sslConfig = options._cachedSSLConfig || null
@@ -586,19 +649,54 @@ async function createProxyServer(
 export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   debugLog('setup', `Setting up reverse proxy: ${JSON.stringify(options)}`, options.verbose)
 
-  const { from, to, fromPort, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, portManager, changeOrigin, cleanUrls } = options
+  const { from, to, fromPort, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
   const httpPort = 80
   const httpsPort = 443
   const hostname = '0.0.0.0'
+  // Use the global port manager if not provided
+  const portManager = options.portManager || globalPortManager
 
   try {
+    // Add an extra check to make sure the hostname is in the hosts file
+    if (to && !to.includes('localhost') && !to.includes('127.0.0.1')) {
+      const hostsExist = await checkHosts([to], verbose)
+      if (!hostsExist[0]) {
+        log.warn(`The hostname ${to} isn't in your hosts file. Adding it now...`)
+        try {
+          await addHosts([to], verbose)
+          log.success(`Added ${to} to your hosts file.`)
+        }
+        catch (error) {
+          log.error(`Failed to add ${to} to your hosts file: ${error}`)
+          log.info(`You may need to manually add '127.0.0.1 ${to}' to your /etc/hosts file.`)
+        }
+      }
+    }
+    else {
+      // Special handling for *.localhost domains to ensure they're in the hosts file
+      if (to && to.includes('localhost') && !to.match(/^(localhost|127\.0\.0\.1)$/)) {
+        const hostsExist = await checkHosts([to], verbose)
+        if (!hostsExist[0]) {
+          log.warn(`The hostname ${to} isn't in your hosts file. Adding it now...`)
+          try {
+            await addHosts([to], verbose)
+            log.success(`Added ${to} to your hosts file.`)
+          }
+          catch (error) {
+            log.error(`Failed to add ${to} to your hosts file: ${error}`)
+            log.info(`You may need to manually add '127.0.0.1 ${to}' to your /etc/hosts file.`)
+          }
+        }
+      }
+    }
+
     // Handle HTTP redirect server only for the first proxy
-    if (ssl && !portManager?.usedPorts.has(httpPort)) {
+    if (ssl && !portManager.usedPorts.has(httpPort)) {
       const isHttpPortBusy = await isPortInUse(httpPort, hostname, verbose)
       if (!isHttpPortBusy) {
         debugLog('setup', 'Starting HTTP redirect server', verbose)
         startHttpRedirectServer(verbose)
-        portManager?.usedPorts.add(httpPort)
+        portManager.usedPorts.add(httpPort)
       }
       else {
         debugLog('setup', 'Port 80 is in use, skipping HTTP redirect', verbose)
@@ -607,21 +705,39 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
     }
 
     const targetPort = ssl ? httpsPort : httpPort
+
+    // First check if the target port is already in use
+    const isTargetPortBusy = await isPortInUse(targetPort, hostname, verbose)
+
     let finalPort: number
 
-    if (portManager) {
-      finalPort = await portManager.getNextAvailablePort(targetPort)
+    if (isTargetPortBusy) {
+      log.warn(`Port ${targetPort} is already in use. This may be another instance of rpx or another service.`)
+
+      // For port 443, we need admin/sudo privileges to use it directly
+      if (targetPort === 443) {
+        log.info('HTTPS requires port 443 for standard operation. Using an alternative port instead.')
+
+        // Use the enhanced port manager with connectivity testing for more reliability
+        finalPort = await portManager.getNextAvailablePort(3443, true)
+        log.info(`Using port ${finalPort} instead. Access your site at https://${to}:${finalPort}`)
+      }
+      else {
+        // Use the enhanced port manager with connectivity testing for more reliability
+        finalPort = await portManager.getNextAvailablePort(targetPort + 1000, true)
+        log.info(`Using port ${finalPort} instead. Access your site at http://${to}:${finalPort}`)
+      }
     }
     else {
-      const isTargetPortBusy = await isPortInUse(targetPort, hostname, verbose)
-      finalPort = isTargetPortBusy
-        ? await findAvailablePort(ssl ? 8443 : 8080, hostname, verbose)
-        : targetPort
-    }
-
-    if (finalPort !== targetPort) {
-      log.warn(`Port ${targetPort} is in use. Using port ${finalPort} instead.`)
-      log.info(`You can use 'sudo lsof -i :${targetPort}' (Unix) or 'netstat -ano | findstr :${targetPort}' (Windows) to check what's using the port.`)
+      // Standard port is available, use it
+      finalPort = targetPort
+      portManager.usedPorts.add(finalPort)
+      if (targetPort === 443) {
+        log.info(`Using standard HTTPS port 443. Access your site at https://${to}`)
+      }
+      else {
+        log.info(`Using standard HTTP port 80. Access your site at http://${to}`)
+      }
     }
 
     await createProxyServer(from, to, fromPort, finalPort, hostname, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin)
@@ -634,6 +750,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       hosts: typeof cleanupOptions === 'boolean' ? cleanupOptions : cleanupOptions?.hosts,
       certs: typeof cleanupOptions === 'boolean' ? cleanupOptions : cleanupOptions?.certs,
       verbose,
+      vitePluginUsage,
     })
   }
 }
@@ -688,31 +805,51 @@ export function startProxy(options: ProxyOption): void {
   })
 }
 
+// Helper function to safely get verbose flag from different config types
+function getVerbose(options: any): boolean {
+  return options?.verbose || false
+}
+
 export async function startProxies(options?: ProxyOptions): Promise<void> {
-  debugLog('proxies', 'Starting proxy setup')
+  // Allow re-using a previous SSL config between multiple startProxies calls
+  // This is particularly important for the Vite plugin
+  let mergedOptions = {
+    from: 'localhost:5173',
+    to: 'rpx.localhost',
+    https: false,
+    cleanup: {
+      hosts: true,
+      certs: false,
+    },
+    vitePluginUsage: false,
+    verbose: false,
+    cleanUrls: false,
+    changeOrigin: false,
+    regenerateUntrustedCerts: false,
+  } as any
 
-  const userConfig = config
-  debugLog('config', `User config: ${JSON.stringify(userConfig, null, 2)}`)
+  if (options) {
+    mergedOptions = {
+      ...mergedOptions,
+      ...options,
+    }
+  }
 
-  const mergedOptions = {
-    ...userConfig,
-    ...options,
-  } as ProxyOption
-
-  debugLog('config', `Starting with config: ${JSON.stringify(mergedOptions, null, 2)}`, mergedOptions?.verbose)
-  debugLog('config', `Is multi-proxy? ${'proxies' in mergedOptions}`, mergedOptions?.verbose)
+  const verbose = getVerbose(mergedOptions)
+  debugLog('config', `Starting with config: ${JSON.stringify(mergedOptions, null, 2)}`, verbose)
+  debugLog('config', `Is multi-proxy? ${'proxies' in mergedOptions}`, verbose)
 
   // Start dev servers first if configured
   if ('proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)) {
-    debugLog('servers', `Found ${mergedOptions.proxies.length} proxies in config`, mergedOptions?.verbose)
+    debugLog('servers', `Found ${mergedOptions.proxies.length} proxies in config`, verbose)
     for (const proxy of mergedOptions.proxies) {
       if (proxy.start) {
         const proxyId = `${proxy.from}-${proxy.to}`
         try {
-          debugLog('watch', `Starting command for ${proxyId} with command: ${proxy.start.command}`, mergedOptions.verbose)
+          debugLog('watch', `Starting command for ${proxyId} with command: ${proxy.start.command}`, verbose)
           log.info(`Starting command for ${proxyId}...`)
 
-          await processManager.startProcess(proxyId, proxy.start, mergedOptions.verbose)
+          await processManager.startProcess(proxyId, proxy.start, verbose)
 
           // Parse the URL to get hostname and port
           const fromUrl = new URL(proxy.from.startsWith('http') ? proxy.from : `http://${proxy.from}`)
@@ -721,30 +858,37 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
           // Wait for the server to be ready
           try {
-            await testConnection(hostname, port, mergedOptions.verbose)
-            debugLog('watch', `Dev server is ready at ${hostname}:${port}`, mergedOptions.verbose)
+            await testConnection(hostname, port, verbose)
+            debugLog('watch', `Dev server is ready at ${hostname}:${port}`, verbose)
           }
           catch (err) {
-            debugLog('watch', `Dev server failed to initialize: ${err}`, mergedOptions.verbose)
-            throw new Error(`Dev server failed to initialize: ${err}`)
+            // Special handling for connection errors that may be recoverable
+            // Sometimes Vite and other dev servers can take longer to initialize
+            debugLog('watch', `Connection check failed, but continuing with proxy setup: ${err}`, verbose)
+            log.warn(`Dev server connection check failed. RPX will try to proceed anyway...`)
+
+            // Don't throw here - we'll attempt to continue even though the connection test failed
+            // This allows for the case where the server might become available shortly after
           }
         }
         catch (err) {
-          debugLog('watch', `Failed to start command for ${proxyId}: ${err}`, mergedOptions.verbose)
+          debugLog('watch', `Failed to start command for ${proxyId}: ${err}`, verbose)
           throw new Error(`Failed to start command for ${proxyId}: ${err}`)
         }
       }
       else {
-        debugLog('watch', `No start command for proxy ${proxy.from} -> ${proxy.to}`, mergedOptions.verbose)
+        debugLog('watch', `No start command for proxy ${proxy.from} -> ${proxy.to}`, verbose)
       }
     }
   }
   else if ('start' in mergedOptions && mergedOptions.start) {
-    debugLog('watch', 'Found start command in single proxy config', mergedOptions.verbose)
+    debugLog('watch', 'Found start command in single proxy config', verbose)
     const proxyId = `${mergedOptions.from}-${mergedOptions.to}`
     try {
-      debugLog('watch', `Starting command: ${mergedOptions.start.command}`, mergedOptions.verbose)
-      await processManager.startProcess(proxyId, mergedOptions.start, mergedOptions.verbose)
+      if (mergedOptions.start) {
+        debugLog('watch', `Starting command: ${mergedOptions.start.command}`, verbose)
+        await processManager.startProcess(proxyId, mergedOptions.start, verbose)
+      }
 
       // Parse the URL to get hostname and port
       const fromUrl = new URL(mergedOptions.from?.startsWith('http') ? mergedOptions.from : `http://${mergedOptions.from}`)
@@ -753,27 +897,30 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
       // Wait for the server to be ready
       try {
-        await testConnection(hostname, port, mergedOptions.verbose)
-        debugLog('watch', `Dev server is ready at ${hostname}:${port}`, mergedOptions.verbose)
+        await testConnection(hostname, port, verbose)
+        debugLog('watch', `Dev server is ready at ${hostname}:${port}`, verbose)
       }
       catch (err) {
-        debugLog('watch', `Dev server failed to initialize: ${err}`, mergedOptions.verbose)
-        throw new Error(`Dev server failed to initialize: ${err}`)
+        // Special handling for connection errors that may be recoverable
+        debugLog('watch', `Connection check failed, but continuing with proxy setup: ${err}`, verbose)
+        log.warn(`Dev server connection check failed. RPX will try to proceed anyway...`)
+
+        // Don't throw here - we'll attempt to continue even though the connection test failed
       }
     }
     catch (err) {
-      debugLog('watch', `Failed to run start command: ${err}`, mergedOptions.verbose)
+      debugLog('watch', `Failed to run start command: ${err}`, verbose)
       throw new Error(`Failed to run start command: ${err}`)
     }
   }
   else {
-    debugLog('watch', 'No start command found in config', mergedOptions.verbose)
+    debugLog('watch', 'No start command found in config', verbose)
   }
 
   // Get primary domain for certificates
   const primaryDomain = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
     ? mergedOptions.proxies[0]?.to
-    : ('to' in mergedOptions ? mergedOptions.to : 'stacks.localhost')
+    : ('to' in mergedOptions ? mergedOptions.to : 'rpx.localhost')
 
   // Resolve SSL configuration if HTTPS is enabled
   if (mergedOptions.https) {
@@ -795,31 +942,31 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
   // Prepare proxy configurations
   const proxyOptions = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
-    ? mergedOptions.proxies.map((proxy: ProxyConfig) => ({
+    ? mergedOptions.proxies.map((proxy: any) => ({
         ...proxy,
         https: mergedOptions.https,
         cleanup: mergedOptions.cleanup,
         cleanUrls: proxy.cleanUrls ?? ('cleanUrls' in mergedOptions ? mergedOptions.cleanUrls : false),
         vitePluginUsage: mergedOptions.vitePluginUsage,
         changeOrigin: proxy.changeOrigin ?? mergedOptions.changeOrigin,
-        verbose: mergedOptions.verbose,
+        verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
-      }))
+      } as ProxyOption))
     : [{
         from: 'from' in mergedOptions ? mergedOptions.from : 'localhost:5173',
-        to: 'to' in mergedOptions ? mergedOptions.to : 'stacks.localhost',
+        to: 'to' in mergedOptions ? mergedOptions.to : 'rpx.localhost',
         cleanUrls: 'cleanUrls' in mergedOptions ? mergedOptions.cleanUrls : false,
         https: mergedOptions.https,
         cleanup: mergedOptions.cleanup,
         vitePluginUsage: mergedOptions.vitePluginUsage,
-        start: mergedOptions.start,
+        start: ('start' in mergedOptions) ? mergedOptions.start : undefined,
         changeOrigin: mergedOptions.changeOrigin,
-        verbose: mergedOptions.verbose,
+        verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
-      }]
+      } as ProxyOption]
 
   // Extract domains for cleanup
-  const domains = proxyOptions.map((opt: ProxyOption) => opt.to || 'stacks.localhost')
+  const domains = proxyOptions.map((opt: ProxyOption) => opt.to || 'rpx.localhost')
   const sslConfig = mergedOptions._cachedSSLConfig
 
   // Setup cleanup handler
@@ -854,7 +1001,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   // Start all proxies
   for (const option of proxyOptions) {
     try {
-      const domain = option.to || 'stacks.localhost'
+      const domain = option.to || 'rpx.localhost'
       debugLog('proxy', `Starting proxy for ${domain} with SSL config: ${!!sslConfig}`, option.verbose)
 
       await startServer({

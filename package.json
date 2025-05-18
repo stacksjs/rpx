@@ -49,7 +49,8 @@
     "build": "for dir in packages/*; do if [ -f \"$dir/package.json\" ]; then echo \"Building $dir\" && bun run --cwd $dir build; fi; done",
     "dev:docs": "bun --bun vitepress dev docs",
     "build:docs": "bun --bun vitepress build docs",
-    "preview:docs": "bun --bun vitepress preview docs"
+    "preview:docs": "bun --bun vitepress preview docs",
+    "fix-certs": "bun scripts/fix-certs.js"
   },
   "devDependencies": {
     "@stacksjs/docs": "^0.70.23",
@@ -63,7 +64,8 @@
     "changelogen": "^0.6.1",
     "consola": "^3.4.2",
     "typescript": "^5.8.3",
-    "unocss": "^66.1.2"
+    "unocss": "^66.1.2",
+    "vite-plugin-rpx": "workspace:*"
   },
   "overrides": {
     "unconfig": "0.3.10"

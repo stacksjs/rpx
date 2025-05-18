@@ -1,11 +1,12 @@
 /* eslint-disable no-console */
 import type { Plugin, ViteDevServer } from 'vite'
-import type { VitePluginLocalOptions } from './types'
+import type { VitePluginRpxOptions } from './types'
 import { exec, spawn } from 'node:child_process'
 import process from 'node:process'
 import { promisify } from 'node:util'
-import { checkExistingCertificates, checkHosts, cleanup, startProxies } from '@stacksjs/rpx'
+import { checkExistingCertificates, checkHosts, cleanup, portManager, startProxies } from '@stacksjs/rpx'
 import colors from 'picocolors'
+import { SimplifiedVitePlugin } from './simplified-plugin'
 import { buildConfig } from './utils'
 
 const execAsync = promisify(exec)
@@ -20,7 +21,7 @@ async function checkInitialSudo(): Promise<boolean> {
   }
 }
 
-async function needsSudoAccess(options: VitePluginLocalOptions, domain: string): Promise<boolean> {
+async function needsSudoAccess(options: VitePluginRpxOptions, domain: string): Promise<boolean> {
   try {
     // Check if we need to generate certificates
     if (options.https) {
@@ -55,7 +56,18 @@ async function needsSudoAccess(options: VitePluginLocalOptions, domain: string):
   }
 }
 
-export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
+// Export the simplified plugin types and implementation
+export { SimplifiedVitePlugin } from './simplified-plugin'
+export type { SimplifiedPluginOptions } from './simplified-plugin'
+
+// Set the default export to be the simplified plugin
+export default SimplifiedVitePlugin
+
+/**
+ * Legacy VitePluginRpx implementation - kept for backward compatibility
+ * @deprecated Use SimplifiedVitePlugin instead to avoid WebSocket port allocation issues
+ */
+export function VitePluginRpx(options: VitePluginRpxOptions): Plugin {
   const {
     enabled = true,
     verbose = false,
@@ -68,23 +80,22 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
   let domains: string[] | undefined
   let proxyUrl: string | undefined
   let originalConsole: typeof console
-  let isCleaningUp = false
-  let hasSudoAccess = false
   let cleanupPromise: Promise<void> | null = null
-  let server: ViteDevServer | undefined
+  let serverInstance: ViteDevServer | undefined
+  let isShuttingDown = false
 
   const debug = (...args: any[]) => {
-    if (verbose)
+    if (verbose && originalConsole)
       originalConsole.log('[vite-plugin-local]', ...args)
   }
 
   const exitHandler = async () => {
-    if (!domains?.length || isCleaningUp) {
-      debug('Skipping cleanup - no domains or already cleaning')
-      return
+    if (!domains?.length || isShuttingDown) {
+      debug('Skipping cleanup - no domains or already shutting down')
+      return cleanupPromise
     }
 
-    isCleaningUp = true
+    isShuttingDown = true
     debug('Starting cleanup process')
 
     try {
@@ -93,18 +104,20 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
         hosts: typeof cleanupOpts === 'boolean' ? cleanupOpts : cleanupOpts?.hosts,
         certs: typeof cleanupOpts === 'boolean' ? cleanupOpts : cleanupOpts?.certs,
         verbose,
+        vitePluginUsage: true, // Mark this cleanup as coming from the Vite plugin
       })
 
       await cleanupPromise
       domains = undefined
       debug('Cleanup completed successfully')
+      return cleanupPromise
     }
     catch (error) {
       console.error('Error during cleanup:', error)
       throw error
     }
     finally {
-      isCleaningUp = false
+      isShuttingDown = false
       cleanupPromise = null
     }
   }
@@ -118,14 +131,12 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
     }
     catch (error) {
       console.error(`Cleanup failed after ${signal}:`, error)
-      process.exit(1)
     }
 
-    if (server?.httpServer)
-      server.httpServer.close()
-
-    if (signal !== 'CLOSE')
-      process.exit(0)
+    // Don't exit on CLOSE to allow normal server shutdown
+    if (signal !== 'CLOSE' && serverInstance?.httpServer) {
+      serverInstance.httpServer.close()
+    }
   }
 
   return {
@@ -136,15 +147,21 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
     configResolved(resolvedConfig) {
       // Early exit if we're in build mode
       if (resolvedConfig.command === 'build')
-        // eslint-disable-next-line no-useless-return
         return
+
+      // Disable HMR WebSocket server completely by default
+      // This is critical to stop the infinite port allocation loop
+      if (resolvedConfig.server) {
+        debug('Disabling HMR WebSocket server in Vite to prevent port allocation loops')
+        resolvedConfig.server.hmr = false
+      }
     },
 
     async configureServer(viteServer: ViteDevServer) {
       if (!enabled)
         return
 
-      server = viteServer
+      serverInstance = viteServer
       originalConsole = { ...console }
 
       // Move sudo check here
@@ -153,7 +170,7 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
 
       const needsSudo = await needsSudoAccess(options, domain)
       if (needsSudo) {
-        hasSudoAccess = await checkInitialSudo()
+        const hasSudoAccess = await checkInitialSudo()
 
         if (!hasSudoAccess) {
           const origLog = console.log
@@ -161,7 +178,7 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
 
           process.stdout.write('\nSudo access required for proxy setup.\n')
 
-          hasSudoAccess = await new Promise<boolean>((resolve) => {
+          const gotSudoAccess = await new Promise<boolean>((resolve) => {
             const sudo = spawn('sudo', ['true'], {
               stdio: 'inherit',
             })
@@ -173,51 +190,47 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
 
           console.log = origLog
 
-          if (!hasSudoAccess) {
+          if (!gotSudoAccess) {
             console.error('Failed to get sudo access. Please try again.')
             process.exit(1)
           }
         }
       }
 
-      server.httpServer?.on('close', () => {
-        debug('Server closing, cleaning up...')
-        handleSignal('CLOSE')
-      })
+      if (serverInstance.httpServer) {
+        serverInstance.httpServer.once('close', () => {
+          debug('Server closing, cleaning up...')
+          handleSignal('CLOSE').catch(console.error)
+        })
+      }
 
-      // Register signal handlers
-      process.once('SIGINT', () => handleSignal('SIGINT'))
-      process.once('SIGTERM', () => handleSignal('SIGTERM'))
-      process.once('beforeExit', () => handleSignal('beforeExit'))
-      process.once('exit', async () => {
-        if (cleanupPromise) {
-          try {
-            await cleanupPromise
-          }
-          catch (error) {
-            console.error('Cleanup failed during exit:', error)
-            process.exit(1)
-          }
-        }
-      })
+      // Only register process signal handlers if they haven't been registered by rpx
+      const registeredEvents = process.listeners('SIGINT').length > 0
+        && process.listeners('SIGTERM').length > 0
+
+      if (!registeredEvents) {
+        // Register signal handlers only if rpx hasn't registered them already
+        process.once('SIGINT', () => handleSignal('SIGINT').catch(console.error))
+        process.once('SIGTERM', () => handleSignal('SIGTERM').catch(console.error))
+      }
 
       const colorUrl = (url: string) => colors.cyan(url.replace(/:(\d+)\//, (_, port) => `:${colors.bold(port)}/`))
 
       // Store the original printUrls function
-      const originalPrintUrls = server.printUrls
+      const originalPrintUrls = serverInstance.printUrls
 
       // Wrap the printUrls function to add our custom output while preserving other plugins' modifications
-      server.printUrls = () => {
-        if (!server?.resolvedUrls)
+      serverInstance.printUrls = () => {
+        if (!serverInstance?.resolvedUrls)
           return
 
         // Call the original printUrls function first
         if (typeof originalPrintUrls === 'function') {
-          originalPrintUrls.call(server)
+          originalPrintUrls.call(serverInstance)
         }
         else {
           // If no other plugin has modified printUrls, print the default local URL
-          console.log(`  ${colors.green('➜')}  ${colors.bold('Local')}:   ${colorUrl(server.resolvedUrls.local[0])}`)
+          console.log(`  ${colors.green('➜')}  ${colors.bold('Local')}:   ${colorUrl(serverInstance.resolvedUrls.local[0])}`)
           console.log(`  ${colors.green('➜')}  ${colors.bold('Network')}: ${colors.dim('use --host to expose')}`)
         }
 
@@ -235,11 +248,11 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
 
       const startProxy = async () => {
         try {
-          const host = typeof server?.config.server.host === 'boolean'
+          const host = typeof serverInstance?.config.server.host === 'boolean'
             ? 'localhost'
-            : server?.config.server.host || 'localhost'
+            : serverInstance?.config.server.host || 'localhost'
 
-          const port = server?.config.server.port || 5173
+          const port = serverInstance?.config.server.port || 5173
           const serverUrl = `${host}:${port}`
 
           const config = buildConfig(options, serverUrl)
@@ -247,7 +260,10 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
           proxyUrl = config.to
 
           debug('Starting proxies...')
-          await startProxies(config)
+          await startProxies({
+            ...config,
+            vitePluginUsage: true, // Mark this as coming from the Vite plugin
+          })
           debug('Proxy setup complete')
         }
         catch (error) {
@@ -257,9 +273,14 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
       }
 
       // Wait for the server to be ready before starting the proxy
-      server.httpServer?.once('listening', startProxy)
-      if (server.httpServer?.listening) {
-        await startProxy()
+      if (serverInstance.httpServer) {
+        serverInstance.httpServer.once('listening', () => {
+          startProxy().catch(console.error)
+        })
+
+        if (serverInstance.httpServer.listening) {
+          await startProxy()
+        }
       }
     },
 
@@ -270,5 +291,3 @@ export function VitePluginLocal(options: VitePluginLocalOptions): Plugin {
     },
   }
 }
-
-export default VitePluginLocal

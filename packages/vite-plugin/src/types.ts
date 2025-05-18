@@ -1,55 +1,70 @@
 import type { TlsConfig } from '@stacksjs/rpx'
 
-export interface VitePluginLocalOptions {
+export interface VitePluginRpxOptions {
   /**
-   * Enable/disable the plugin
+   * Whether the plugin is enabled
    * @default true
    */
   enabled?: boolean
 
   /**
-   * The target domain to proxy to (e.g., 'my-app.localhost')
-   * @example 'my-app.test'
-   * @example 'example.com'
-   * @default 'stacks.localhost'
+   * Domain for HTTPS certificates and hosts file
+   * @default 'localhost'
    */
-  domain: string
+  domain?: string
 
   /**
-   * SSL/TLS configuration
-   * - true: uses default SSL config
-   * - false: disables SSL
-   * - object: custom SSL configuration
+   * Enable HTTPS with self-signed certificates
    * @default false
    */
   https?: boolean | TlsConfig
 
   /**
-   * Cleanup options
-   * - true: cleanup everything
-   * - false: cleanup nothing
-   * - object: cleanup specific items
-   * @default { hosts: true, certs: false }
-   * @example { hosts: true, certs: true }
+   * Enable clean URLs (automatically append .html or /index.html)
+   * @default false
+   */
+  cleanUrls?: boolean
+
+  /**
+   * Whether to clean up on exit
+   * @default true
    */
   cleanup?: boolean | {
+    /**
+     * Whether to clean up hosts file entries
+     * @default true
+     */
     hosts?: boolean
+    /**
+     * Whether to clean up SSL certificates
+     * @default false
+     */
     certs?: boolean
   }
 
   /**
-   * By default, VitePress resolves inbound links to URLs ending with .html.
-   * However, some users may prefer "Clean URLs" without the .html extension
-   * for example, example.com/path instead of example.com/path.html.
+   * Change the origin of the host header to match the target URL
    * @default false
    */
-  cleanUrls?: boolean
+  changeOrigin?: boolean
 
   /**
    * Enable verbose logging
    * @default false
    */
   verbose?: boolean
+
+  /**
+   * If true, will regenerate and re-trust certs that exist but are not trusted by the system.
+   * @default false
+   */
+  regenerateUntrustedCerts?: boolean
+
+  /**
+   * Enable HMR WebSocket server (disabled by default to prevent port allocation issues)
+   * @default false
+   */
+  enableHmr?: boolean
 }
 
 export type { TlsConfig }

@@ -47,7 +47,8 @@
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@stacksjs/rpx": "workspace:*"
+    "@stacksjs/rpx": "workspace:*",
+    "@stacksjs/tlsx": "^0.10.0"
   },
   "devDependencies": {
     "bun-plugin-dtsx": "^0.21.12"

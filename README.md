@@ -53,7 +53,7 @@ export interface CleanupConfig {
 
 export interface ProxyConfig {
   from: string // domain to proxy from, defaults to localhost:5173
-  to: string // domain to proxy to, defaults to stacks.localhost
+  to: string // domain to proxy to, defaults to rpx.localhost
   cleanUrls?: boolean // removes the .html extension from URLs, defaults to false
   https: boolean | TlsConfig // automatically uses https, defaults to true, also redirects http to https
   cleanup?: boolean | CleanupConfig // automatically cleans up /etc/hosts, defaults to false
@@ -63,7 +63,7 @@ export interface ProxyConfig {
 
 const config: ProxyOptions = {
   from: 'localhost:5173',
-  to: 'my-docs.localhost',
+  to: 'rpx.localhost',
   cleanUrls: true,
   https: true,
   cleanup: false,
@@ -86,9 +86,9 @@ import path from 'node:path'
 
 const config: ProxyOptions = {
   https: { // https: true -> also works with sensible defaults
-    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.ca.crt`),
-    certPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt`),
-    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt.key`),
+    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `rpx.localhost.ca.crt`),
+    certPath: path.join(os.homedir(), '.stacks', 'ssl', `rpx.localhost.crt`),
+    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `rpx.localhost.crt.key`),
   },
 
   cleanup: {
@@ -142,21 +142,21 @@ import path from 'node:path'
 
 const config: ProxyOptions = {
   from: 'localhost:5173',
-  to: 'stacks.localhost',
+  to: 'rpx.localhost',
 
   https: {
-    domain: 'stacks.localhost',
-    hostCertCN: 'stacks.localhost',
-    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.ca.crt`),
-    certPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt`),
-    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `stacks.localhost.crt.key`),
+    domain: 'rpx.localhost',
+    hostCertCN: 'rpx.localhost',
+    caCertPath: path.join(os.homedir(), '.stacks', 'ssl', `rpx.localhost.ca.crt`),
+    certPath: path.join(os.homedir(), '.stacks', 'ssl', `rpx.localhost.crt`),
+    keyPath: path.join(os.homedir(), '.stacks', 'ssl', `rpx.localhost.crt.key`),
     altNameIPs: ['127.0.0.1'],
     altNameURIs: ['localhost'],
     organizationName: 'stacksjs.org',
     countryName: 'US',
     stateName: 'California',
     localityName: 'Playa Vista',
-    commonName: 'stacks.localhost',
+    commonName: 'rpx.localhost',
     validityDays: 180,
     verbose: false,
   },
@@ -181,6 +181,35 @@ To learn more, head over to the [documentation](https://reverse-proxy.sh/).
 bun test
 ```
 
+## Troubleshooting
+
+### SSL Certificate Issues
+
+If you're experiencing SSL certificate issues when using RPX (like "Your connection is not private" browser warnings):
+
+1. **Automatic Certificate Trust**:
+   RPX automatically attempts to trust certificates during setup with a single password prompt. This works for most users.
+
+2. **Use the certificate fix utility**:
+   If you still see certificate warnings, run our automated certificate fixer:
+
+   ```bash
+   bun scripts/fix-certs.js
+   ```
+
+   This script will:
+   - Detect your operating system
+   - Find all RPX certificates
+   - Install them to the appropriate system trust stores
+   - Provide browser-specific instructions
+
+3. **Browser Workaround**:
+   - **Chrome/Edge/Arc**: Type `thisisunsafe` on the warning page (you won't see what you're typing)
+   - **Firefox**: Click "Advanced" then "Accept the Risk and Continue"
+   - **Safari**: Click "Show Details", then "visit this website"
+
+> **Note**: After trusting certificates, restart your browser for changes to take effect.
+
 ## Changelog
 
 Please see our [releases](https://github.com/stacksjs/stacks/releases) page for more information on what has changed recently.
@@ -201,7 +230,7 @@ For casual chit-chat with others using this package:
 
 ## Postcardware
 
-“Software that is free, but hopes for a postcard.” We love receiving postcards from around the world showing where `rpx` is being used! We showcase them on our website too.
+"Software that is free, but hopes for a postcard." We love receiving postcards from around the world showing where `rpx` is being used! We showcase them on our website too.
 
 Our address: Stacks.js, 12665 Village Ln #2306, Playa Vista, CA 90094, United States 🌎
 
