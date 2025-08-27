@@ -68,7 +68,7 @@
     "bunfig": "^0.10.0",
     "cac": "^6.7.14",
     "consola": "^3.4.2",
-    "typescript": "^5.8.3",
+    "typescript": "^5.9.2",
     "unocss": "^66.4.2",
     "vite-plugin-rpx": "workspace:*"
   },
