@@ -55,7 +55,7 @@
     "fix-certs": "bun scripts/fix-certs.js"
   },
   "devDependencies": {
-    "@stacksjs/bumpx": "^0.1.38",
+    "@stacksjs/bumpx": "^0.1.59",
     "@stacksjs/docs": "^0.70.23",
     "@stacksjs/eslint-config": "^4.10.2-beta.3",
     "@stacksjs/gitlint": "^0.1.5",
