@@ -1,11 +1,14 @@
 import type { MultiProxyConfig, ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig } from './types'
 import * as fs from 'node:fs/promises'
+import { Logger } from '@stacksjs/clarity'
+
+const logger = new Logger('rpx', {
+  showTags: false,
+})
 
 export function debugLog(category: string, message: string, verbose?: boolean): void {
-  if (verbose) {
-    // eslint-disable-next-line no-console
-    console.debug(`[rpx:${category}] ${message}`)
-  }
+  if (verbose)
+    logger.debug(`[rpx:${category}] ${message}`)
 }
 
 /**
