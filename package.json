@@ -70,7 +70,7 @@
     "cac": "^6.7.14",
     "consola": "^3.4.2",
     "typescript": "^5.9.3",
-    "unocss": "^66.5.2",
+    "unocss": "^66.5.3",
     "vite-plugin-rpx": "workspace:*"
   },
   "overrides": {
