@@ -51,7 +51,7 @@
     "@stacksjs/tlsx": "^0.10.0"
   },
   "devDependencies": {
-    "bun-plugin-dtsx": "^0.21.12"
+    "bun-plugin-dtsx": "^0.21.17"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
