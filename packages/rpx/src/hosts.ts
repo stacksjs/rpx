@@ -5,7 +5,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
 import { consola as log } from 'consola'
-import { debugLog } from './utils'
+import { debugLog, getSudoPassword } from './utils'
 
 const execAsync = promisify(exec)
 
@@ -21,7 +21,16 @@ async function execSudo(command: string): Promise<string> {
   if (process.platform === 'win32')
     throw new Error('Administrator privileges required on Windows')
 
+  const sudoPassword = getSudoPassword()
+
   try {
+    // If we have SUDO_PASSWORD, use it with sudo -S
+    if (sudoPassword) {
+      const { stdout } = await execAsync(`echo '${sudoPassword}' | sudo -S ${command}`)
+      sudoPrivilegesAcquired = true
+      return stdout
+    }
+
     // If we've already acquired sudo privileges, try to use the cached credentials with -n flag
     if (sudoPrivilegesAcquired) {
       try {
@@ -100,24 +109,24 @@ export async function addHosts(hosts: string[], verbose?: boolean): Promise<void
     }
     // eslint-disable-next-line unused-imports/no-unused-vars
     catch (error) {
-      log.error('Failed to modify hosts file automatically')
-      log.warn('Please add these entries to your hosts file manually:')
+      // Don't throw - just warn the user
+      log.warn('Could not modify hosts file automatically')
+      log.info('Please add these entries to your hosts file:')
       newEntries.forEach((host) => {
-        log.warn(`127.0.0.1 ${host}`)
-        log.warn(`::1 ${host}`)
+        log.info(`  127.0.0.1 ${host}`)
+        log.info(`  ::1 ${host}`)
       })
 
       if (process.platform === 'win32') {
-        log.warn('\nOn Windows:')
-        log.warn('1. Run notepad as administrator')
-        log.warn('2. Open C:\\Windows\\System32\\drivers\\etc\\hosts')
+        log.info('\nOn Windows:')
+        log.info('1. Run notepad as administrator')
+        log.info('2. Open C:\\Windows\\System32\\drivers\\etc\\hosts')
       }
       else {
-        log.warn('\nOn Unix systems:')
-        log.warn(`sudo nano ${hostsFilePath}`)
+        log.info('\nOn Unix systems:')
+        log.info(`  sudo nano ${hostsFilePath}`)
       }
-
-      throw new Error('Failed to modify hosts file: manual intervention required')
+      log.info('\nOr run: buddy setup:ssl')
     }
     finally {
       try {
@@ -132,8 +141,8 @@ export async function addHosts(hosts: string[], verbose?: boolean): Promise<void
   }
   catch (err) {
     const error = err as Error
-    log.error(`Failed to manage hosts file: ${error.message}`)
-    throw error
+    debugLog('hosts', `Failed to manage hosts file: ${error.message}`, verbose)
+    // Don't throw - hosts file management is best-effort
   }
 }
 
@@ -209,13 +218,13 @@ export async function removeHosts(hosts: string[], verbose?: boolean): Promise<v
     }
     // eslint-disable-next-line unused-imports/no-unused-vars
     catch (error) {
-      log.error('Failed to modify hosts file automatically')
-      log.warn('Please remove these entries from your hosts file manually:')
+      // Don't throw - just warn the user
+      log.warn('Could not modify hosts file automatically')
+      log.info('You may want to remove these entries from your hosts file:')
       hosts.forEach((host) => {
-        log.warn(`127.0.0.1 ${host}`)
-        log.warn(`::1 ${host}`)
+        log.info(`  127.0.0.1 ${host}`)
+        log.info(`  ::1 ${host}`)
       })
-      throw new Error('Failed to modify hosts file automatically')
     }
     finally {
       try {
@@ -229,8 +238,8 @@ export async function removeHosts(hosts: string[], verbose?: boolean): Promise<v
     }
   }
   catch (err) {
-    log.error('Failed to clean up hosts file:', (err as Error).message)
-    throw err
+    debugLog('hosts', `Failed to clean up hosts file: ${(err as Error).message}`, verbose)
+    // Don't throw - hosts file cleanup is best-effort
   }
 }
 
@@ -244,14 +253,23 @@ export async function checkHosts(hosts: string[], verbose?: boolean): Promise<bo
   catch (readErr) {
     debugLog('hosts', `Error reading hosts file: ${readErr}`, verbose)
 
-    // Try with sudo
+    // Try with sudo using SUDO_PASSWORD if available
     try {
-      const { stdout } = await execAsync(`sudo cat "${hostsFilePath}"`)
+      const sudoPassword = getSudoPassword()
+      let cmd: string
+      if (sudoPassword) {
+        cmd = `echo '${sudoPassword}' | sudo -S cat "${hostsFilePath}" 2>/dev/null`
+      }
+      else {
+        cmd = `sudo -n cat "${hostsFilePath}" 2>/dev/null || cat "${hostsFilePath}" 2>/dev/null || echo ""`
+      }
+      const { stdout } = await execAsync(cmd)
       content = stdout
     }
     catch (sudoErr) {
-      log.error(`Failed to read hosts file with sudo: ${sudoErr}`)
-      throw new Error(`Cannot read hosts file: ${sudoErr}`)
+      // Can't read hosts file - assume entries don't exist
+      debugLog('hosts', `Cannot read hosts file, assuming entries don't exist: ${sudoErr}`, verbose)
+      return hosts.map(() => false)
     }
   }
 

@@ -579,6 +579,8 @@ async function createProxyServer(
         maxVersion: 'TLSv1.3',
         requestCert: false,
         rejectUnauthorized: false,
+        // Add ALPN protocols for proper HTTP/1.1 and HTTP/2 negotiation
+        ALPNProtocols: ['http/1.1'],
         ciphers: [
           'TLS_AES_128_GCM_SHA256',
           'TLS_AES_256_GCM_SHA384',
@@ -791,7 +793,7 @@ export function startProxy(options: ProxyOption): void {
     verbose: mergedOptions.verbose,
   }
 
-  console.log('serverOptions', serverOptions)
+  debugLog('proxy', `Server options: ${JSON.stringify(serverOptions)}`, mergedOptions.verbose)
 
   startServer(serverOptions).catch((err) => {
     debugLog('proxy', `Failed to start proxy: ${err}`, mergedOptions.verbose)

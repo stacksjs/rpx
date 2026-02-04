@@ -10,7 +10,7 @@ import process from 'node:process'
 import { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate as generateCert } from '@stacksjs/tlsx'
 import { consola as log } from 'consola'
 import { config } from './config'
-import { debugLog, getPrimaryDomain, isMultiProxyConfig, isMultiProxyOptions, isSingleProxyOptions, isValidRootCA, safeDeleteFile } from './utils'
+import { debugLog, execSudoSync, getPrimaryDomain, isMultiProxyConfig, isMultiProxyOptions, isSingleProxyOptions, isValidRootCA, safeDeleteFile } from './utils'
 
 let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
 
@@ -85,23 +85,29 @@ export function generateSSLPaths(options?: ProxyOptions): {
   keyPath: string
 } {
   const domain = getPrimaryDomain(options)
-  let basePath = ''
+  const sanitizedDomain = domain.replace(/\*/g, 'wildcard')
+
+  // Get basePath from options or use default
+  const defaultBasePath = join(homedir(), '.stacks', 'ssl')
+  let basePath = defaultBasePath
+
   if (typeof options?.https === 'object') {
-    basePath = options.https.basePath || ''
+    // Only use options.https.basePath if it's a non-empty string
+    basePath = options.https.basePath && options.https.basePath.trim() !== ''
+      ? options.https.basePath
+      : defaultBasePath
+
     return {
-      caCertPath: options.https.caCertPath || join(basePath, `${domain}.ca.crt`),
-      certPath: options.https.certPath || join(basePath, `${domain}.crt`),
-      keyPath: options.https.keyPath || join(basePath, `${domain}.key`),
+      caCertPath: options.https.caCertPath || join(basePath, `${sanitizedDomain}.ca.crt`),
+      certPath: options.https.certPath || join(basePath, `${sanitizedDomain}.crt`),
+      keyPath: options.https.keyPath || join(basePath, `${sanitizedDomain}.key`),
     }
   }
 
-  const sslBase = basePath || join(homedir(), '.stacks', 'ssl')
-  const sanitizedDomain = domain.replace(/\*/g, 'wildcard')
-
   return {
-    caCertPath: join(sslBase, `${sanitizedDomain}.ca.crt`),
-    certPath: join(sslBase, `${sanitizedDomain}.crt`),
-    keyPath: join(sslBase, `${sanitizedDomain}.key`),
+    caCertPath: join(basePath, `${sanitizedDomain}.ca.crt`),
+    certPath: join(basePath, `${sanitizedDomain}.crt`),
+    keyPath: join(basePath, `${sanitizedDomain}.key`),
   }
 }
 
@@ -227,16 +233,16 @@ async function forceTrustCertificateMacOS(certPath: string): Promise<boolean> {
   try {
     log.info(`Attempting to trust certificate using macOS security command`)
 
-    // Use execSync to avoid unresolved reference
+    // Use execSudoSync which handles SUDO_PASSWORD from env
     try {
-      execSync(`sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${certPath}"`)
+      execSudoSync(`security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${certPath}"`)
       log.success('Successfully added certificate to system trust store')
       return true
     }
     catch (sysErr) {
       log.warn(`Could not add to system keychain: ${sysErr}`)
 
-      // If system keychain fails, try with the user's login keychain
+      // If system keychain fails, try with the user's login keychain (no sudo needed)
       try {
         execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${certPath}"`)
         log.success('Successfully added certificate to user login keychain')
@@ -315,18 +321,20 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
   // We'll use a stronger approach to ensure the certificate is properly trusted
   if (process.platform === 'darwin') {
     try {
-      // For macOS, add both CA and host certificates to system trust store for maximum compatibility
+      // For macOS, add both CA and host certificates to system trust store in a single sudo call
       try {
-        // First try the CA certificate
-        execSync(`sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}"`)
-        log.success('Successfully added CA certificate to system trust store')
+        // Combine both certificate trust operations into a single sudo command to avoid multiple password prompts
+        const combinedCmd = `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}" && security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"`
+        execSudoSync(combinedCmd)
+        log.success('Successfully added CA and host certificates to system trust store')
 
-        // Then force add the host certificate to login keychain which doesn't require sudo
-        execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${hostConfig.certPath}"`)
-        log.success('Successfully added host certificate to login keychain')
-
-        // Force a keychain update
-        execSync(`security verify-cert -c "${hostConfig.certPath}"`)
+        // Also add to login keychain (no sudo needed)
+        try {
+          execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${hostConfig.certPath}"`, { stdio: 'pipe' })
+        }
+        catch {
+          // Ignore login keychain errors - system keychain is sufficient
+        }
 
         isTrusted = true
       }
@@ -342,7 +350,7 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
       const scriptContent = `#!/bin/bash
 echo "Trusting RPX certificate for domains: ${domains.join(', ')}"
 sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}"
-security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${hostConfig.certPath}"
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"
 echo "Certificates trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
@@ -541,13 +549,19 @@ export function httpsConfig(options: ProxyOption | ProxyOptions, verbose?: boole
 
   // Generate paths based on domain if not explicitly provided
   const defaultPaths = generateSSLPaths(options)
+  const defaultBasePath = join(homedir(), '.stacks', 'ssl')
 
   // If HTTPS paths are explicitly provided, use those
   if (typeof options.https === 'object') {
+    // Use provided basePath if non-empty, otherwise use default
+    const basePath = options.https.basePath && options.https.basePath.trim() !== ''
+      ? options.https.basePath
+      : defaultBasePath
+
     const config: TlsConfig = {
       domain: primaryDomain,
       hostCertCN: primaryDomain,
-      basePath: options.https.basePath || '',
+      basePath,
       caCertPath: options.https.caCertPath || defaultPaths.caCertPath,
       certPath: options.https.certPath || defaultPaths.certPath,
       keyPath: options.https.keyPath || defaultPaths.keyPath,
@@ -578,7 +592,7 @@ export function httpsConfig(options: ProxyOption | ProxyOptions, verbose?: boole
   return {
     domain: primaryDomain,
     hostCertCN: primaryDomain,
-    basePath: '',
+    basePath: defaultBasePath,
     ...defaultPaths,
     altNameIPs: ['127.0.0.1', '::1'],
     altNameURIs: [],

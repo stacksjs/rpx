@@ -2,7 +2,6 @@
   "name": "@stacksjs/rpx",
   "type": "module",
   "version": "0.10.0",
-  "private": true,
   "description": "A modern and smart reverse proxy.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",

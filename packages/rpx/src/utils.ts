@@ -1,10 +1,36 @@
 import type { MultiProxyConfig, ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig } from './types'
+import { execSync } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import { Logger } from '@stacksjs/clarity'
 
 const logger = new Logger('rpx', {
   showTags: false,
 })
+
+/**
+ * Get sudo password from environment variable if set
+ */
+export function getSudoPassword(): string | undefined {
+  return process.env.SUDO_PASSWORD
+}
+
+/**
+ * Execute a command with sudo, using SUDO_PASSWORD if available
+ */
+export function execSudoSync(command: string): string {
+  const sudoPassword = getSudoPassword()
+
+  if (sudoPassword) {
+    // Use -S flag to read password from stdin
+    return execSync(`echo '${sudoPassword}' | sudo -S ${command}`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  }
+
+  // Fall back to regular sudo (will prompt for password if needed)
+  return execSync(`sudo ${command}`, { encoding: 'utf-8' })
+}
 
 export function debugLog(category: string, message: string, verbose?: boolean): void {
   if (verbose)
