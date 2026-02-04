@@ -828,17 +828,40 @@ export function startProxy(options: ProxyOption): void {
 
   debugLog('proxy', `Starting proxy with options: ${JSON.stringify(mergedOptions)}`, mergedOptions?.verbose)
 
-  // Start DNS server for .test domains on macOS
-  if (process.platform === 'darwin' && mergedOptions.to?.endsWith('.test')) {
+  // Start DNS server for custom domains on macOS (any domain that's not localhost/127.0.0.1)
+  const targetDomain = mergedOptions.to || ''
+  const tld = targetDomain.split('.').pop()?.toLowerCase() || ''
+  const isCustomDomain = process.platform === 'darwin'
+    && targetDomain
+    && !targetDomain.includes('localhost')
+    && !targetDomain.includes('127.0.0.1')
+
+  // TLDs that are problematic for local development (owned by Google/others with HSTS preloading)
+  const problematicTlds = ['dev', 'app', 'page', 'new', 'day', 'foo']
+  // Reserved TLDs that are safe for local development (RFC 2606 / RFC 6761)
+  const reservedTlds = ['test', 'localhost', 'local', 'example', 'invalid']
+
+  if (isCustomDomain && problematicTlds.includes(tld)) {
+    log.warn(`The .${tld} TLD may not work reliably for local development`)
+    log.info(`  Google owns .${tld} with HSTS preloading, which can bypass local DNS`)
+    log.info(`  Consider using a reserved TLD: .test, .localhost, or .local`)
+  }
+
+  if (isCustomDomain) {
     import('./dns').then(({ startDnsServer, setupResolver }) => {
-      startDnsServer([mergedOptions.to], mergedOptions.verbose).then((started) => {
+      startDnsServer([targetDomain], mergedOptions.verbose).then((started) => {
         if (started) {
-          setupResolver(mergedOptions.verbose).then(() => {
-            log.success('DNS server started for .test domains')
+          setupResolver(mergedOptions.verbose, [targetDomain]).then(() => {
+            if (reservedTlds.includes(tld)) {
+              log.success(`DNS server started for .${tld} domains`)
+            }
+            else {
+              log.success(`DNS server started for .${tld} domains (hosts file entry also added)`)
+            }
           })
         }
         else {
-          log.warn('Could not start DNS server - .test domains may not resolve in browser')
+          log.warn(`Could not start DNS server - ${targetDomain} may not resolve in browser`)
         }
       })
     }).catch((err) => {
@@ -1035,16 +1058,40 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const domains = proxyOptions.map((opt: ProxyOption) => opt.to || 'rpx.localhost')
   const sslConfig = mergedOptions._cachedSSLConfig
 
-  // Start DNS server for .test domains on macOS
-  if (process.platform === 'darwin' && domains.some(d => d.endsWith('.test'))) {
+  // Start DNS server for custom domains on macOS (any domain that's not localhost/127.0.0.1)
+  const customDomains = domains.filter(d =>
+    d && !d.includes('localhost') && !d.includes('127.0.0.1'),
+  )
+
+  // TLDs that are problematic for local development (owned by Google/others with HSTS preloading)
+  const problematicTlds = ['dev', 'app', 'page', 'new', 'day', 'foo']
+  // Reserved TLDs that are safe for local development (RFC 2606 / RFC 6761)
+  const reservedTlds = ['test', 'localhost', 'local', 'example', 'invalid']
+
+  // Warn about problematic TLDs
+  const uniqueTlds = [...new Set(customDomains.map(d => d.split('.').pop()?.toLowerCase()))]
+  const problematicFound = uniqueTlds.filter(t => t && problematicTlds.includes(t))
+  if (problematicFound.length > 0) {
+    log.warn(`The following TLDs may not work reliably for local development: ${problematicFound.map(t => `.${t}`).join(', ')}`)
+    log.info(`  These TLDs have HSTS preloading which can bypass local DNS`)
+    log.info(`  Consider using reserved TLDs: .test, .localhost, or .local`)
+  }
+
+  if (process.platform === 'darwin' && customDomains.length > 0) {
     const { startDnsServer, setupResolver } = await import('./dns')
-    const dnsStarted = await startDnsServer(domains, verbose)
+    const dnsStarted = await startDnsServer(customDomains, verbose)
     if (dnsStarted) {
-      await setupResolver(verbose)
-      log.success('DNS server started for .test domains')
+      await setupResolver(verbose, customDomains)
+      const hasReservedOnly = uniqueTlds.every(t => t && reservedTlds.includes(t))
+      if (hasReservedOnly) {
+        log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains`)
+      }
+      else {
+        log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains (hosts file entries also added)`)
+      }
     }
     else {
-      log.warn('Could not start DNS server - .test domains may not resolve')
+      log.warn('Could not start DNS server - custom domains may not resolve')
     }
   }
 

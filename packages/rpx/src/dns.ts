@@ -229,10 +229,7 @@ export async function startDnsServer(domains: string[], verbose?: boolean): Prom
           }
         }
 
-        // Also handle any .test domain
-        if (domainLower.endsWith('.test')) {
-          shouldHandle = true
-        }
+        // Note: Only configured domains are handled, no hardcoded TLDs
 
         let response: Buffer
         if (shouldHandle && (question.type === 1 || question.type === 28)) {
@@ -287,35 +284,88 @@ export function isDnsServerRunning(): boolean {
 }
 
 /**
- * Set up the macOS resolver for .test domains
- * Creates /etc/resolver/test pointing to our local DNS server
+ * Extract unique TLDs from domain list
  */
-export async function setupResolver(verbose?: boolean): Promise<boolean> {
+function extractTLDs(domains: string[]): string[] {
+  const tlds = new Set<string>()
+  for (const domain of domains) {
+    const parts = domain.split('.')
+    if (parts.length >= 2) {
+      tlds.add(parts[parts.length - 1])
+    }
+  }
+  return Array.from(tlds)
+}
+
+// Track which TLDs we've created resolvers for
+const createdResolvers = new Set<string>()
+
+/**
+ * Flush macOS DNS cache to ensure resolver changes take effect
+ */
+async function flushDnsCache(verbose?: boolean): Promise<void> {
+  if (process.platform !== 'darwin') {
+    return
+  }
+
+  const { execSudoSync, getSudoPassword } = await import('./utils')
+  const sudoPassword = getSudoPassword()
+
+  if (!sudoPassword) {
+    debugLog('dns', 'Cannot flush DNS cache without SUDO_PASSWORD', verbose)
+    return
+  }
+
+  try {
+    // Flush DNS cache and restart mDNSResponder
+    execSudoSync('dscacheutil -flushcache')
+    execSudoSync('killall -HUP mDNSResponder 2>/dev/null || true')
+    debugLog('dns', 'DNS cache flushed', verbose)
+  }
+  catch (err) {
+    // Non-fatal - DNS cache flush failure shouldn't block startup
+    debugLog('dns', `Could not flush DNS cache: ${err}`, verbose)
+  }
+}
+
+/**
+ * Set up the macOS resolver for configured domains
+ * Creates /etc/resolver/<tld> files pointing to our local DNS server
+ */
+export async function setupResolver(verbose?: boolean, domains?: string[]): Promise<boolean> {
   if (process.platform !== 'darwin') {
     debugLog('dns', 'Resolver setup only needed on macOS', verbose)
     return true
   }
 
-  const resolverContent = `nameserver 127.0.0.1
-port ${DNS_PORT}
-`
-
   const { execSudoSync, getSudoPassword } = await import('./utils')
+  const sudoPassword = getSudoPassword()
+
+  if (!sudoPassword) {
+    debugLog('dns', 'SUDO_PASSWORD not set, cannot create resolver files', verbose)
+    return false
+  }
+
+  // Get TLDs from configured domains
+  const tlds = domains ? extractTLDs(domains) : ['test']
 
   try {
-    // Create /etc/resolver directory if it doesn't exist
-    const sudoPassword = getSudoPassword()
-    if (sudoPassword) {
+    for (const tld of tlds) {
+      if (createdResolvers.has(tld)) {
+        continue
+      }
+
       // Use bash -c to properly handle the echo with newlines
-      const cmd = `bash -c 'mkdir -p /etc/resolver && echo -e "nameserver 127.0.0.1\\nport ${DNS_PORT}" > /etc/resolver/test'`
+      const cmd = `bash -c 'mkdir -p /etc/resolver && echo -e "nameserver 127.0.0.1\\nport ${DNS_PORT}" > /etc/resolver/${tld}'`
       execSudoSync(cmd)
-      debugLog('dns', 'Created /etc/resolver/test for .test TLD', verbose)
-      return true
+      createdResolvers.add(tld)
+      debugLog('dns', `Created /etc/resolver/${tld} for .${tld} TLD`, verbose)
     }
-    else {
-      debugLog('dns', 'SUDO_PASSWORD not set, cannot create resolver file', verbose)
-      return false
-    }
+
+    // Flush DNS cache to ensure new resolver files take effect immediately
+    await flushDnsCache(verbose)
+
+    return true
   }
   catch (err) {
     debugLog('dns', `Failed to create resolver file: ${err}`, verbose)
@@ -324,7 +374,7 @@ port ${DNS_PORT}
 }
 
 /**
- * Remove the macOS resolver for .test domains
+ * Remove the macOS resolver files we created
  */
 export async function removeResolver(verbose?: boolean): Promise<void> {
   if (process.platform !== 'darwin') {
@@ -336,11 +386,14 @@ export async function removeResolver(verbose?: boolean): Promise<void> {
   try {
     const sudoPassword = getSudoPassword()
     if (sudoPassword) {
-      execSudoSync('rm -f /etc/resolver/test')
-      debugLog('dns', 'Removed /etc/resolver/test', verbose)
+      for (const tld of createdResolvers) {
+        execSudoSync(`rm -f /etc/resolver/${tld}`)
+        debugLog('dns', `Removed /etc/resolver/${tld}`, verbose)
+      }
+      createdResolvers.clear()
     }
   }
   catch (err) {
-    debugLog('dns', `Failed to remove resolver file: ${err}`, verbose)
+    debugLog('dns', `Failed to remove resolver files: ${err}`, verbose)
   }
 }
