@@ -225,12 +225,20 @@ export async function forceTrustCertificate(certPath: string): Promise<boolean> 
 
 /**
  * Force trust a certificate on macOS using direct security command
+ * This function first checks if the certificate is already trusted to avoid unnecessary sudo prompts
  */
 async function forceTrustCertificateMacOS(certPath: string): Promise<boolean> {
   if (process.platform !== 'darwin')
     return false
 
   try {
+    // First check if already trusted to avoid unnecessary sudo prompts
+    const alreadyTrusted = await isCertTrusted(certPath, { verbose: false, regenerateUntrustedCerts: true })
+    if (alreadyTrusted) {
+      debugLog('ssl', 'Certificate is already trusted, skipping trust operation', false)
+      return true
+    }
+
     log.info(`Attempting to trust certificate using macOS security command`)
 
     // Use execSudoSync which handles SUDO_PASSWORD from env
@@ -312,6 +320,24 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
     throw new Error(`Failed to save certificate files: ${err}`)
   }
 
+  // Check if certificate is already trusted before attempting to add it
+  // This avoids unnecessary sudo prompts
+  const alreadyTrusted = await isCertTrusted(hostConfig.certPath, { verbose: options.verbose, regenerateUntrustedCerts: true })
+  if (alreadyTrusted) {
+    debugLog('ssl', 'Certificate is already trusted, skipping trust store update', options.verbose)
+    log.success('Certificate is already trusted in system trust store')
+
+    // Cache the SSL config for reuse
+    cachedSSLConfig = {
+      key: hostCert.privateKey,
+      cert: hostCert.certificate,
+      ca: caCert.certificate,
+    }
+
+    log.success(`Certificate generated successfully for ${domains.length} domain${domains.length > 1 ? 's' : ''}`)
+    return
+  }
+
   // Now add to system trust store with a single operation
   // This will require only one sudo password prompt
   log.info('Adding certificate to system trust store (may require sudo permission)...')
@@ -322,27 +348,20 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
   if (process.platform === 'darwin') {
     try {
       // For macOS, add both CA and host certificates to system trust store in a single sudo call
+      // Combine both certificate trust operations into a single sudo command to avoid multiple password prompts
+      const combinedCmd = `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}" && security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"`
+      execSudoSync(combinedCmd)
+      log.success('Successfully added CA and host certificates to system trust store')
+
+      // Also add to login keychain (no sudo needed)
       try {
-        // Combine both certificate trust operations into a single sudo command to avoid multiple password prompts
-        const combinedCmd = `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}" && security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"`
-        execSudoSync(combinedCmd)
-        log.success('Successfully added CA and host certificates to system trust store')
-
-        // Also add to login keychain (no sudo needed)
-        try {
-          execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${hostConfig.certPath}"`, { stdio: 'pipe' })
-        }
-        catch {
-          // Ignore login keychain errors - system keychain is sufficient
-        }
-
-        isTrusted = true
+        execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${hostConfig.certPath}"`, { stdio: 'pipe' })
       }
-      catch (error) {
-        log.warn(`Could not fully automate certificate trust: ${error}`)
-        // Try with a more reliable approach
-        isTrusted = await forceTrustCertificateMacOS(hostConfig.certPath)
+      catch {
+        // Ignore login keychain errors - system keychain is sufficient
       }
+
+      isTrusted = true
 
       // Create a simple trust-helper script for easy manual trust if needed
       const sslScriptDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
@@ -355,14 +374,23 @@ echo "Certificates trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
       await fs.writeFile(scriptPath, scriptContent, { mode: 0o755 }) // Make it executable
-
-      if (!isTrusted) {
-        log.info(`Created a trust helper script at: ${scriptPath}`)
-        log.info(`If you're still having certificate issues, run: sh ${scriptPath}`)
-      }
     }
     catch (err) {
       log.warn(`Could not add certificate to trust store automatically: ${err}`)
+
+      // Create a trust helper script for manual trust
+      const sslScriptDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
+      const scriptPath = join(sslScriptDir, 'trust-rpx-cert.sh')
+      const scriptContent = `#!/bin/bash
+echo "Trusting RPX certificate for domains: ${domains.join(', ')}"
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}"
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"
+echo "Certificates trusted! Please restart your browser."
+echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
+`
+      await fs.writeFile(scriptPath, scriptContent, { mode: 0o755 })
+      log.info(`Created a trust helper script at: ${scriptPath}`)
+      log.info(`If you're still having certificate issues, run: sh ${scriptPath}`)
     }
   }
   else if (process.platform === 'linux') {
@@ -488,34 +516,13 @@ export async function checkExistingCertificates(options?: ProxyOptions): Promise
     // Check if certificate is trusted
     // But only if regenerateUntrustedCerts is enabled (default is true)
     const shouldCheckTrust = 'regenerateUntrustedCerts' in options ? options.regenerateUntrustedCerts !== false : true
-    let certIsTrusted = shouldCheckTrust ? await isCertTrusted(sslConfig.certPath, options) : true
+    const certIsTrusted = shouldCheckTrust ? await isCertTrusted(sslConfig.certPath, options) : true
 
     if (!certIsTrusted) {
       debugLog('ssl', 'Certificate exists but is not trusted, will regenerate', options.verbose)
-
-      // If not trusted and on macOS, force trust it first before regenerating
-      if (process.platform === 'darwin') {
-        try {
-          log.info('Certificate found but not trusted. Attempting to add to macOS trust store...')
-          await forceTrustCertificate(sslConfig.certPath)
-
-          // Check again to see if forcing trust worked
-          const nowTrusted = await isCertTrusted(sslConfig.certPath, options)
-          if (nowTrusted) {
-            log.success('Successfully trusted existing certificate')
-            // Continue with loading the certificate below
-            certIsTrusted = true
-          }
-        }
-        catch (err) {
-          debugLog('ssl', `Failed to force trust certificate: ${err}`, options.verbose)
-        }
-      }
-
-      // If still not trusted, return null to trigger regeneration
-      if (!certIsTrusted) {
-        return null
-      }
+      // Don't attempt to trust here - let generateCertificate handle it in one place
+      // This avoids multiple sudo prompts
+      return null
     }
 
     // Load the certificates
