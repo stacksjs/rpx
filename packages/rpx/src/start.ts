@@ -569,54 +569,100 @@ async function createProxyServer(
     req.pipe(proxyReq)
   }
 
-  // SSL configuration
-  const serverOptions: (ServerOptions & SecureServerOptions) | undefined = ssl
-    ? {
-        key: ssl.key,
-        cert: ssl.cert,
-        ca: ssl.ca,
-        minVersion: 'TLSv1.2',
-        maxVersion: 'TLSv1.3',
-        requestCert: false,
-        rejectUnauthorized: false,
-        // Add ALPN protocols for proper HTTP/1.1 and HTTP/2 negotiation
-        ALPNProtocols: ['http/1.1'],
-        ciphers: [
-          'TLS_AES_128_GCM_SHA256',
-          'TLS_AES_256_GCM_SHA384',
-          'TLS_CHACHA20_POLY1305_SHA256',
-          'ECDHE-ECDSA-AES128-GCM-SHA256',
-          'ECDHE-RSA-AES128-GCM-SHA256',
-          'ECDHE-ECDSA-AES256-GCM-SHA384',
-          'ECDHE-RSA-AES256-GCM-SHA384',
-        ].join(':'),
-      }
-    : undefined
-
   debugLog('server', `Creating server with SSL config: ${!!ssl}`, verbose)
 
-  let server: AnyServerType
+  // Use Bun.serve for HTTPS as it handles TLS better than Node's https module in Bun
+  if (ssl) {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const bunServer = Bun.serve({
+          port: listenPort,
+          hostname,
+          tls: {
+            key: ssl.key,
+            cert: ssl.cert,
+            ca: ssl.ca,
+            // Bun's TLS options - don't request client certificates
+            requestCert: false,
+            rejectUnauthorized: false,
+          },
+          async fetch(req: Request) {
+            const url = new URL(req.url)
+            debugLog('request', `Bun.serve received: ${req.method} ${url.pathname}`, verbose)
 
-  if (ssl && serverOptions) {
-    // Start with an HTTPS server since it's more widely compatible
-    server = https.createServer(serverOptions, requestHandler)
+            // Build target URL from sourceUrl object
+            const baseUrl = `http://${sourceUrl.host}`
+            const targetUrl = new URL(url.pathname + url.search, baseUrl)
 
-    server.on('error', (err: Error) => {
-      debugLog('server', `HTTPS server error: ${err}`, verbose)
-    })
+            // Forward the request
+            try {
+              const headers = new Headers(req.headers)
+              headers.set('host', sourceUrl.host)
+              if (changeOrigin) {
+                headers.set('origin', baseUrl)
+              }
+              headers.set('x-forwarded-for', '127.0.0.1')
+              headers.set('x-forwarded-proto', 'https')
+              headers.set('x-forwarded-host', to)
 
-    server.on('secureConnection', (tlsSocket) => {
-      debugLog('tls', `TLS Connection established: ${JSON.stringify({
-        protocol: tlsSocket.getProtocol?.(),
-        cipher: tlsSocket.getCipher?.(),
-        authorized: tlsSocket.authorized,
-        authError: tlsSocket.authorizationError,
-      })}`, verbose)
+              const response = await fetch(targetUrl.toString(), {
+                method: req.method,
+                headers,
+                body: req.body,
+                redirect: 'manual',
+              })
+
+              // Clone response with modified headers if needed
+              const responseHeaders = new Headers(response.headers)
+
+              // Handle clean URLs redirect
+              if (cleanUrls && url.pathname.endsWith('.html')) {
+                const cleanPath = url.pathname.replace(/\.html$/, '')
+                return new Response(null, {
+                  status: 301,
+                  headers: { Location: cleanPath },
+                })
+              }
+
+              return new Response(response.body, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: responseHeaders,
+              })
+            }
+            catch (err) {
+              debugLog('request', `Proxy error: ${err}`, verbose)
+              return new Response(`Proxy Error: ${err}`, { status: 502 })
+            }
+          },
+          error(err: Error) {
+            debugLog('server', `Bun.serve error: ${err}`, verbose)
+            return new Response(`Server Error: ${err.message}`, { status: 500 })
+          },
+        })
+
+        // Store reference for cleanup
+        activeServers.add(bunServer as unknown as http.Server)
+
+        logToConsole({
+          from,
+          to,
+          vitePluginUsage,
+          listenPort,
+          ssl: true,
+          cleanUrls,
+        })
+
+        resolve()
+      }
+      catch (err) {
+        reject(err)
+      }
     })
   }
-  else {
-    server = http.createServer(requestHandler)
-  }
+
+  // For non-SSL, use Node's http.createServer
+  const server = http.createServer(requestHandler)
 
   function setupServer(serverInstance: AnyServerType) {
     // Use the module-level activeServers set
@@ -781,6 +827,24 @@ export function startProxy(options: ProxyOption): void {
   }
 
   debugLog('proxy', `Starting proxy with options: ${JSON.stringify(mergedOptions)}`, mergedOptions?.verbose)
+
+  // Start DNS server for .test domains on macOS
+  if (process.platform === 'darwin' && mergedOptions.to?.endsWith('.test')) {
+    import('./dns').then(({ startDnsServer, setupResolver }) => {
+      startDnsServer([mergedOptions.to], mergedOptions.verbose).then((started) => {
+        if (started) {
+          setupResolver(mergedOptions.verbose).then(() => {
+            log.success('DNS server started for .test domains')
+          })
+        }
+        else {
+          log.warn('Could not start DNS server - .test domains may not resolve in browser')
+        }
+      })
+    }).catch((err) => {
+      debugLog('dns', `Failed to start DNS server: ${err}`, mergedOptions.verbose)
+    })
+  }
 
   const serverOptions: SingleProxyConfig = {
     from: mergedOptions.from,
@@ -971,9 +1035,32 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const domains = proxyOptions.map((opt: ProxyOption) => opt.to || 'rpx.localhost')
   const sslConfig = mergedOptions._cachedSSLConfig
 
+  // Start DNS server for .test domains on macOS
+  if (process.platform === 'darwin' && domains.some(d => d.endsWith('.test'))) {
+    const { startDnsServer, setupResolver } = await import('./dns')
+    const dnsStarted = await startDnsServer(domains, verbose)
+    if (dnsStarted) {
+      await setupResolver(verbose)
+      log.success('DNS server started for .test domains')
+    }
+    else {
+      log.warn('Could not start DNS server - .test domains may not resolve')
+    }
+  }
+
   // Setup cleanup handler
   const cleanupHandler = async () => {
     debugLog('cleanup', 'Starting cleanup handler', mergedOptions.verbose)
+
+    try {
+      // Stop DNS server
+      const { stopDnsServer, removeResolver } = await import('./dns')
+      stopDnsServer(mergedOptions.verbose)
+      await removeResolver(mergedOptions.verbose)
+    }
+    catch (err) {
+      debugLog('cleanup', `Error stopping DNS server: ${err}`, mergedOptions.verbose)
+    }
 
     try {
       // Stop all watched processes first
