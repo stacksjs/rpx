@@ -40,7 +40,7 @@
   "files": ["README.md", "dist"],
   "scripts": {
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
-    "test": "bun test",
+    "test": "bun test packages/rpx/test && bun test packages/vite-plugin/test",
     "lint": "bunx --bun pickier lint . --config pickier.config.ts --max-warnings 9999",
     "lint:fix": "bunx --bun pickier lint . --fix --config pickier.config.ts --max-warnings 9999",
     "format": "bunx --bun pickier format . --config pickier.config.ts",

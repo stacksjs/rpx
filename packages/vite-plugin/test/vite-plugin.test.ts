@@ -69,7 +69,8 @@ mock.module('@stacksjs/rpx', () => ({
   checkHosts: mockCheckHosts,
 }))
 
-mock.module('node:process', () => ({
+const processMock = {
+  ...process,
   on: (event: string, cb: SignalHandler) => {
     processListeners[event] = processListeners[event] || []
     processListeners[event].push(cb)
@@ -85,6 +86,10 @@ mock.module('node:process', () => ({
   },
   listeners: (event: string) => processListeners[event] || [],
   exit: mock(() => {}),
+}
+mock.module('node:process', () => ({
+  ...processMock,
+  default: processMock,
 }))
 
 // Mock the actual plugin import
