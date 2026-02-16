@@ -1,5 +1,5 @@
 {
-  "name": "rpx",
+  "name": "@stacksjs/rpx",
   "type": "module",
   "version": "0.10.0",
   "private": true,
