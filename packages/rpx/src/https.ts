@@ -5,10 +5,10 @@ import * as os from 'node:os'
 import { homedir } from 'node:os'
 import * as path from 'node:path'
 import { join } from 'node:path'
-import process from 'node:process'
+import * as process from 'node:process'
 // @ts-expect-error dtsx issue
 import { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate as generateCert } from '@stacksjs/tlsx'
-import { consola as log } from 'consola'
+import { log } from './logger'
 import { config } from './config'
 import { debugLog, execSudoSync, getPrimaryDomain, isMultiProxyConfig, isMultiProxyOptions, isSingleProxyOptions, isValidRootCA, safeDeleteFile } from './utils'
 

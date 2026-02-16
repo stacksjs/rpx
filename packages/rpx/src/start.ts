@@ -12,7 +12,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import * as process from 'node:process'
 import * as tls from 'node:tls'
-import { consola as log } from 'consola'
+import { log } from './logger'
 import colors from 'picocolors'
 import { version } from '../package.json'
 import { config } from './config'
@@ -518,8 +518,8 @@ async function createProxyServer(
           const tryNextPath = (paths: string[]) => {
             if (paths.length === 0) {
               // If no alternatives work, send original 404
-              res.writeHead(proxyRes.statusCode || 404, proxyRes.headers)
-              proxyRes.pipe(res)
+              ;(res as http.ServerResponse).writeHead(proxyRes.statusCode || 404, proxyRes.headers)
+              proxyRes.pipe(res as http.ServerResponse)
               return
             }
 
@@ -530,8 +530,8 @@ async function createProxyServer(
               if (altRes.statusCode === 200) {
                 // If we found a matching path, use it
                 debugLog('cleanUrls', `Found matching path: ${altPath}`, verbose)
-                res.writeHead(altRes.statusCode, altRes.headers)
-                altRes.pipe(res)
+                ;(res as http.ServerResponse).writeHead(altRes.statusCode, altRes.headers)
+                altRes.pipe(res as http.ServerResponse)
               }
               else {
                 // Try next alternative
@@ -555,15 +555,15 @@ async function createProxyServer(
         'X-Content-Type-Options': 'nosniff',
       }
 
-      res.writeHead(proxyRes.statusCode || 500, headers)
-      proxyRes.pipe(res)
+      ;(res as http.ServerResponse).writeHead(proxyRes.statusCode || 500, headers)
+      proxyRes.pipe(res as http.ServerResponse)
     })
 
     proxyReq.on('error', (err) => {
       debugLog('request', `Proxy request failed: ${err}`, verbose)
       log.error('Proxy request failed:', err)
-      res.writeHead(502)
-      res.end(`Proxy Error: ${err.message}`)
+      ;(res as http.ServerResponse).writeHead(502)
+      ;(res as http.ServerResponse).end(`Proxy Error: ${err.message}`)
     })
 
     req.pipe(proxyReq)
@@ -1059,7 +1059,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const sslConfig = mergedOptions._cachedSSLConfig
 
   // Start DNS server for custom domains on macOS (any domain that's not localhost/127.0.0.1)
-  const customDomains = domains.filter(d =>
+  const customDomains = domains.filter((d: string) =>
     d && !d.includes('localhost') && !d.includes('127.0.0.1'),
   )
 
@@ -1069,8 +1069,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const reservedTlds = ['test', 'localhost', 'local', 'example', 'invalid']
 
   // Warn about problematic TLDs
-  const uniqueTlds = [...new Set(customDomains.map(d => d.split('.').pop()?.toLowerCase()))]
-  const problematicFound = uniqueTlds.filter(t => t && problematicTlds.includes(t))
+  const uniqueTlds = [...new Set(customDomains.map((d: string) => d.split('.').pop()?.toLowerCase()))]
+  const problematicFound = uniqueTlds.filter((t): t is string => typeof t === 'string' && problematicTlds.includes(t))
   if (problematicFound.length > 0) {
     log.warn(`The following TLDs may not work reliably for local development: ${problematicFound.map(t => `.${t}`).join(', ')}`)
     log.info(`  These TLDs have HSTS preloading which can bypass local DNS`)
@@ -1082,7 +1082,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     const dnsStarted = await startDnsServer(customDomains, verbose)
     if (dnsStarted) {
       await setupResolver(verbose, customDomains)
-      const hasReservedOnly = uniqueTlds.every(t => t && reservedTlds.includes(t))
+      const hasReservedOnly = uniqueTlds.every((t): t is string => typeof t === 'string' && reservedTlds.includes(t))
       if (hasReservedOnly) {
         log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains`)
       }
@@ -1174,7 +1174,7 @@ function logToConsole(options?: OutputOptions) {
     console.log('')
     console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
     console.log('')
-    console.log(`  ${colors.green('➜')}  ${colors.dim(options?.from)} ${colors.dim('➜')} ${colors.cyan(options?.ssl ? ` https://${options?.to}` : ` http://${options?.to}`)}`)
+    console.log(`  ${colors.green('➜')}  ${colors.dim(options?.from ?? '')} ${colors.dim('➜')} ${colors.cyan(options?.ssl ? ` https://${options?.to}` : ` http://${options?.to}`)}`)
 
     if (options?.listenPort !== (options?.ssl ? 443 : 80))
       console.log(`  ${colors.green('➜')}  Listening on port ${options?.listenPort}`)

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import * as childProcess from 'node:child_process'
-import process from 'node:process'
+import * as process from 'node:process'
 import { ProcessManager } from '../src/process-manager'
 
 describe('ProcessManager', () => {

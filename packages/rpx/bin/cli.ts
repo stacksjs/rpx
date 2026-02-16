@@ -1,5 +1,5 @@
 import type { BaseProxyConfig, ProxyOption, StartOptions } from '../src/types'
-import process from 'node:process'
+import * as process from 'node:process'
 import { CAC } from 'cac'
 import { version } from '../package.json'
 import { config } from '../src/config'

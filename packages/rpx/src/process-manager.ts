@@ -1,8 +1,8 @@
 import type { ChildProcess } from 'node:child_process'
 import type { StartOptions } from './types'
 import { spawn } from 'node:child_process'
-import process from 'node:process'
-import { consola as log } from 'consola'
+import * as process from 'node:process'
+import { log } from './logger'
 import { debugLog } from './utils'
 
 export interface ManagedProcess {

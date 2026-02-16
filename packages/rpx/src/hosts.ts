@@ -2,9 +2,9 @@ import { exec } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import process from 'node:process'
+import * as process from 'node:process'
 import { promisify } from 'node:util'
-import { consola as log } from 'consola'
+import { log } from './logger'
 import { debugLog, getSudoPassword } from './utils'
 
 const execAsync = promisify(exec)

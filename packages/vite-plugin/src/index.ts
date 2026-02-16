@@ -2,7 +2,7 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import type { VitePluginRpxOptions } from './types'
 import { exec, spawn } from 'node:child_process'
-import process from 'node:process'
+import * as process from 'node:process'
 import { promisify } from 'node:util'
 import { checkExistingCertificates, checkHosts, cleanup, portManager, startProxies } from '@stacksjs/rpx'
 import colors from 'picocolors'

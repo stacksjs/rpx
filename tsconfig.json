@@ -24,5 +24,13 @@
     "verbatimModuleSyntax": true,
     "skipDefaultLibCheck": true,
     "skipLibCheck": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "docs/bunpress.config.ts",
+    "pickier.config.ts",
+    "buddy-bot.config.ts",
+    "packages/vite-plugin"
+  ]
 }
