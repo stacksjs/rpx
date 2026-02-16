@@ -1,7 +1,7 @@
 {
   "name": "@stacksjs/rpx",
   "type": "module",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "private": true,
   "description": "A modern and smart reverse proxy.",
   "author": "Chris Breuer <chris@stacksjs.org>",
@@ -37,7 +37,10 @@
     "rpx": "./dist/bin/cli.js",
     "reverse-proxy": "./dist/bin/cli.js"
   },
-  "files": ["README.md", "dist"],
+  "files": [
+    "README.md",
+    "dist"
+  ],
   "scripts": {
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
     "test": "bun test packages/rpx/test && bun test packages/vite-plugin/test",
@@ -47,7 +50,7 @@
     "format:fix": "bunx --bun pickier format . --write --config pickier.config.ts",
     "changelog": "bunx logsmith --verbose",
     "changelog:generate": "bunx logsmith --output CHANGELOG.md",
-    "release": "bun run changelog:generate && bunx bumpx prompt --recursive",
+    "release": "bun --bun run changelog:generate && bunx --bun bumpx prompt --recursive",
     "postinstall": "bunx git-hooks",
     "typecheck": "bunx tsc --noEmit",
     "build": "for dir in packages/*; do if [ -f \"$dir/package.json\" ]; then echo \"Building $dir\" && bun run --cwd $dir build; fi; done",
