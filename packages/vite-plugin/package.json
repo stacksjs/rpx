@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@stacksjs/rpx": "workspace:*",
-    "@stacksjs/tlsx": "^0.10.0"
+    "@stacksjs/tlsx": "^0.13.0"
   },
   "devDependencies": {
     "bun-plugin-dtsx": "^0.21.17"
