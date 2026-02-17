@@ -284,12 +284,14 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
   // Generate Root CA first
   const rootCAConfig = httpsConfig(options, options.verbose)
 
-  log.info('Generating Root CA certificate...')
+  if (options.verbose)
+    log.info('Generating Root CA certificate...')
   const caCert = await createRootCA(rootCAConfig)
 
   // Generate the host certificate with all domains
   const hostConfig = httpsConfig(options, options.verbose)
-  log.info(`Generating host certificate for: ${domains.join(', ')}`)
+  if (options.verbose)
+    log.info(`Generating host certificate for: ${domains.join(', ')}`)
 
   const hostCert = await generateCert({
     ...hostConfig,
@@ -325,7 +327,8 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
   const alreadyTrusted = await isCertTrusted(hostConfig.certPath, { verbose: options.verbose, regenerateUntrustedCerts: true })
   if (alreadyTrusted) {
     debugLog('ssl', 'Certificate is already trusted, skipping trust store update', options.verbose)
-    log.success('Certificate is already trusted in system trust store')
+    if (options.verbose)
+      log.success('Certificate is already trusted in system trust store')
 
     // Cache the SSL config for reuse
     cachedSSLConfig = {
@@ -334,13 +337,15 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
       ca: caCert.certificate,
     }
 
-    log.success(`Certificate generated successfully for ${domains.length} domain${domains.length > 1 ? 's' : ''}`)
+    if (options.verbose)
+      log.success(`Certificate generated successfully for ${domains.length} domain${domains.length > 1 ? 's' : ''}`)
     return
   }
 
   // Now add to system trust store with a single operation
   // This will require only one sudo password prompt
-  log.info('Adding certificate to system trust store (may require sudo permission)...')
+  if (options.verbose)
+    log.info('Adding certificate to system trust store (may require sudo permission)...')
 
   let isTrusted = false
 
@@ -351,7 +356,8 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
       // Combine both certificate trust operations into a single sudo command to avoid multiple password prompts
       const combinedCmd = `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}" && security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"`
       execSudoSync(combinedCmd)
-      log.success('Successfully added CA and host certificates to system trust store')
+      if (options.verbose)
+        log.success('Successfully added CA and host certificates to system trust store')
 
       // Also add to login keychain (no sudo needed)
       try {
@@ -376,7 +382,8 @@ echo "If you still see certificate warnings, type 'thisisunsafe' on the warning 
       await fs.writeFile(scriptPath, scriptContent, { mode: 0o755 }) // Make it executable
     }
     catch (err) {
-      log.warn(`Could not add certificate to trust store automatically: ${err}`)
+      if (options.verbose)
+        log.warn(`Could not add certificate to trust store automatically: ${err}`)
 
       // Create a trust helper script for manual trust
       const sslScriptDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
@@ -389,8 +396,10 @@ echo "Certificates trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
       await fs.writeFile(scriptPath, scriptContent, { mode: 0o755 })
-      log.info(`Created a trust helper script at: ${scriptPath}`)
-      log.info(`If you're still having certificate issues, run: sh ${scriptPath}`)
+      if (options.verbose) {
+        log.info(`Created a trust helper script at: ${scriptPath}`)
+        log.info(`If you're still having certificate issues, run: sh ${scriptPath}`)
+      }
     }
   }
   else if (process.platform === 'linux') {
@@ -415,11 +424,13 @@ echo "RPX certificates installed. Please restart your browser."
       await new Promise((resolve) => {
         exec(`sudo bash "${tmpScript}"`, (error) => {
           if (error) {
-            log.warn(`Could not trust certificates: ${error}`)
+            if (options.verbose)
+              log.warn(`Could not trust certificates: ${error}`)
             resolve(false)
           }
           else {
-            log.success('Successfully added certificates to system trust store')
+            if (options.verbose)
+              log.success('Successfully added certificates to system trust store')
             resolve(true)
           }
         })
@@ -431,7 +442,8 @@ echo "RPX certificates installed. Please restart your browser."
       isTrusted = true
     }
     catch (error) {
-      log.warn(`Failed to trust certificates: ${error}`)
+      if (options.verbose)
+        log.warn(`Failed to trust certificates: ${error}`)
     }
   }
   else if (process.platform === 'win32') {
@@ -450,11 +462,13 @@ Write-Host "Certificate trusted successfully!"
       await fs.writeFile(psPath, winScript)
 
       execSync(`powershell -ExecutionPolicy Bypass -File "${psPath}"`)
-      log.success('Successfully added certificate to Windows trust store')
+      if (options.verbose)
+        log.success('Successfully added certificate to Windows trust store')
       isTrusted = true
     }
     catch (error) {
-      log.warn(`Could not trust certificate: ${error}`)
+      if (options.verbose)
+        log.warn(`Could not trust certificate: ${error}`)
     }
   }
   else {
@@ -465,7 +479,8 @@ Write-Host "Certificate trusted successfully!"
       isTrusted = true
     }
     catch (err) {
-      log.warn(`Could not add certificate to trust store: ${err}`)
+      if (options.verbose)
+        log.warn(`Could not add certificate to trust store: ${err}`)
     }
   }
 
@@ -476,10 +491,11 @@ Write-Host "Certificate trusted successfully!"
     ca: caCert.certificate,
   }
 
-  log.success(`Certificate generated successfully for ${domains.length} domain${domains.length > 1 ? 's' : ''}`)
+  if (options.verbose)
+    log.success(`Certificate generated successfully for ${domains.length} domain${domains.length > 1 ? 's' : ''}`)
 
   // Show Chrome bypass tip if trust might have issues
-  if (!isTrusted) {
+  if (!isTrusted && options.verbose) {
     log.warn('If you see certificate warnings in Chrome/Arc, type "thisisunsafe" on the warning page')
     log.warn('This will bypass the warning and you should only need to do it once')
   }
@@ -509,13 +525,16 @@ export async function checkExistingCertificates(options?: ProxyOptions): Promise
     ])
 
     if (!keyExists || !certExists) {
-      debugLog('ssl', `Certificate files don't exist: key=${keyExists}, cert=${certExists}`, options.verbose)
+      debugLog('ssl', `Certificate files don't exist: key=${keyExists}, cert=${certExists}, paths: ${sslConfig.keyPath}, ${sslConfig.certPath}`, options.verbose)
       return null
     }
 
     // Check if certificate is trusted
     // But only if regenerateUntrustedCerts is enabled (default is true)
-    const shouldCheckTrust = 'regenerateUntrustedCerts' in options ? options.regenerateUntrustedCerts !== false : true
+    const hasFlag = 'regenerateUntrustedCerts' in options
+    const flagValue = options.regenerateUntrustedCerts
+    const shouldCheckTrust = hasFlag ? flagValue !== false : true
+    debugLog('ssl', `Trust check: hasFlag=${hasFlag}, flagValue=${flagValue}, shouldCheckTrust=${shouldCheckTrust}`, options.verbose)
     const certIsTrusted = shouldCheckTrust ? await isCertTrusted(sslConfig.certPath, options) : true
 
     if (!certIsTrusted) {
@@ -532,10 +551,28 @@ export async function checkExistingCertificates(options?: ProxyOptions): Promise
       caExists && sslConfig.caCertPath ? fs.readFile(sslConfig.caCertPath, 'utf8') : Promise.resolve(undefined),
     ])
 
-    // Validate root CA if present
-    if (ca && !isValidRootCA(ca)) {
-      debugLog('ssl', 'Invalid root CA certificate, will regenerate', options.verbose)
+    // Validate root CA PEM content if present
+    if (ca && !ca.includes('-----BEGIN CERTIFICATE-----')) {
+      debugLog('ssl', 'Invalid root CA certificate content, will regenerate', options.verbose)
       return null
+    }
+
+    // For multi-proxy configs, verify the cert covers ALL requested domains
+    if (isMultiProxyOptions(options)) {
+      try {
+        const { X509Certificate } = await import('node:crypto')
+        const x509 = new X509Certificate(cert)
+        const san = x509.subjectAltName || ''
+        const requiredDomains = options.proxies.map(p => p.to)
+        const missingDomains = requiredDomains.filter(d => !san.includes(`DNS:${d}`))
+        if (missingDomains.length > 0) {
+          debugLog('ssl', `Certificate missing SANs for: ${missingDomains.join(', ')}, will regenerate`, options.verbose)
+          return null
+        }
+      }
+      catch (err) {
+        debugLog('ssl', `Could not verify cert SANs: ${err}`, options.verbose)
+      }
     }
 
     debugLog('ssl', 'Successfully loaded existing certificates', options.verbose)

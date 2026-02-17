@@ -651,6 +651,7 @@ async function createProxyServer(
           listenPort,
           ssl: true,
           cleanUrls,
+          verbose,
         })
 
         resolve()
@@ -679,6 +680,7 @@ async function createProxyServer(
           listenPort,
           ssl: !!ssl,
           cleanUrls,
+          verbose,
         })
 
         resolve()
@@ -721,18 +723,17 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       }
     }
     else {
-      // Special handling for *.localhost domains to ensure they're in the hosts file
-      if (to && to.includes('localhost') && !to.match(/^(localhost|127\.0\.0\.1)$/)) {
+      // On macOS, *.localhost domains resolve to 127.0.0.1 automatically (RFC 6761)
+      // so we don't need to add them to /etc/hosts
+      if (process.platform !== 'darwin' && to && to.includes('localhost') && !to.match(/^(localhost|127\.0\.0\.1)$/)) {
         const hostsExist = await checkHosts([to], verbose)
         if (!hostsExist[0]) {
-          log.warn(`The hostname ${to} isn't in your hosts file. Adding it now...`)
+          debugLog('hosts', `${to} not found in hosts file, adding...`, verbose)
           try {
             await addHosts([to], verbose)
-            log.success(`Added ${to} to your hosts file.`)
           }
           catch (error) {
-            log.error(`Failed to add ${to} to your hosts file: ${error}`)
-            log.info(`You may need to manually add '127.0.0.1 ${to}' to your /etc/hosts file.`)
+            debugLog('hosts', `Failed to add ${to} to hosts file: ${error}`, verbose)
           }
         }
       }
@@ -748,7 +749,8 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       }
       else {
         debugLog('setup', 'Port 80 is in use, skipping HTTP redirect', verbose)
-        log.warn('Port 80 is in use, HTTP to HTTPS redirect will not be available')
+        if (verbose)
+          log.warn('Port 80 is in use, HTTP to HTTPS redirect will not be available')
       }
     }
 
@@ -760,32 +762,31 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
     let finalPort: number
 
     if (isTargetPortBusy) {
-      log.warn(`Port ${targetPort} is already in use. This may be another instance of rpx or another service.`)
+      debugLog('setup', `Port ${targetPort} is already in use`, verbose)
+      if (verbose)
+        log.warn(`Port ${targetPort} is already in use. This may be another instance of rpx or another service.`)
 
       // For port 443, we need admin/sudo privileges to use it directly
       if (targetPort === 443) {
-        log.info('HTTPS requires port 443 for standard operation. Using an alternative port instead.')
-
         // Use the enhanced port manager with connectivity testing for more reliability
         finalPort = await portManager.getNextAvailablePort(3443, true)
-        log.info(`Using port ${finalPort} instead. Access your site at https://${to}:${finalPort}`)
+        debugLog('setup', `Using port ${finalPort} instead of ${targetPort}`, verbose)
+        if (verbose)
+          log.info(`Using port ${finalPort} instead. Access your site at https://${to}:${finalPort}`)
       }
       else {
         // Use the enhanced port manager with connectivity testing for more reliability
         finalPort = await portManager.getNextAvailablePort(targetPort + 1000, true)
-        log.info(`Using port ${finalPort} instead. Access your site at http://${to}:${finalPort}`)
+        debugLog('setup', `Using port ${finalPort} instead of ${targetPort}`, verbose)
+        if (verbose)
+          log.info(`Using port ${finalPort} instead. Access your site at http://${to}:${finalPort}`)
       }
     }
     else {
       // Standard port is available, use it
       finalPort = targetPort
       portManager.usedPorts.add(finalPort)
-      if (targetPort === 443) {
-        log.info(`Using standard HTTPS port 443. Access your site at https://${to}`)
-      }
-      else {
-        log.info(`Using standard HTTP port 80. Access your site at http://${to}`)
-      }
+      debugLog('setup', `Using standard ${targetPort === 443 ? 'HTTPS' : 'HTTP'} port ${targetPort} for ${to}`, verbose)
     }
 
     await createProxyServer(from, to, fromPort, finalPort, hostname, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin)
@@ -841,7 +842,7 @@ export function startProxy(options: ProxyOption): void {
   // Reserved TLDs that are safe for local development (RFC 2606 / RFC 6761)
   const reservedTlds = ['test', 'localhost', 'local', 'example', 'invalid']
 
-  if (isCustomDomain && problematicTlds.includes(tld)) {
+  if (isCustomDomain && problematicTlds.includes(tld) && verbose) {
     log.warn(`The .${tld} TLD may not work reliably for local development`)
     log.info(`  Google owns .${tld} with HSTS preloading, which can bypass local DNS`)
     log.info(`  Consider using a reserved TLD: .test, .localhost, or .local`)
@@ -852,16 +853,18 @@ export function startProxy(options: ProxyOption): void {
       startDnsServer([targetDomain], mergedOptions.verbose).then((started) => {
         if (started) {
           setupResolver(mergedOptions.verbose, [targetDomain]).then(() => {
-            if (reservedTlds.includes(tld)) {
-              log.success(`DNS server started for .${tld} domains`)
-            }
-            else {
-              log.success(`DNS server started for .${tld} domains (hosts file entry also added)`)
+            if (mergedOptions.verbose) {
+              if (reservedTlds.includes(tld)) {
+                log.success(`DNS server started for .${tld} domains`)
+              }
+              else {
+                log.success(`DNS server started for .${tld} domains (hosts file entry also added)`)
+              }
             }
           })
         }
         else {
-          log.warn(`Could not start DNS server - ${targetDomain} may not resolve in browser`)
+          debugLog('dns', `Could not start DNS server - ${targetDomain} may not resolve in browser`, mergedOptions.verbose)
         }
       })
     }).catch((err) => {
@@ -878,6 +881,7 @@ export function startProxy(options: ProxyOption): void {
     vitePluginUsage: mergedOptions.vitePluginUsage,
     changeOrigin: mergedOptions.changeOrigin,
     verbose: mergedOptions.verbose,
+    regenerateUntrustedCerts: mergedOptions.regenerateUntrustedCerts,
   }
 
   debugLog('proxy', `Server options: ${JSON.stringify(serverOptions)}`, mergedOptions.verbose)
@@ -1069,9 +1073,9 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const reservedTlds = ['test', 'localhost', 'local', 'example', 'invalid']
 
   // Warn about problematic TLDs
-  const uniqueTlds = [...new Set(customDomains.map((d: string) => d.split('.').pop()?.toLowerCase()))]
-  const problematicFound = uniqueTlds.filter((t): t is string => typeof t === 'string' && problematicTlds.includes(t))
-  if (problematicFound.length > 0) {
+  const uniqueTlds = [...new Set(customDomains.map(d => d.split('.').pop()?.toLowerCase()))]
+  const problematicFound = uniqueTlds.filter(t => t && problematicTlds.includes(t))
+  if (problematicFound.length > 0 && verbose) {
     log.warn(`The following TLDs may not work reliably for local development: ${problematicFound.map(t => `.${t}`).join(', ')}`)
     log.info(`  These TLDs have HSTS preloading which can bypass local DNS`)
     log.info(`  Consider using reserved TLDs: .test, .localhost, or .local`)
@@ -1082,16 +1086,18 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     const dnsStarted = await startDnsServer(customDomains, verbose)
     if (dnsStarted) {
       await setupResolver(verbose, customDomains)
-      const hasReservedOnly = uniqueTlds.every((t): t is string => typeof t === 'string' && reservedTlds.includes(t))
-      if (hasReservedOnly) {
-        log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains`)
-      }
-      else {
-        log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains (hosts file entries also added)`)
+      if (verbose) {
+        const hasReservedOnly = uniqueTlds.every(t => t && reservedTlds.includes(t))
+        if (hasReservedOnly) {
+          log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains`)
+        }
+        else {
+          log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains (hosts file entries also added)`)
+        }
       }
     }
     else {
-      log.warn('Could not start DNS server - custom domains may not resolve')
+      debugLog('dns', 'Could not start DNS server - custom domains may not resolve', verbose)
     }
   }
 
@@ -1169,26 +1175,18 @@ interface OutputOptions {
   cleanUrls?: boolean
 }
 
-function logToConsole(options?: OutputOptions) {
-  if (!options?.vitePluginUsage) { // the Vite plugin handles the console output
-    console.log('')
-    console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
-    console.log('')
-    console.log(`  ${colors.green('➜')}  ${colors.dim(options?.from ?? '')} ${colors.dim('➜')} ${colors.cyan(options?.ssl ? ` https://${options?.to}` : ` http://${options?.to}`)}`)
+function logToConsole(options?: OutputOptions & { verbose?: boolean }) {
+  // Skip console output for Vite plugin (handles its own output) and non-verbose mode (caller handles output)
+  if (options?.vitePluginUsage || !options?.verbose)
+    return
 
-    if (options?.listenPort !== (options?.ssl ? 443 : 80))
-      console.log(`  ${colors.green('➜')}  Listening on port ${options?.listenPort}`)
+  console.log('')
+  console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
+  console.log(`  ${colors.green('➜')}  ${colors.dim(options?.from)} ${colors.dim('➜')} ${colors.cyan(options?.ssl ? `https://${options?.to}` : `http://${options?.to}`)}`)
 
-    if (options?.ssl) {
-      console.log(`  ${colors.green('➜')}  SSL enabled with:`)
-      console.log(`     - TLS 1.2/1.3`)
-      console.log(`     - Modern cipher suite`)
-      console.log(`     - HTTP/2 enabled`)
-      console.log(`     - HSTS enabled`)
-    }
+  if (options?.listenPort !== (options?.ssl ? 443 : 80))
+    console.log(`  ${colors.green('➜')}  Listening on port ${options?.listenPort}`)
 
-    if (options?.cleanUrls) {
-      console.log(`  ${colors.green('➜')}  Clean URLs enabled`)
-    }
-  }
+  if (options?.cleanUrls)
+    console.log(`  ${colors.green('➜')}  Clean URLs enabled`)
 }
