@@ -842,7 +842,7 @@ export function startProxy(options: ProxyOption): void {
   // Reserved TLDs that are safe for local development (RFC 2606 / RFC 6761)
   const reservedTlds = ['test', 'localhost', 'local', 'example', 'invalid']
 
-  if (isCustomDomain && problematicTlds.includes(tld) && verbose) {
+  if (isCustomDomain && problematicTlds.includes(tld) && mergedOptions?.verbose) {
     log.warn(`The .${tld} TLD may not work reliably for local development`)
     log.info(`  Google owns .${tld} with HSTS preloading, which can bypass local DNS`)
     log.info(`  Consider using a reserved TLD: .test, .localhost, or .local`)
@@ -1073,8 +1073,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const reservedTlds = ['test', 'localhost', 'local', 'example', 'invalid']
 
   // Warn about problematic TLDs
-  const uniqueTlds = [...new Set(customDomains.map(d => d.split('.').pop()?.toLowerCase()))]
-  const problematicFound = uniqueTlds.filter(t => t && problematicTlds.includes(t))
+  const uniqueTlds = [...new Set(customDomains.map((d: string) => d.split('.').pop()?.toLowerCase()))]
+  const problematicFound = uniqueTlds.filter((t): t is string => !!t && problematicTlds.includes(t as string))
   if (problematicFound.length > 0 && verbose) {
     log.warn(`The following TLDs may not work reliably for local development: ${problematicFound.map(t => `.${t}`).join(', ')}`)
     log.info(`  These TLDs have HSTS preloading which can bypass local DNS`)
@@ -1087,7 +1087,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     if (dnsStarted) {
       await setupResolver(verbose, customDomains)
       if (verbose) {
-        const hasReservedOnly = uniqueTlds.every(t => t && reservedTlds.includes(t))
+        const hasReservedOnly = uniqueTlds.every((t): t is string => !!t && reservedTlds.includes(t as string))
         if (hasReservedOnly) {
           log.success(`DNS server started for ${uniqueTlds.map(t => `.${t}`).join(', ')} domains`)
         }
@@ -1182,7 +1182,7 @@ function logToConsole(options?: OutputOptions & { verbose?: boolean }) {
 
   console.log('')
   console.log(`  ${colors.green(colors.bold('rpx'))} ${colors.green(`v${version}`)}`)
-  console.log(`  ${colors.green('➜')}  ${colors.dim(options?.from)} ${colors.dim('➜')} ${colors.cyan(options?.ssl ? `https://${options?.to}` : `http://${options?.to}`)}`)
+  console.log(`  ${colors.green('➜')}  ${colors.dim(options?.from ?? '')} ${colors.dim('➜')} ${colors.cyan(options?.ssl ? `https://${options?.to}` : `http://${options?.to}`)}`)
 
   if (options?.listenPort !== (options?.ssl ? 443 : 80))
     console.log(`  ${colors.green('➜')}  Listening on port ${options?.listenPort}`)
