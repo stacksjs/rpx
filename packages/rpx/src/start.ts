@@ -1175,6 +1175,7 @@ interface OutputOptions {
   cleanUrls?: boolean
 }
 
+// eslint-disable-next-line pickier/no-unused-vars
 function logToConsole(options?: OutputOptions & { verbose?: boolean }) {
   // Skip console output for Vite plugin (handles its own output) and non-verbose mode (caller handles output)
   if (options?.vitePluginUsage || !options?.verbose)
