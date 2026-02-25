@@ -1140,28 +1140,162 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     cleanupHandler()
   })
 
-  // Start all proxies
-  for (const option of proxyOptions) {
-    try {
-      const domain = option.to || 'rpx.localhost'
-      debugLog('proxy', `Starting proxy for ${domain} with SSL config: ${!!sslConfig}`, option.verbose)
+  // When SSL is enabled, create a single shared HTTPS server with host-based routing
+  // This ensures all domains share port 443 and route by Host header
+  if (sslConfig && proxyOptions.length > 1) {
+    debugLog('proxies', `Creating shared HTTPS server for ${proxyOptions.length} domains`, verbose)
 
-      await startServer({
-        from: option.from || 'localhost:5173',
-        to: domain,
+    // Build routing table: domain → { fromPort, sourceHost, cleanUrls, changeOrigin }
+    const routingTable = new Map<string, { fromPort: number, sourceHost: string, cleanUrls: boolean, changeOrigin: boolean }>()
+
+    for (const option of proxyOptions) {
+      const domain = option.to || 'rpx.localhost'
+      const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
+      const fromPort = Number.parseInt(fromUrl.port) || 80
+
+      routingTable.set(domain, {
+        fromPort,
+        sourceHost: fromUrl.host,
         cleanUrls: option.cleanUrls || false,
-        https: option.https || false,
-        cleanup: option.cleanup || false,
-        vitePluginUsage: option.vitePluginUsage || false,
-        verbose: option.verbose || false,
-        _cachedSSLConfig: sslConfig,
         changeOrigin: option.changeOrigin || false,
       })
+
+      debugLog('proxies', `Route: ${domain} → ${fromUrl.host}`, verbose)
+
+      // Ensure hosts file entries exist for non-localhost domains
+      if (!domain.includes('localhost') && !domain.includes('127.0.0.1')) {
+        try {
+          const hostsExist = await checkHosts([domain], verbose)
+          if (!hostsExist[0]) {
+            await addHosts([domain], verbose)
+          }
+        }
+        catch {
+          debugLog('hosts', `Could not add hosts entry for ${domain}`, verbose)
+        }
+      }
+    }
+
+    // Start HTTP redirect server if port 80 is available
+    const isHttpPortBusy = await isPortInUse(80, '0.0.0.0', verbose)
+    if (!isHttpPortBusy) {
+      startHttpRedirectServer(verbose)
+    }
+
+    // Create single shared Bun.serve on port 443
+    const listenPort = 443
+    const isPortBusy = await isPortInUse(listenPort, '0.0.0.0', verbose)
+
+    if (isPortBusy) {
+      debugLog('proxies', `Port ${listenPort} is already in use, cannot start shared proxy`, verbose)
+      if (verbose)
+        log.warn(`Port ${listenPort} is in use. Shared HTTPS proxy cannot start.`)
+      return
+    }
+
+    try {
+      const bunServer = Bun.serve({
+        port: listenPort,
+        hostname: '0.0.0.0',
+        tls: {
+          key: sslConfig.key,
+          cert: sslConfig.cert,
+          ca: sslConfig.ca,
+          requestCert: false,
+          rejectUnauthorized: false,
+        },
+        async fetch(req: Request) {
+          const url = new URL(req.url)
+          const hostHeader = req.headers.get('host') || ''
+          // Strip port from Host header (e.g., "stacks.localhost:443" → "stacks.localhost")
+          const hostname = hostHeader.split(':')[0]
+
+          const route = routingTable.get(hostname)
+          if (!route) {
+            debugLog('request', `No route found for host: ${hostname}`, verbose)
+            return new Response(`No proxy configured for ${hostname}`, { status: 404 })
+          }
+
+          const targetUrl = `http://${route.sourceHost}${url.pathname}${url.search}`
+
+          try {
+            const headers = new Headers(req.headers)
+            headers.set('host', route.sourceHost)
+            if (route.changeOrigin) {
+              headers.set('origin', `http://${route.sourceHost}`)
+            }
+            headers.set('x-forwarded-for', '127.0.0.1')
+            headers.set('x-forwarded-proto', 'https')
+            headers.set('x-forwarded-host', hostname)
+
+            const response = await fetch(targetUrl, {
+              method: req.method,
+              headers,
+              body: req.body,
+              redirect: 'manual',
+            })
+
+            const responseHeaders = new Headers(response.headers)
+
+            // Handle clean URLs redirect
+            if (route.cleanUrls && url.pathname.endsWith('.html')) {
+              const cleanPath = url.pathname.replace(/\.html$/, '')
+              return new Response(null, {
+                status: 301,
+                headers: { Location: cleanPath },
+              })
+            }
+
+            return new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: responseHeaders,
+            })
+          }
+          catch (err) {
+            debugLog('request', `Proxy error for ${hostname}: ${err}`, verbose)
+            return new Response(`Proxy Error: ${err}`, { status: 502 })
+          }
+        },
+        error(err: Error) {
+          debugLog('server', `Shared proxy server error: ${err}`, verbose)
+          return new Response(`Server Error: ${err.message}`, { status: 500 })
+        },
+      })
+
+      activeServers.add(bunServer as unknown as http.Server)
+      debugLog('proxies', `Shared HTTPS proxy listening on port ${listenPort} for ${routingTable.size} domains`, verbose)
     }
     catch (err) {
-      debugLog('proxies', `Failed to start proxy for ${option.to}: ${err}`, option.verbose)
-      console.error(`Failed to start proxy for ${option.to}:`, err)
+      debugLog('proxies', `Failed to start shared proxy: ${err}`, verbose)
+      console.error('Failed to start shared HTTPS proxy:', err)
       cleanupHandler()
+    }
+  }
+  else {
+    // Single proxy or no SSL — use individual servers (original behavior)
+    for (const option of proxyOptions) {
+      try {
+        const domain = option.to || 'rpx.localhost'
+        debugLog('proxy', `Starting proxy for ${domain} with SSL config: ${!!sslConfig}`, option.verbose)
+
+        await startServer({
+          from: option.from || 'localhost:5173',
+          to: domain,
+          cleanUrls: option.cleanUrls || false,
+          https: option.https || false,
+          cleanup: option.cleanup || false,
+          vitePluginUsage: option.vitePluginUsage || false,
+          verbose: option.verbose || false,
+          _cachedSSLConfig: sslConfig,
+          changeOrigin: option.changeOrigin || false,
+        })
+      }
+      catch (err) {
+        debugLog('proxies', `Failed to start proxy for ${option.to}: ${err}`, option.verbose)
+        console.error(`Failed to start proxy for ${option.to}:`, err)
+        cleanupHandler()
+      }
     }
   }
 }
