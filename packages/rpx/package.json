@@ -66,7 +66,7 @@
     "zip:darwin-arm64": "zip -j bin/rpx-darwin-arm64.zip bin/rpx-darwin-arm64"
   },
   "devDependencies": {
-    "@stacksjs/tlsx": "^0.10.0",
+    "@stacksjs/tlsx": "^0.13.0",
     "bun-plugin-dtsx": "^0.21.17",
     "bunfig": "^0.15.6",
     "cac": "^6.7.14",
