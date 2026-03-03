@@ -17,15 +17,6 @@ mock.module('node:process', () => ({
   env: { NODE_ENV: 'test' },
 }))
 
-mock.module('consola', () => ({
-  consola: {
-    info: mockConsoleLog,
-    success: mockConsoleSuccess,
-    warn: () => {},
-    error: () => {},
-  },
-}))
-
 mock.module('../src/hosts', () => ({
   removeHosts: mockRemoveHosts,
 }))

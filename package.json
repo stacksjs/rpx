@@ -48,8 +48,8 @@
     "lint:fix": "bunx --bun pickier lint . --fix --config pickier.config.ts --max-warnings 9999",
     "format": "bunx --bun pickier format . --config pickier.config.ts",
     "format:fix": "bunx --bun pickier format . --write --config pickier.config.ts",
-    "changelog": "bunx logsmith --verbose",
-    "changelog:generate": "bunx logsmith --output CHANGELOG.md",
+    "changelog": "bunx --bun logsmith --verbose",
+    "changelog:generate": "bunx --bun logsmith --output CHANGELOG.md",
     "release": "bun --bun run changelog:generate && bunx --bun bumpx prompt --recursive",
     "postinstall": "bunx git-hooks",
     "typecheck": "bunx tsc --noEmit",
@@ -61,8 +61,8 @@
   },
   "devDependencies": {
     "@stacksjs/bumpx": "^0.2.4",
+    "@stacksjs/bunpress": "^0.1.1",
     "@stacksjs/clarity": "^0.3.24",
-    "@stacksjs/docs": "^0.70.23",
     "@stacksjs/gitlint": "^0.1.5",
     "@stacksjs/logsmith": "^0.2.1",
     "@stacksjs/tlsx": "^0.10.0",
@@ -71,15 +71,8 @@
     "bun-git-hooks": "^0.3.1",
     "bun-plugin-dtsx": "^0.21.17",
     "bunfig": "^0.15.6",
-    "cac": "^6.7.14",
-    "consola": "^3.4.2",
     "typescript": "^5.9.3",
-    "unocss": "^66.6.0",
     "vite-plugin-rpx": "workspace:*"
-  },
-  "overrides": {
-    "unconfig": "0.3.10",
-    "consola": "3.4.2"
   },
   "workspaces": [
     "packages/*"
