@@ -1,4 +1,27 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.1...v0.11.2)
+
+### 🧹 Chores
+
+- release v0.11.2 ([3186276](https://github.com/stacksjs/rpx/commit/3186276)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([066a131](https://github.com/stacksjs/rpx/commit/066a131)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([03d9ae1](https://github.com/stacksjs/rpx/commit/03d9ae1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.1...HEAD)
+
+### 🧹 Chores
+
+- wip ([066a131](https://github.com/stacksjs/rpx/commit/066a131)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([03d9ae1](https://github.com/stacksjs/rpx/commit/03d9ae1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.0...v0.11.1)
 
 ### 🧹 Chores
