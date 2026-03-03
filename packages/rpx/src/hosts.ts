@@ -4,7 +4,6 @@ import os from 'node:os'
 import path from 'node:path'
 import * as process from 'node:process'
 import { promisify } from 'node:util'
-import { log } from './logger'
 import { debugLog, getSudoPassword } from './utils'
 
 const execAsync = promisify(exec)
@@ -16,37 +15,34 @@ export const hostsFilePath: string = process.platform === 'win32'
 // Flag to track if we've already received sudo privileges in this session
 let sudoPrivilegesAcquired = false
 
-// Single function to execute sudo commands, with caching for permissions
+// Single function to execute sudo commands, with caching for permissions.
+// Wraps in sh -c so pipes/redirects all run under sudo.
 async function execSudo(command: string): Promise<string> {
   if (process.platform === 'win32')
     throw new Error('Administrator privileges required on Windows')
 
   const sudoPassword = getSudoPassword()
+  const escaped = command.replace(/'/g, `'\\''`)
 
   try {
-    // If we have SUDO_PASSWORD, use it with sudo -S
     if (sudoPassword) {
-      const { stdout } = await execAsync(`echo '${sudoPassword}' | sudo -S ${command}`)
+      const { stdout } = await execAsync(`echo '${sudoPassword}' | sudo -S sh -c '${escaped}' 2>/dev/null`)
       sudoPrivilegesAcquired = true
       return stdout
     }
 
-    // If we've already acquired sudo privileges, try to use the cached credentials with -n flag
     if (sudoPrivilegesAcquired) {
       try {
-        // Try using sudo with -n flag which will fail immediately if sudo requires a password
-        const { stdout } = await execAsync(`sudo -n true && sudo -n ${command}`)
+        const { stdout } = await execAsync(`sudo -n sh -c '${escaped}'`)
         return stdout
       }
       // eslint-disable-next-line unused-imports/no-unused-vars
       catch (error) {
-        // If the -n version fails, fall back to regular sudo
         debugLog('hosts', 'Cached sudo privileges expired, requesting again', true)
       }
     }
 
-    // Regular sudo prompt
-    const { stdout } = await execAsync(`sudo ${command}`)
+    const { stdout } = await execAsync(`sudo sh -c '${escaped}'`)
     sudoPrivilegesAcquired = true
     return stdout
   }
@@ -65,16 +61,16 @@ export async function addHosts(hosts: string[], verbose?: boolean): Promise<void
     try {
       existingContent = await fs.promises.readFile(hostsFilePath, 'utf-8')
     }
-    catch (readErr) {
-      debugLog('hosts', `Error reading hosts file: ${readErr}`, verbose)
-      log.error(`Failed to read hosts file: ${readErr}`)
+    catch {
+      // /etc/hosts typically requires elevated permissions — fall back to sudo
+      debugLog('hosts', 'Reading hosts file requires elevated permissions, using sudo', verbose)
 
-      // Try with sudo
       try {
         existingContent = await execSudo(`cat "${hostsFilePath}"`)
       }
       catch (sudoErr) {
-        log.error(`Failed to read hosts file with sudo: ${sudoErr}`)
+        console.log('  Could not read hosts file — skipping hosts setup')
+        debugLog('hosts', `sudo read also failed: ${sudoErr}`, verbose)
         throw new Error(`Cannot read hosts file: ${sudoErr}`)
       }
     }
@@ -88,7 +84,6 @@ export async function addHosts(hosts: string[], verbose?: boolean): Promise<void
 
     if (newEntries.length === 0) {
       debugLog('hosts', 'All hosts already exist in hosts file', verbose)
-      log.info('All hosts are already in the hosts file')
       return
     }
 
@@ -105,37 +100,25 @@ export async function addHosts(hosts: string[], verbose?: boolean): Promise<void
 
       // Use tee with sudo to write the content to hosts file
       await execSudo(`cat "${tmpFile}" | tee "${hostsFilePath}" > /dev/null`)
-      log.success(`Added new hosts: ${newEntries.join(', ')}`)
+      console.log(`  Hosts updated: ${newEntries.join(', ')}`)
     }
     // eslint-disable-next-line unused-imports/no-unused-vars
     catch (error) {
-      // Don't throw - just warn the user
-      log.warn('Could not modify hosts file automatically')
-      log.info('Please add these entries to your hosts file:')
+      // Don't throw — just tell the user what to add manually
+      console.log('  Could not update hosts file automatically')
+      console.log('  Add these entries to /etc/hosts:')
       newEntries.forEach((host) => {
-        log.info(`  127.0.0.1 ${host}`)
-        log.info(`  ::1 ${host}`)
+        console.log(`    127.0.0.1 ${host}`)
+        console.log(`    ::1 ${host}`)
       })
-
-      if (process.platform === 'win32') {
-        log.info('\nOn Windows:')
-        log.info('1. Run notepad as administrator')
-        log.info('2. Open C:\\Windows\\System32\\drivers\\etc\\hosts')
-      }
-      else {
-        log.info('\nOn Unix systems:')
-        log.info(`  sudo nano ${hostsFilePath}`)
-      }
-      log.info('\nOr run: buddy setup:ssl')
+      console.log(`  Or run: sudo nano ${hostsFilePath}`)
     }
     finally {
       try {
-        // Clean up the temp file
         await fs.promises.unlink(tmpFile)
       }
-      catch (unlinkErr) {
+      catch {
         // Ignore cleanup errors
-        debugLog('hosts', `Failed to remove temporary file: ${unlinkErr}`, verbose)
       }
     }
   }
@@ -155,15 +138,14 @@ export async function removeHosts(hosts: string[], verbose?: boolean): Promise<v
     try {
       content = await fs.promises.readFile(hostsFilePath, 'utf-8')
     }
-    catch (readErr) {
-      debugLog('hosts', `Error reading hosts file: ${readErr}`, verbose)
+    catch {
+      debugLog('hosts', 'Reading hosts file requires elevated permissions, using sudo', verbose)
 
-      // Try with sudo
       try {
         content = await execSudo(`cat "${hostsFilePath}"`)
       }
       catch (sudoErr) {
-        log.error(`Failed to read hosts file with sudo: ${sudoErr}`)
+        debugLog('hosts', `sudo read also failed: ${sudoErr}`, verbose)
         throw new Error(`Cannot read hosts file: ${sudoErr}`)
       }
     }
@@ -214,17 +196,11 @@ export async function removeHosts(hosts: string[], verbose?: boolean): Promise<v
 
       // Use tee with sudo to write the content to hosts file
       await execSudo(`cat "${tmpFile}" | tee "${hostsFilePath}" > /dev/null`)
-      log.success('Hosts removed successfully')
+      debugLog('hosts', 'Hosts removed successfully', verbose)
     }
     // eslint-disable-next-line unused-imports/no-unused-vars
     catch (error) {
-      // Don't throw - just warn the user
-      log.warn('Could not modify hosts file automatically')
-      log.info('You may want to remove these entries from your hosts file:')
-      hosts.forEach((host) => {
-        log.info(`  127.0.0.1 ${host}`)
-        log.info(`  ::1 ${host}`)
-      })
+      debugLog('hosts', 'Could not clean up hosts file automatically', verbose)
     }
     finally {
       try {

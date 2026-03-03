@@ -19,17 +19,16 @@ export function getSudoPassword(): string | undefined {
  */
 export function execSudoSync(command: string): string {
   const sudoPassword = getSudoPassword()
+  const escaped = command.replace(/'/g, `'\\''`)
 
   if (sudoPassword) {
-    // Use -S flag to read password from stdin
-    return execSync(`echo '${sudoPassword}' | sudo -S ${command}`, {
+    return execSync(`echo '${sudoPassword}' | sudo -S sh -c '${escaped}' 2>/dev/null`, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     })
   }
 
-  // Fall back to regular sudo (will prompt for password if needed)
-  return execSync(`sudo ${command}`, { encoding: 'utf-8' })
+  return execSync(`sudo sh -c '${escaped}'`, { encoding: 'utf-8' })
 }
 
 export function debugLog(category: string, message: string, verbose?: boolean): void {

@@ -239,31 +239,25 @@ async function forceTrustCertificateMacOS(certPath: string): Promise<boolean> {
       return true
     }
 
-    log.info(`Attempting to trust certificate using macOS security command`)
+    debugLog('ssl', 'Trusting certificate via macOS security command', false)
 
     // Use execSudoSync which handles SUDO_PASSWORD from env
     try {
       execSudoSync(`security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${certPath}"`)
-      log.success('Successfully added certificate to system trust store')
       return true
     }
-    catch (sysErr) {
-      log.warn(`Could not add to system keychain: ${sysErr}`)
-
+    catch {
       // If system keychain fails, try with the user's login keychain (no sudo needed)
       try {
         execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${certPath}"`)
-        log.success('Successfully added certificate to user login keychain')
         return true
       }
-      catch (userErr) {
-        log.warn(`Could not add to user keychain: ${userErr}`)
+      catch {
         return false
       }
     }
   }
-  catch (err) {
-    log.error(`Failed to trust certificate: ${err}`)
+  catch {
     return false
   }
 }
