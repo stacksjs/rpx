@@ -65,7 +65,7 @@
     "@stacksjs/clarity": "^0.3.24",
     "@stacksjs/gitlint": "^0.1.5",
     "@stacksjs/logsmith": "^0.2.1",
-    "@stacksjs/tlsx": "^0.10.0",
+    "@stacksjs/tlsx": "^0.13.0",
     "@types/bun": "^1.3.9",
     "buddy-bot": "^0.9.16",
     "bun-git-hooks": "^0.3.1",

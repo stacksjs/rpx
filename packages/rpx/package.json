@@ -68,7 +68,7 @@
   "devDependencies": {
     "@stacksjs/clapp": "^0.2.0",
     "@stacksjs/tlsx": "^0.13.0",
-    "bun-plugin-dtsx": "^0.9.12",
+    "bun-plugin-dtsx": "^0.21.17",
     "bunfig": "^0.15.6",
     "typescript": "^5.9.3"
   },
