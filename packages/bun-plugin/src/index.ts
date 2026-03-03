@@ -4,10 +4,10 @@ import path from 'node:path'
 import * as process from 'node:process'
 import {
   cleanup,
+  colors,
   httpsConfig,
   startProxies,
 } from '@stacksjs/rpx'
-import colors from 'picocolors'
 import { execAsync, needsSudoAccess } from './utils'
 
 /**

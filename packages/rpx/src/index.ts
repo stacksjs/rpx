@@ -1,5 +1,7 @@
 import { startProxies as startProxiesFunc } from './start'
 
+export { colors } from './colors'
+
 export { config, config as defaultConfig } from './config'
 
 export {
