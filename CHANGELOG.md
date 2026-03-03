@@ -1,4 +1,49 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.0...v0.11.1)
+
+### 🧹 Chores
+
+- release v0.11.1 ([7df22de](https://github.com/stacksjs/rpx/commit/7df22de)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([07c5cce](https://github.com/stacksjs/rpx/commit/07c5cce)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([afc9383](https://github.com/stacksjs/rpx/commit/afc9383)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([7900bc4](https://github.com/stacksjs/rpx/commit/7900bc4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([00d9f82](https://github.com/stacksjs/rpx/commit/00d9f82)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([f09bca2](https://github.com/stacksjs/rpx/commit/f09bca2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([de435de](https://github.com/stacksjs/rpx/commit/de435de)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([ae40be2](https://github.com/stacksjs/rpx/commit/ae40be2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([eb71cbf](https://github.com/stacksjs/rpx/commit/eb71cbf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([04e22ea](https://github.com/stacksjs/rpx/commit/04e22ea)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e65a1bd](https://github.com/stacksjs/rpx/commit/e65a1bd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- minor improvements ([556902d](https://github.com/stacksjs/rpx/commit/556902d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([82f10df](https://github.com/stacksjs/rpx/commit/82f10df)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.0...HEAD)
+
+### 🧹 Chores
+
+- wip ([07c5cce](https://github.com/stacksjs/rpx/commit/07c5cce)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([afc9383](https://github.com/stacksjs/rpx/commit/afc9383)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([7900bc4](https://github.com/stacksjs/rpx/commit/7900bc4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([00d9f82](https://github.com/stacksjs/rpx/commit/00d9f82)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([f09bca2](https://github.com/stacksjs/rpx/commit/f09bca2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([de435de](https://github.com/stacksjs/rpx/commit/de435de)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([ae40be2](https://github.com/stacksjs/rpx/commit/ae40be2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([eb71cbf](https://github.com/stacksjs/rpx/commit/eb71cbf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([04e22ea](https://github.com/stacksjs/rpx/commit/04e22ea)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([e65a1bd](https://github.com/stacksjs/rpx/commit/e65a1bd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- minor improvements ([556902d](https://github.com/stacksjs/rpx/commit/556902d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([82f10df](https://github.com/stacksjs/rpx/commit/82f10df)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.10.0...v0.11.0)
 
 ### 🚀 Features
