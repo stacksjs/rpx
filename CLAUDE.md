@@ -2,7 +2,7 @@
 
 ## About
 
-A modern and smart reverse proxy.
+rpx is a zero-config reverse proxy for local development that provides HTTPS by default, custom domain mapping with wildcard support, automatic HTTP-to-HTTPS redirection, `/etc/hosts` management, and clean URLs (removing `.html` extensions). It works as both a library (`startProxy()`) and a CLI, supporting multiple simultaneous proxies with per-proxy TLS configuration. Configuration is managed via `rpx.config.ts`.
 
 ## Linting
 
