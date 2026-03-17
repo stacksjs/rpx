@@ -2,35 +2,6 @@ import type { PickierConfig } from 'pickier'
 
 const config: PickierConfig = {
   verbose: false,
-  ignores: [    '**/node_modules/**',
-    '**/dist/**',
-    '**/build/**',
-    '**/bin/**',
-    '**/.git/**',
-    '**/coverage/**',
-    '**/*.min.js',
-    '**/bun.lock',
-    '**/benchmarks/**',
-    '**/.claude/**',
-    '**/.zed/**',
-  ],
-
-  lint: {
-    extensions: ['ts', 'js'],
-    reporter: 'stylish',
-    cache: false,
-    maxWarnings: -1,
-  },
-
-  format: {
-    extensions: ['ts', 'js', 'json', 'md', 'yaml', 'yml'],
-    trimTrailingWhitespace: true,
-    maxConsecutiveBlankLines: 1,
-    finalNewline: 'one',
-    indent: 2,
-    quotes: 'single',
-    semi: false,
-  },
 
   rules: {
     noDebugger: 'error',
