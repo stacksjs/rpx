@@ -2,7 +2,7 @@
 import type { IncomingHttpHeaders, SecureServerOptions } from 'node:http2'
 import type { ServerOptions } from 'node:https'
 import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
-import { exec } from 'node:child_process'
+import { exec, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
 import * as http2 from 'node:http2'
@@ -20,7 +20,7 @@ import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
 import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
 import { ProcessManager } from './process-manager'
-import { debugLog } from './utils'
+import { debugLog, getSudoPassword } from './utils'
 
 const processManager = new ProcessManager()
 // Create a global port manager for coordinating port usage
@@ -1014,6 +1014,22 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const primaryDomain = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
     ? mergedOptions.proxies[0]?.to
     : ('to' in mergedOptions ? mergedOptions.to : 'rpx.localhost')
+
+  // Pre-acquire sudo credentials once so that all subsequent sudo operations
+  // (cert trust, hosts file, DNS resolver) reuse the cached credential
+  // without prompting again. `sudo -v` validates and caches for the timeout period.
+  if (process.platform !== 'win32' && (mergedOptions.https || mergedOptions.cleanup?.hosts !== false)) {
+    const sudoPassword = getSudoPassword()
+    if (!sudoPassword) {
+      try {
+        debugLog('sudo', 'Pre-acquiring sudo credentials for privileged operations', verbose)
+        execSync('sudo -v', { stdio: 'inherit' })
+      }
+      catch {
+        debugLog('sudo', 'Could not pre-acquire sudo credentials', verbose)
+      }
+    }
+  }
 
   // Resolve SSL configuration if HTTPS is enabled
   if (mergedOptions.https) {
