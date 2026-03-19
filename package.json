@@ -62,7 +62,7 @@
   "devDependencies": {
     "@stacksjs/tlsx": "^0.13.0",
     "typescript": "^5.9.3",
-    "better-dx": "^0.3.0"
+    "better-dx": "^0.2.7"
   },
   "workspaces": [
     "packages/*"
