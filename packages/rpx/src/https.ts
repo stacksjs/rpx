@@ -6,7 +6,6 @@ import { homedir } from 'node:os'
 import * as path from 'node:path'
 import { join } from 'node:path'
 import * as process from 'node:process'
-// @ts-expect-error dtsx issue
 import { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate as generateCert } from '@stacksjs/tlsx'
 import { log } from './logger'
 import { config } from './config'

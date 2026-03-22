@@ -87,7 +87,7 @@ describe('https', () => {
       expect(Array.isArray(config.subjectAltNames)).toBe(true)
 
       // Look for the domain in the subjectAltNames
-      const hasDomain = config.subjectAltNames.some(
+      const hasDomain = config.subjectAltNames!.some(
         (altName: any) => altName.type === 2 && altName.value === 'example.com',
       )
       expect(hasDomain).toBe(true)

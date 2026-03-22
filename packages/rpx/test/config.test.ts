@@ -24,10 +24,11 @@ describe('config', () => {
 
   it('has correct SSL paths', () => {
     const sslBase = join(homedir(), '.stacks', 'ssl')
+    const https = defaultConfig.https as Record<string, unknown>
 
-    expect(defaultConfig.https.caCertPath).toBe(join(sslBase, 'stacks.localhost.ca.crt'))
-    expect(defaultConfig.https.certPath).toBe(join(sslBase, 'stacks.localhost.crt'))
-    expect(defaultConfig.https.keyPath).toBe(join(sslBase, 'stacks.localhost.crt.key'))
+    expect(https.caCertPath).toBe(join(sslBase, 'stacks.localhost.ca.crt'))
+    expect(https.certPath).toBe(join(sslBase, 'stacks.localhost.crt'))
+    expect(https.keyPath).toBe(join(sslBase, 'stacks.localhost.crt.key'))
   })
 
   it('exports the loaded config', () => {

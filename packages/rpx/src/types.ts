@@ -1,4 +1,3 @@
-// @ts-expect-error dtsx issues
 import type { TlsConfig, TlsOption } from '@stacksjs/tlsx'
 
 export interface StartOptions {

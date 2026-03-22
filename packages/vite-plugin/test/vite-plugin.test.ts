@@ -1,12 +1,12 @@
-import type { Plugin, ViteDevServer } from 'vite'
+import type { ViteDevServer } from 'vite'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 
 // Mock the VitePluginRpx import
 function mockVitePluginRpx() {
   return {
     name: 'vite-plugin-local',
-    enforce: 'pre',
-    apply: 'serve',
+    enforce: 'pre' as const,
+    apply: 'serve' as const,
     configResolved: (config: any) => {
       if (config.server.hmr === true) {
         config.server.hmr = {
@@ -34,11 +34,11 @@ function mockVitePluginRpx() {
 }
 
 // Expose a named export for the mock to satisfy the import
-const VitePluginRpx = mock(() => mockVitePluginRpx())
+const VitePluginRpx = mock(mockVitePluginRpx)
 
 // Mock dependencies
-const mockStartProxies = mock(async () => {})
-const mockCleanup = mock(async () => {})
+const mockStartProxies = mock(async (_opts?: any) => {})
+const mockCleanup = mock(async (_opts?: any) => {})
 const mockCheckExistingCertificates = mock(async () => ({}))
 const mockCheckHosts = mock(async () => [true])
 
@@ -98,7 +98,7 @@ mock.module('../src', () => ({
 }))
 
 describe('Vite Plugin RPX', () => {
-  let plugin: Plugin
+  let plugin: ReturnType<typeof mockVitePluginRpx>
   let fakeServer: Partial<ViteDevServer>
 
   beforeEach(() => {
@@ -127,7 +127,7 @@ describe('Vite Plugin RPX', () => {
           host: 'localhost',
           port: 5173,
         },
-      },
+      } as any,
       resolvedUrls: {
         local: ['http://localhost:5173/'],
         network: [],
@@ -144,17 +144,17 @@ describe('Vite Plugin RPX', () => {
   })
 
   it('should start proxies when server starts', async () => {
-    await plugin.configureServer!(fakeServer as ViteDevServer)
+    await plugin.configureServer(fakeServer as ViteDevServer)
 
     expect(mockStartProxies).toHaveBeenCalledTimes(1)
-    expect(mockStartProxies.mock.calls[0][0]).toMatchObject({
+    expect((mockStartProxies.mock.calls as any)[0][0]).toMatchObject({
       to: 'test.localhost',
       vitePluginUsage: true,
     })
   })
 
   it('should set up signal handlers', async () => {
-    await plugin.configureServer!(fakeServer as ViteDevServer)
+    await plugin.configureServer(fakeServer as ViteDevServer)
 
     // Should register listeners
     expect(processListeners.SIGINT.length).toBe(1)
@@ -164,17 +164,17 @@ describe('Vite Plugin RPX', () => {
     // Add a pre-existing listener
     processListeners.SIGINT.push(() => {})
 
-    await plugin.configureServer!(fakeServer as ViteDevServer)
+    await plugin.configureServer(fakeServer as ViteDevServer)
 
     // Should still only have one listener (our test one)
     expect(processListeners.SIGINT.length).toBe(2)
   })
 
   it('should clean up when server closes', async () => {
-    await plugin.configureServer!(fakeServer as ViteDevServer)
+    await plugin.configureServer(fakeServer as ViteDevServer)
 
     // Get the close handler
-    const closeHandler = mockHttpServer.once.mock.calls.find(call => call[0] === 'close')?.[1]
+    const closeHandler = (mockHttpServer.once.mock.calls as any).find((call: any) => call[0] === 'close')?.[1]
     expect(closeHandler).toBeDefined()
 
     // Call the close handler
@@ -182,31 +182,31 @@ describe('Vite Plugin RPX', () => {
 
     // Should clean up with vitePluginUsage: true
     expect(mockCleanup).toHaveBeenCalledTimes(1)
-    expect(mockCleanup.mock.calls[0][0]).toMatchObject({
+    expect((mockCleanup.mock.calls as any)[0][0]).toMatchObject({
       vitePluginUsage: true,
     })
   })
 
   it('should handle SIGINT signal', async () => {
-    await plugin.configureServer!(fakeServer as ViteDevServer)
+    await plugin.configureServer(fakeServer as ViteDevServer)
 
     // Trigger SIGINT
     processListeners.SIGINT[0]()
 
     // Should clean up
     expect(mockCleanup).toHaveBeenCalledTimes(1)
-    expect(mockCleanup.mock.calls[0][0]).toMatchObject({
+    expect((mockCleanup.mock.calls as any)[0][0]).toMatchObject({
       vitePluginUsage: true,
     })
   })
 
   it('should configure HMR with random high port to prevent conflicts', () => {
-    const config = { server: { hmr: true } }
+    const config = { server: { hmr: true as boolean | Record<string, any> } }
 
-    plugin.configResolved!(config as any)
+    plugin.configResolved(config as any)
 
     expect(config.server.hmr).toBeTypeOf('object')
-    expect(typeof config.server.hmr.port).toBe('number')
-    expect(config.server.hmr.port).toBeGreaterThan(20000)
+    expect(typeof (config.server.hmr as any).port).toBe('number')
+    expect((config.server.hmr as any).port).toBeGreaterThan(20000)
   })
 })

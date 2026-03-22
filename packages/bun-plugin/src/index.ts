@@ -69,7 +69,7 @@ function RpxBunPlugin(options: RpxPluginOptions = {}): BunPlugin {
         try {
           const needsSudo = await needsSudoAccess({
             domain,
-            https,
+            https: !!https,
             verbose,
           })
 
