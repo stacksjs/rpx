@@ -23,6 +23,7 @@ await startProxy({
 ```
 
 Requests are distributed in order:
+
 1. First request → `localhost:3000`
 2. Second request → `localhost:3001`
 3. Third request → `localhost:3002`

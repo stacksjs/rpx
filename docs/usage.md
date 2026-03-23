@@ -102,6 +102,7 @@ export default {
 ```
 
 The plugin will automatically:
+
 - Map your Bun dev server port to your custom domain
 - Set up HTTPS if enabled
 - Handle hosts file entries

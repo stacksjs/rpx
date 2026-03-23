@@ -20,7 +20,7 @@ await startProxy({
 })
 ```
 
-Your app is now accessible at `https://my-app.localhost`.
+Your app is now accessible at `<https://my-app.localhost>`.
 
 ## How It Works
 
@@ -194,24 +194,26 @@ startProxy({
 ```
 
 Now all subdomains work:
-- `https://api.my-app.localhost`
-- `https://admin.my-app.localhost`
-- `https://staging.my-app.localhost`
+
+- `<https://api.my-app.localhost>`
+- `<https://admin.my-app.localhost>`
+- `<https://staging.my-app.localhost>`
 
 ## Troubleshooting
 
 ### Browser Shows "Not Secure"
 
 1. Run the certificate fix utility:
-   ```bash
-   bun scripts/fix-certs.js
-   ```
+
+  ```bash
+  bun scripts/fix-certs.js
+  ```
 
 2. Restart your browser
 
 3. If still failing, manually add the CA to your browser:
-   - Chrome: Settings → Privacy → Security → Manage certificates
-   - Firefox: Settings → Privacy → View Certificates
+  - Chrome: Settings → Privacy → Security → Manage certificates
+  - Firefox: Settings → Privacy → View Certificates
 
 ### Certificate Expired
 

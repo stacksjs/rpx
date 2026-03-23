@@ -212,6 +212,7 @@ setInterval(() => {
 ```
 
 Metrics include:
+
 - Total requests
 - Requests per second
 - Average response time
@@ -229,12 +230,12 @@ await startProxy({
 
   health: {
     enabled: true,
-    path: '/__health',
+    path: '/**health',
   },
 })
 ```
 
-Access at `https://my-app.localhost/__health`:
+Access at `<https://my-app.localhost/**health>`:
 
 ```json
 {
@@ -279,7 +280,7 @@ Run performance tests:
 # Run built-in benchmark
 rpx benchmark --duration 30 --concurrency 10
 
-# Output:
+# Output
 # Requests:      10,000
 # Duration:      30.0s
 # RPS:           333.33
@@ -348,6 +349,7 @@ setInterval(() => {
 **Symptoms**: Requests take longer than expected
 
 **Solutions**:
+
 1. Enable keep-alive connections
 2. Increase connection pool size
 3. Check target server performance
@@ -358,6 +360,7 @@ setInterval(() => {
 **Symptoms**: Memory usage grows over time
 
 **Solutions**:
+
 1. Limit request body buffering
 2. Enable streaming for large responses
 3. Set connection timeouts
@@ -368,6 +371,7 @@ setInterval(() => {
 **Symptoms**: "EMFILE: too many open files"
 
 **Solutions**:
+
 1. Increase ulimit: `ulimit -n 65536`
 2. Reduce keepAliveTimeout
 3. Limit maxSockets

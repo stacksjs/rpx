@@ -29,7 +29,7 @@ bun add vite-plugin-pretty-urls-https
 
 ## Usage
 
-### In your vite.config.js:
+### In your vite.config.js
 
 ```js
 import { defineConfig } from 'vite'
@@ -99,6 +99,7 @@ export default defineConfig({
 ```
 
 Key differences:
+
 - No WebSocket port allocation issues
 - No separate proxy server running
 - More streamlined approach
@@ -128,7 +129,7 @@ This approach is much simpler and avoids the complex port allocation logic that 
 
 If your browser doesn't trust the certificates:
 
-1. Navigate to `https://yourapp.localhost`
+1. Navigate to `<https://yourapp.localhost>`
 2. Accept the security warning
 3. The certificate should be stored in your system keychain
 

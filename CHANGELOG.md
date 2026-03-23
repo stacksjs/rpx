@@ -1,30 +1,31 @@
 # Changelog
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.1...v0.11.2)
 
-### 🧹 Chores
+## 🧹 Chores
 
 - release v0.11.2 ([3186276](https://github.com/stacksjs/rpx/commit/3186276)) _(by Chris <chrisbreuer93@gmail.com>)_
 - wip ([066a131](https://github.com/stacksjs/rpx/commit/066a131)) _(by Chris <chrisbreuer93@gmail.com>)_
 - wip ([03d9ae1](https://github.com/stacksjs/rpx/commit/03d9ae1)) _(by Chris <chrisbreuer93@gmail.com>)_
 
-### Contributors
+## Contributors
 
 - _Chris <chrisbreuer93@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.1...HEAD)
 
-### 🧹 Chores
+## 🧹 Chores
 
 - wip ([066a131](https://github.com/stacksjs/rpx/commit/066a131)) _(by Chris <chrisbreuer93@gmail.com>)_
 - wip ([03d9ae1](https://github.com/stacksjs/rpx/commit/03d9ae1)) _(by Chris <chrisbreuer93@gmail.com>)_
 
-### Contributors
+## Contributors
 
 - _Chris <chrisbreuer93@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.0...v0.11.1)
 
-### 🧹 Chores
+## 🧹 Chores
 
 - release v0.11.1 ([7df22de](https://github.com/stacksjs/rpx/commit/7df22de)) _(by Chris <chrisbreuer93@gmail.com>)_
 - wip ([07c5cce](https://github.com/stacksjs/rpx/commit/07c5cce)) _(by Chris <chrisbreuer93@gmail.com>)_
@@ -40,14 +41,14 @@
 - minor improvements ([556902d](https://github.com/stacksjs/rpx/commit/556902d)) _(by Chris <chrisbreuer93@gmail.com>)_
 - wip ([82f10df](https://github.com/stacksjs/rpx/commit/82f10df)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### Contributors
+## Contributors
 
 - _Chris <chrisbreuer93@gmail.com>_
 - _glennmichael123 <gtorregosa@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.0...HEAD)
 
-### 🧹 Chores
+## 🧹 Chores
 
 - wip ([07c5cce](https://github.com/stacksjs/rpx/commit/07c5cce)) _(by Chris <chrisbreuer93@gmail.com>)_
 - wip ([afc9383](https://github.com/stacksjs/rpx/commit/afc9383)) _(by Chris <chrisbreuer93@gmail.com>)_
@@ -62,14 +63,14 @@
 - minor improvements ([556902d](https://github.com/stacksjs/rpx/commit/556902d)) _(by Chris <chrisbreuer93@gmail.com>)_
 - wip ([82f10df](https://github.com/stacksjs/rpx/commit/82f10df)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### Contributors
+## Contributors
 
 - _Chris <chrisbreuer93@gmail.com>_
 - _glennmichael123 <gtorregosa@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.10.0...v0.11.0)
 
-### 🚀 Features
+## 🚀 Features
 
 - add `regenerateUntrustedCerts` option ([d20da7f](https://github.com/stacksjs/rpx/commit/d20da7f))
 - add initial vite plugin ([55dc0ff](https://github.com/stacksjs/rpx/commit/55dc0ff))
@@ -77,18 +78,18 @@
 - add support for `changeOrigin` ([1c18ebf](https://github.com/stacksjs/rpx/commit/1c18ebf))
 - add bun plugin ([dd4cbdd](https://github.com/stacksjs/rpx/commit/dd4cbdd))
 
-### 🐛 Bug Fixes
+## 🐛 Bug Fixes
 
 - publish commit script ([dcad22d](https://github.com/stacksjs/rpx/commit/dcad22d))
 - ensure consistent behavior in all environments ([1b49571](https://github.com/stacksjs/rpx/commit/1b49571))
 
-### 📚 Documentation
+## 📚 Documentation
 
 - adjust config ([e630432](https://github.com/stacksjs/rpx/commit/e630432))
 - add features & advanced sections ([bfca216](https://github.com/stacksjs/rpx/commit/bfca216))
 - mention HMR usage in Vite ([4b9145c](https://github.com/stacksjs/rpx/commit/4b9145c))
 
-### 🧹 Chores
+## 🧹 Chores
 
 - release v0.11.0 ([21fb710](https://github.com/stacksjs/rpx/commit/21fb710))
 - **deps**: update all non-major dependencies (#1383) ([dc20c87](https://github.com/stacksjs/rpx/commit/dc20c87)) ([#1383](https://github.com/stacksjs/rpx/issues/1383), [#1383](https://github.com/stacksjs/rpx/issues/1383))
@@ -147,12 +148,12 @@
 - adjust link color ([94089f5](https://github.com/stacksjs/rpx/commit/94089f5))
 - improve cli output spacing ([b199b2a](https://github.com/stacksjs/rpx/commit/b199b2a))
 
-### 📄 Miscellaneous
+## 📄 Miscellaneous
 
 - Merge pull request #57 from stacksjs/renovate/actions-checkout-6.x ([6c89390](https://github.com/stacksjs/rpx/commit/6c89390)) ([#57](https://github.com/stacksjs/rpx/issues/57), [#57](https://github.com/stacksjs/rpx/issues/57))
 - Merge pull request #49 from stacksjs/buddy-bot/update-non-major-updates-1758782554781 ([2731dd9](https://github.com/stacksjs/rpx/commit/2731dd9)) ([#49](https://github.com/stacksjs/rpx/issues/49), [#49](https://github.com/stacksjs/rpx/issues/49))
 
-### Contributors
+## Contributors
 
 - Adelino Ngomacha <adelinob335@gmail.com>
 - Chris <chrisbreuer93@gmail.com>
@@ -163,7 +164,7 @@
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.10.0...HEAD)
 
-### 🚀 Features
+## 🚀 Features
 
 - add `regenerateUntrustedCerts` option ([d20da7f](https://github.com/stacksjs/rpx/commit/d20da7f))
 - add initial vite plugin ([55dc0ff](https://github.com/stacksjs/rpx/commit/55dc0ff))
@@ -171,18 +172,18 @@
 - add support for `changeOrigin` ([1c18ebf](https://github.com/stacksjs/rpx/commit/1c18ebf))
 - add bun plugin ([dd4cbdd](https://github.com/stacksjs/rpx/commit/dd4cbdd))
 
-### 🐛 Bug Fixes
+## 🐛 Bug Fixes
 
 - publish commit script ([dcad22d](https://github.com/stacksjs/rpx/commit/dcad22d))
 - ensure consistent behavior in all environments ([1b49571](https://github.com/stacksjs/rpx/commit/1b49571))
 
-### 📚 Documentation
+## 📚 Documentation
 
 - adjust config ([e630432](https://github.com/stacksjs/rpx/commit/e630432))
 - add features & advanced sections ([bfca216](https://github.com/stacksjs/rpx/commit/bfca216))
 - mention HMR usage in Vite ([4b9145c](https://github.com/stacksjs/rpx/commit/4b9145c))
 
-### 🧹 Chores
+## 🧹 Chores
 
 - **deps**: update all non-major dependencies (#1383) ([dc20c87](https://github.com/stacksjs/rpx/commit/dc20c87)) ([#1383](https://github.com/stacksjs/rpx/issues/1383), [#1383](https://github.com/stacksjs/rpx/issues/1383))
 - wip ([2e4a195](https://github.com/stacksjs/rpx/commit/2e4a195))
@@ -240,12 +241,12 @@
 - adjust link color ([94089f5](https://github.com/stacksjs/rpx/commit/94089f5))
 - improve cli output spacing ([b199b2a](https://github.com/stacksjs/rpx/commit/b199b2a))
 
-### 📄 Miscellaneous
+## 📄 Miscellaneous
 
 - Merge pull request #57 from stacksjs/renovate/actions-checkout-6.x ([6c89390](https://github.com/stacksjs/rpx/commit/6c89390)) ([#57](https://github.com/stacksjs/rpx/issues/57), [#57](https://github.com/stacksjs/rpx/issues/57))
 - Merge pull request #49 from stacksjs/buddy-bot/update-non-major-updates-1758782554781 ([2731dd9](https://github.com/stacksjs/rpx/commit/2731dd9)) ([#49](https://github.com/stacksjs/rpx/issues/49), [#49](https://github.com/stacksjs/rpx/issues/49))
 
-### Contributors
+## Contributors
 
 - Adelino Ngomacha <adelinob335@gmail.com>
 - Chris <chrisbreuer93@gmail.com>
@@ -258,12 +259,12 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.9.1...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add start option ([6ce8217](https://github.com/stacksjs/rpx/commit/6ce8217))
 - **ci:** Add `publish-commit` workflow ([ac87fba](https://github.com/stacksjs/rpx/commit/ac87fba))
 
-### 📖 Documentation
+## 📖 Documentation
 
 - Update unocss ([374424a](https://github.com/stacksjs/rpx/commit/374424a))
 - Add analytics ([6ee18ef](https://github.com/stacksjs/rpx/commit/6ee18ef))
@@ -281,7 +282,7 @@
 - Improve sponsor docs ([c872a22](https://github.com/stacksjs/rpx/commit/c872a22))
 - Adjust title ([f001b98](https://github.com/stacksjs/rpx/commit/f001b98))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Enhance team css ([4680bf8](https://github.com/stacksjs/rpx/commit/4680bf8))
 - Enahnce css ([2252a82](https://github.com/stacksjs/rpx/commit/2252a82))
@@ -300,7 +301,7 @@
 - Improve ctrl c exit handling ([22acca6](https://github.com/stacksjs/rpx/commit/22acca6))
 - Update eslint config ([a9c0a78](https://github.com/stacksjs/rpx/commit/a9c0a78))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 - Cab-mikee ([@cab-mikee](http://github.com/cab-mikee))
@@ -309,14 +310,14 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.9.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update bun version ([13d6955](https://github.com/stacksjs/rpx/commit/13d6955))
 - Improve node support ([bba6f59](https://github.com/stacksjs/rpx/commit/bba6f59))
 - Remove include option ([631c382](https://github.com/stacksjs/rpx/commit/631c382))
 - Lint ([67d36c8](https://github.com/stacksjs/rpx/commit/67d36c8))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -324,17 +325,17 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.8.1...main)
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Properly utilize cleanup ([2128973](https://github.com/stacksjs/rpx/commit/2128973))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Config changes ([51d56d2](https://github.com/stacksjs/rpx/commit/51d56d2))
 - Minor adjustments ([5d81278](https://github.com/stacksjs/rpx/commit/5d81278))
 - Update tlsx ([31581b8](https://github.com/stacksjs/rpx/commit/31581b8))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 - Cab-mikee ([@cab-mikee](http://github.com/cab-mikee))
@@ -343,7 +344,7 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.8.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update eslint ([ac666c7](https://github.com/stacksjs/rpx/commit/ac666c7))
 - Enhance docs ([05f937b](https://github.com/stacksjs/rpx/commit/05f937b))
@@ -358,7 +359,7 @@
 - Use only dev deps ([d1b7c9d](https://github.com/stacksjs/rpx/commit/d1b7c9d))
 - Lint ([4b6b191](https://github.com/stacksjs/rpx/commit/4b6b191))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 - Cab-mikee ([@cab-mikee](http://github.com/cab-mikee))
@@ -367,15 +368,15 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.7.1...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Allow for cleaning up certificates ([a22b7d7](https://github.com/stacksjs/rpx/commit/a22b7d7))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update bun ([434a163](https://github.com/stacksjs/rpx/commit/434a163))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -383,11 +384,11 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.7.0...main)
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Properly pass vitePluginUsage ([f5b520b](https://github.com/stacksjs/rpx/commit/f5b520b))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -395,18 +396,18 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.6.5...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Allow for vite plugin usage ([64d7852](https://github.com/stacksjs/rpx/commit/64d7852))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Docs updates ([5672ee8](https://github.com/stacksjs/rpx/commit/5672ee8))
 - Docs updates ([79ce3c6](https://github.com/stacksjs/rpx/commit/79ce3c6))
 - Add default docs theme ([eadc187](https://github.com/stacksjs/rpx/commit/eadc187))
 - Wip ([a8566e0](https://github.com/stacksjs/rpx/commit/a8566e0))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -414,11 +415,11 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.6.4...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update tlsx ([b5f1fc8](https://github.com/stacksjs/rpx/commit/b5f1fc8))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -426,11 +427,11 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.6.3...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Remove ununsed import ([3facd5f](https://github.com/stacksjs/rpx/commit/3facd5f))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -438,11 +439,11 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.6.2...main)
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Paths after splitting ([bb64b43](https://github.com/stacksjs/rpx/commit/bb64b43))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -450,11 +451,11 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.6.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Add splitting to build ([e74cdaf](https://github.com/stacksjs/rpx/commit/e74cdaf))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -462,13 +463,13 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.6.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update readme examples ([4284e7e](https://github.com/stacksjs/rpx/commit/4284e7e))
 - Minify build ([a00f9e6](https://github.com/stacksjs/rpx/commit/a00f9e6))
 - Add bun options ([96bbef6](https://github.com/stacksjs/rpx/commit/96bbef6))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -476,15 +477,15 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.5.1...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Add cleanUrls option ([52ab5f8](https://github.com/stacksjs/rpx/commit/52ab5f8))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Add eslint comments ([cd13a99](https://github.com/stacksjs/rpx/commit/cd13a99))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -492,12 +493,12 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.5.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Move some functionality to utils ([5d1effc](https://github.com/stacksjs/rpx/commit/5d1effc))
 - Adjust sudo handling ([dd194be](https://github.com/stacksjs/rpx/commit/dd194be))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -505,12 +506,12 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.4.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Wip ([022f58e](https://github.com/stacksjs/rpx/commit/022f58e))
 - Several improvements ([1e6266c](https://github.com/stacksjs/rpx/commit/1e6266c))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -518,14 +519,14 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.4.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update readme ([08e61e8](https://github.com/stacksjs/rpx/commit/08e61e8))
 - Ensure verbose is configurable ([0c2bb22](https://github.com/stacksjs/rpx/commit/0c2bb22))
 - Add default export ([c064d8d](https://github.com/stacksjs/rpx/commit/c064d8d))
 - Ensure verbose is false by default ([ee341b2](https://github.com/stacksjs/rpx/commit/ee341b2))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -533,20 +534,20 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.3.1...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Ensure multiple proxies work ([7420091](https://github.com/stacksjs/rpx/commit/7420091))
 
-### 🩹 Fixes
+## 🩹 Fixes
 
 - Ensure /etc/hosts is cleaned if configured ([501027c](https://github.com/stacksjs/rpx/commit/501027c))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Several updates ([b519c5b](https://github.com/stacksjs/rpx/commit/b519c5b))
 - Lint ([c47d212](https://github.com/stacksjs/rpx/commit/c47d212))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -554,12 +555,12 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.3.0...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust readme ([8fd4f68](https://github.com/stacksjs/rpx/commit/8fd4f68))
 - Some cleanup ([d8bf326](https://github.com/stacksjs/rpx/commit/d8bf326))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -567,16 +568,16 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.2.0...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - /etc/hosts management ([53c930f](https://github.com/stacksjs/rpx/commit/53c930f))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Update tlsx ([562613d](https://github.com/stacksjs/rpx/commit/562613d))
 - Improve httpsConfig handling ([5d62350](https://github.com/stacksjs/rpx/commit/5d62350))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -584,17 +585,17 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.1.1...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Allow for `https` boolean ([6153960](https://github.com/stacksjs/rpx/commit/6153960))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Export cleanup ([5565a04](https://github.com/stacksjs/rpx/commit/5565a04))
 - Reset tests ([a758d40](https://github.com/stacksjs/rpx/commit/a758d40))
 - Update readme ([10bdade](https://github.com/stacksjs/rpx/commit/10bdade))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -602,12 +603,12 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.1.0...main)
 
-### 🚀 Enhancements
+## 🚀 Enhancements
 
 - Attach binaries ([a2453d1](https://github.com/stacksjs/rpx/commit/a2453d1))
 - Auto generate ssl certs ([7f50167](https://github.com/stacksjs/rpx/commit/7f50167))
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Adjust lint:fix ([bfb06a4](https://github.com/stacksjs/rpx/commit/bfb06a4))
 - Add stacks/biome-config ([553492b](https://github.com/stacksjs/rpx/commit/553492b))
@@ -624,7 +625,7 @@
 - Lint ([1529f60](https://github.com/stacksjs/rpx/commit/1529f60))
 - Adjust vscode settings ([c095ad1](https://github.com/stacksjs/rpx/commit/c095ad1))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris ([@chrisbbreuer](http://github.com/chrisbbreuer))
 
@@ -632,7 +633,7 @@
 
 [compare changes](https://github.com/stacksjs/rpx/compare/v0.0.1...main)
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Wip ([c5e31d5](https://github.com/stacksjs/rpx/commit/c5e31d5))
 - Wip ([6020df1](https://github.com/stacksjs/rpx/commit/6020df1))
@@ -652,13 +653,13 @@
 - Remove postcompile ([52a9bc6](https://github.com/stacksjs/rpx/commit/52a9bc6))
 - Remove lint:fix-unsafe ([91ad947](https://github.com/stacksjs/rpx/commit/91ad947))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris <chrisbreuer93@gmail.com>
 
 ## ...main
 
-### 🏡 Chore
+## 🏡 Chore
 
 - Initial commit ([beb4d96](https://github.com/stacksjs/rpx/commit/beb4d96))
 - Wip ([8e3fce6](https://github.com/stacksjs/rpx/commit/8e3fce6))
@@ -688,6 +689,6 @@
 - Wip ([5352f7a](https://github.com/stacksjs/rpx/commit/5352f7a))
 - Wip ([1b99dd0](https://github.com/stacksjs/rpx/commit/1b99dd0))
 
-### ❤️ Contributors
+## ❤️ Contributors
 
 - Chris <chrisbreuer93@gmail.com>

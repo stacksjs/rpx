@@ -340,7 +340,7 @@ export default {
     allowedHosts: ['localhost', '127.0.0.1'],
 
     // Block certain paths
-    blockedPaths: ['/admin/*', '/.env'],
+    blockedPaths: ['/admin/_', '/.env'],
   },
 }
 ```
@@ -412,7 +412,7 @@ await startProxy(config)
 
 ```bash
 # Enable all debug output
-DEBUG=rpx:* rpx start
+DEBUG=rpx:_ rpx start
 
 # Enable specific debug output
 DEBUG=rpx:ssl,rpx:proxy rpx start

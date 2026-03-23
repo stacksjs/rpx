@@ -2,7 +2,7 @@
 
 rpx includes intelligent `/etc/hosts` file management to seamlessly map your custom domains to your local machine without requiring manual configuration.
 
-## What is the Hosts File?
+## What is the Hosts File
 
 The hosts file is a system file that maps hostnames to IP addresses. It's one of the first places your computer checks when resolving a domain name, even before querying DNS servers.
 
@@ -15,11 +15,13 @@ When you start rpx with a custom domain, it:
 
 1. **Checks** if your custom domain (e.g., `myapp.test`) already exists in the hosts file
 2. **Adds** entries for both IPv4 and IPv6 if they don't exist:
-   ```
-   # Added by rpx
-   127.0.0.1 myapp.test
-   ::1 myapp.test
-   ```
+
+  ```text
+  # Added by rpx
+  127.0.0.1 myapp.test
+  ::1 myapp.test
+  ```
+
 3. **Cleans up** these entries when you stop rpx (if cleanup is enabled)
 
 ## Benefits

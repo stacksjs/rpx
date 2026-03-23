@@ -10,7 +10,7 @@ rpx provides robust HTTPS support for your local development environment. This e
 - **HTTP to HTTPS Redirection**: Automatically redirects HTTP requests to HTTPS
 - **Flexible Configuration**: Use the default settings or customize as needed
 
-## Why Use HTTPS Locally?
+## Why Use HTTPS Locally
 
 Using HTTPS in your local development environment is beneficial for several reasons:
 

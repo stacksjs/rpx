@@ -31,9 +31,10 @@ await startProxy({
 ```
 
 Requests are routed as:
-- `https://my-app.localhost/api/users` → `localhost:3000/api/users`
-- `https://my-app.localhost/admin/dashboard` → `localhost:3001/admin/dashboard`
-- `https://my-app.localhost/about` → `localhost:5173/about`
+
+- `<https://my-app.localhost/api/users>` → `localhost:3000/api/users`
+- `<https://my-app.localhost/admin/dashboard>` → `localhost:3001/admin/dashboard`
+- `<https://my-app.localhost/about>` → `localhost:5173/about`
 
 ### Path Rewriting
 

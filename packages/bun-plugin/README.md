@@ -167,7 +167,7 @@ const config: ProxyOptions = {
 export default config
 ```
 
-_Then run:_
+Then run:
 
 ```bash
 ./rpx start

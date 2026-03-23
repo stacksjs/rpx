@@ -83,7 +83,7 @@ subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = myapp.test
-DNS.2 = *.myapp.test
+DNS.2 = _.myapp.test
 DNS.3 = localhost
 IP.1 = 127.0.0.1
 EOF
@@ -105,9 +105,9 @@ brew install mkcert  # macOS
 mkcert -install
 
 # Generate certificates for your domains
-mkcert myapp.test "*.myapp.test" localhost 127.0.0.1 ::1
+mkcert myapp.test "_.myapp.test" localhost 127.0.0.1 ::1
 
-# This creates:
+# This creates
 # - myapp.test+4.pem (the certificate)
 # - myapp.test+4-key.pem (the private key)
 ```

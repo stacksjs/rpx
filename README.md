@@ -167,7 +167,7 @@ const config: ProxyOptions = {
 export default config
 ```
 
-_Then run:_
+### Usage
 
 ```bash
 ./rpx start
@@ -188,25 +188,28 @@ bun test
 If you're experiencing SSL certificate issues when using RPX (like "Your connection is not private" browser warnings):
 
 1. **Automatic Certificate Trust**:
-   RPX automatically attempts to trust certificates during setup with a single password prompt. This works for most users.
+
+  RPX automatically attempts to trust certificates during setup with a single password prompt. This works for most users.
 
 2. **Use the certificate fix utility**:
-   If you still see certificate warnings, run our automated certificate fixer:
 
-   ```bash
-   bun scripts/fix-certs.js
-   ```
+  If you still see certificate warnings, run our automated certificate fixer:
 
-   This script will:
-   - Detect your operating system
-   - Find all RPX certificates
-   - Install them to the appropriate system trust stores
-   - Provide browser-specific instructions
+  ```bash
+  bun scripts/fix-certs.js
+  ```
+
+  This script will:
+
+  - Detect your operating system
+  - Find all RPX certificates
+  - Install them to the appropriate system trust stores
+  - Provide browser-specific instructions
 
 3. **Browser Workaround**:
-   - **Chrome/Edge/Arc**: Type `thisisunsafe` on the warning page (you won't see what you're typing)
-   - **Firefox**: Click "Advanced" then "Accept the Risk and Continue"
-   - **Safari**: Click "Show Details", then "visit this website"
+  - **Chrome/Edge/Arc**: Type `thisisunsafe` on the warning page (you won't see what you're typing)
+  - **Firefox**: Click "Advanced" then "Accept the Risk and Continue"
+  - **Safari**: Click "Show Details", then "visit this website"
 
 > **Note**: After trusting certificates, restart your browser for changes to take effect.
 

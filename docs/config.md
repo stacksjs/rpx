@@ -12,24 +12,30 @@ import path from 'node:path'
 
 const config: ReverseProxyOptions = {
   /**
-   * The from URL to proxy from.
-   * Default: localhost:5173
+
+   _ The from URL to proxy from.
+   _ Default: localhost:5173
+
    */
   from: 'localhost:5173',
 
   /**
-   * The to URL to proxy to.
-   * Default: stacks.localhost
+
+   _ The to URL to proxy to.
+   _ Default: stacks.localhost
+
    */
   to: 'stacks.localhost',
 
   /**
-   * The HTTPS settings.
-   * Default: true
-   * If set to false, the proxy will use HTTP.
-   * If set to true, the proxy will use HTTPS.
-   * If set to an object, the proxy will use HTTPS with the provided settings.
-   */
+
+   _ The HTTPS settings.
+   _ Default: true
+   _ If set to false, the proxy will use HTTP.
+   _ If set to true, the proxy will use HTTPS.
+   _ If set to an object, the proxy will use HTTPS with the provided settings.
+
+   _/
   https: {
     domain: 'stacks.localhost',
     hostCertCN: 'stacks.localhost',
@@ -48,17 +54,19 @@ const config: ReverseProxyOptions = {
   },
 
   /**
-   * The verbose setting.
-   * Default: false
-   * If set to true, the proxy will log more information.
-   */
+
+   _ The verbose setting.
+   _ Default: false
+   _ If set to true, the proxy will log more information.
+
+   _/
   verbose: false,
 }
 
 export default config
 ```
 
-_Then run:_
+Then run:
 
 ```bash
 ./rpx start
@@ -75,21 +83,27 @@ export default {
   plugins: [
     rpxPlugin({
       /**
-       * The domain to use instead of localhost:port
-       * @example 'my-app.test', 'awesome.localhost'
-       * @default '$projectName.localhost'
-       */
+
+       _ The domain to use instead of localhost:port
+       _ @example 'my-app.test', 'awesome.localhost'
+       _ @default '$projectName.localhost'
+
+       _/
       domain: 'my-app.test',
 
       /**
-       * Allow HTTPS
-       * @default true
+
+       _ Allow HTTPS
+       _ @default true
+
        */
       https: true,
 
       /**
-       * Enable debug logging
-       * @default false
+
+       _ Enable debug logging
+       _ @default false
+
        */
       verbose: false
     })
@@ -98,6 +112,7 @@ export default {
 ```
 
 The plugin will automatically:
+
 1. Read your project's name from package.json if no domain is provided
 2. Intercept the Bun server to detect the port
 3. Run rpx with the appropriate parameters
