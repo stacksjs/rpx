@@ -4,11 +4,11 @@
 # This script detects the OS and provides instructions for trusting certificates
 
 # Colors for better readability
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+RED='\033[ 0;31m'
+GREEN='\033[ 0;32m'
+YELLOW='\033[ 1;33m'
+BLUE='\033[ 0;34m'
+NC='\033[ 0m' # No Color
 
 echo -e "${BLUE}===== RPX Certificate Trust Helper =====${NC}"
 
@@ -17,7 +17,7 @@ HOME_DIR=$(echo ~)
 SSL_DIR="$HOME_DIR/.stacks/ssl"
 
 # Check if the SSL directory exists
-if [ ! -d "$SSL_DIR" ]; then
+if [[ ! -d "$SSL_DIR" ]]; then
   echo -e "${RED}Error: SSL directory not found at $SSL_DIR${NC}"
   echo -e "Have you run ${YELLOW}rpx start${NC} at least once to generate certificates?"
   exit 1
@@ -29,7 +29,7 @@ CERTS=$(find "$SSL_DIR" -name "*.crt" -not -name "*.ca.crt")
 CA_CERTS=$(find "$SSL_DIR" -name "*.ca.crt")
 
 # List available certificates
-if [ -z "$CERTS" ] && [ -z "$CA_CERTS" ]; then
+if [[ -z "$CERTS" ]] && [[ -z "$CA_CERTS" ]]; then
   echo -e "${RED}No certificates found in $SSL_DIR${NC}"
   echo -e "Please run ${YELLOW}rpx start${NC} first to generate certificates"
   exit 1
@@ -79,7 +79,7 @@ case "$OS" in
     echo -e "4. Expand the 'Trust' section"
     echo -e "5. Set 'When using this certificate' to 'Always Trust'"
     echo -e "6. Close the window (you'll need to enter your password)"
-    ;;
+  ;;
 
   Linux*)
     # Linux
@@ -99,7 +99,7 @@ case "$OS" in
     done
     echo -e "2. Update the CA trust store:"
     echo -e "   ${GREEN}sudo update-ca-trust extract${NC}"
-    ;;
+  ;;
 
   MINGW*|CYGWIN*|MSYS*)
     # Windows
@@ -110,12 +110,12 @@ case "$OS" in
       winpath=$(echo $cert | sed 's/\//\\/g')
       echo -e "   ${GREEN}certutil -addstore -f \"ROOT\" \"$winpath\"${NC}"
     done
-    ;;
+  ;;
 
   *)
     echo -e "${RED}Unsupported OS: $OS${NC}"
     echo -e "Please manually add the certificates to your system trust store."
-    ;;
+  ;;
 esac
 
 echo -e "\n${BLUE}===== Browser Workaround =====${NC}"

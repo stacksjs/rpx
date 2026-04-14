@@ -17,7 +17,7 @@ When you start rpx with a custom domain, it:
 2. **Adds** entries for both IPv4 and IPv6 if they don't exist:
 
   ```text
-  # Added by rpx
+# Added by rpx
   127.0.0.1 myapp.test
   ::1 myapp.test
   ```
