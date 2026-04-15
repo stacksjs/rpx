@@ -16,3 +16,4 @@ docs/.vitepress/cache
 storage
 .env
 /pantry
+pantry
