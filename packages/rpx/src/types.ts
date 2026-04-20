@@ -6,10 +6,20 @@ export interface StartOptions {
   env?: Record<string, string>
 }
 
+export interface PathRewrite {
+  /** Path prefix to match, e.g. '/api' */
+  from: string
+  /** Target backend to route to, e.g. 'localhost:3008' */
+  to: string
+  /** Strip the matched prefix before forwarding (default: true) */
+  stripPrefix?: boolean
+}
+
 export interface BaseProxyConfig {
   from: string // localhost:5173
   to: string // stacks.localhost
   start?: StartOptions
+  pathRewrites?: PathRewrite[]
 }
 
 export type BaseProxyOptions = Partial<BaseProxyConfig>
@@ -41,7 +51,7 @@ export type SharedProxyOptions = Partial<SharedProxyConfig>
 export interface SingleProxyConfig extends BaseProxyConfig, SharedProxyConfig {}
 
 export interface MultiProxyConfig extends SharedProxyConfig {
-  proxies: Array<BaseProxyConfig & { cleanUrls: boolean }>
+  proxies: Array<BaseProxyConfig & { cleanUrls: boolean, pathRewrites?: PathRewrite[] }>
 }
 
 export type ProxyConfig = SingleProxyConfig

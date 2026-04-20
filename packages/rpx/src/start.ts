@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import type { IncomingHttpHeaders, SecureServerOptions } from 'node:http2'
 import type { ServerOptions } from 'node:https'
-import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
+import type { BaseProxyConfig, CleanupOptions, PathRewrite, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
 import { exec, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
@@ -1161,8 +1161,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   if (sslConfig && proxyOptions.length > 1) {
     debugLog('proxies', `Creating shared HTTPS server for ${proxyOptions.length} domains`, verbose)
 
-    // Build routing table: domain → { fromPort, sourceHost, cleanUrls, changeOrigin }
-    const routingTable = new Map<string, { fromPort: number, sourceHost: string, cleanUrls: boolean, changeOrigin: boolean }>()
+    // Build routing table: domain → { fromPort, sourceHost, cleanUrls, changeOrigin, pathRewrites }
+    const routingTable = new Map<string, { fromPort: number, sourceHost: string, cleanUrls: boolean, changeOrigin: boolean, pathRewrites?: PathRewrite[] }>()
 
     for (const option of proxyOptions) {
       const domain = option.to || 'rpx.localhost'
@@ -1174,6 +1174,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         sourceHost: fromUrl.host,
         cleanUrls: option.cleanUrls || false,
         changeOrigin: option.changeOrigin || false,
+        pathRewrites: option.pathRewrites,
       })
 
       debugLog('proxies', `Route: ${domain} → ${fromUrl.host}`, verbose)
@@ -1232,11 +1233,28 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
             return new Response(`No proxy configured for ${hostname}`, { status: 404 })
           }
 
-          const targetUrl = `http://${route.sourceHost}${url.pathname}${url.search}`
+          let targetHost = route.sourceHost
+          let targetPath = url.pathname
+
+          // Check path rewrites — route specific path prefixes to different backends
+          if (route.pathRewrites) {
+            for (const rewrite of route.pathRewrites) {
+              if (url.pathname === rewrite.from || url.pathname.startsWith(`${rewrite.from}/`)) {
+                targetHost = rewrite.to.startsWith('http') ? new URL(rewrite.to).host : rewrite.to
+                if (rewrite.stripPrefix !== false) {
+                  targetPath = url.pathname.slice(rewrite.from.length) || '/'
+                }
+                debugLog('request', `Path rewrite: ${url.pathname} → ${targetHost}${targetPath}`, verbose)
+                break
+              }
+            }
+          }
+
+          const targetUrl = `http://${targetHost}${targetPath}${url.search}`
 
           try {
             const headers = new Headers(req.headers)
-            headers.set('host', route.sourceHost)
+            headers.set('host', targetHost)
             if (route.changeOrigin) {
               headers.set('origin', `http://${route.sourceHost}`)
             }
