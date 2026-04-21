@@ -38,9 +38,9 @@ for dir in packages/*/ ; do
       echo "Skipping $package_name (private package)"
     else
       echo "Publishing $package_name..."
-      cd "$dir"
+      cd "$dir" || exit 1
       bun publish --access public
-      cd - > /dev/null  # Suppress the directory change message
+      cd - > /dev/null || exit 1  # Suppress the directory change message
     fi
 
     echo "----------------------------------------"
