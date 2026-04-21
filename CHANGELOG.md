@@ -1,4 +1,102 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.2...v0.11.3)
+
+### 🚀 Features
+
+- add path-based routing with pathRewrites config ([d8f8ce0](https://github.com/stacksjs/rpx/commit/d8f8ce0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- chain pantry publish:commit calls for single-arg CLI ([d090369](https://github.com/stacksjs/rpx/commit/d090369)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- resolve typecheck errors ([63ba8e4](https://github.com/stacksjs/rpx/commit/63ba8e4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- resolve typecheck errors ([26dde11](https://github.com/stacksjs/rpx/commit/26dde11)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.3 ([c1e1b3d](https://github.com/stacksjs/rpx/commit/c1e1b3d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- exclude .sh files from pickier lint until shell linter bugs are fixed ([0fb4305](https://github.com/stacksjs/rpx/commit/0fb4305)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix remaining shell lint warnings ([e30510c](https://github.com/stacksjs/rpx/commit/e30510c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix shell lint warnings in scripts ([cefaf5d](https://github.com/stacksjs/rpx/commit/cefaf5d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add publishConfig so "bun" condition resolves on npm installs ([aa6886e](https://github.com/stacksjs/rpx/commit/aa6886e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- gitignore pantry directory ([a9858a2](https://github.com/stacksjs/rpx/commit/a9858a2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix lint errors ([bf7e4bc](https://github.com/stacksjs/rpx/commit/bf7e4bc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update vscode config ([fc82e6c](https://github.com/stacksjs/rpx/commit/fc82e6c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix lint errors ([5698c1c](https://github.com/stacksjs/rpx/commit/5698c1c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- repo cleanup and modernization ([632f4ce](https://github.com/stacksjs/rpx/commit/632f4ce)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add git-hooks config ([ad60c2b](https://github.com/stacksjs/rpx/commit/ad60c2b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use Pantry action for publish-commit and add job dependencies ([13d78d3](https://github.com/stacksjs/rpx/commit/13d78d3)) _(by Chris <chrisbreuer93@gmail.com>)_
+- fix better-dx version to ^0.2.7 ([244fc43](https://github.com/stacksjs/rpx/commit/244fc43)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- migrate to better-dx ([096e5eb](https://github.com/stacksjs/rpx/commit/096e5eb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update pantry lockfile ([cd45a3c](https://github.com/stacksjs/rpx/commit/cd45a3c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- pre-acquire sudo priveleges ([3c12f35](https://github.com/stacksjs/rpx/commit/3c12f35)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([6924cbe](https://github.com/stacksjs/rpx/commit/6924cbe)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([cbe07d1](https://github.com/stacksjs/rpx/commit/cbe07d1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- remove file ignores from pickier config ([1a1f3ed](https://github.com/stacksjs/rpx/commit/1a1f3ed)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add CLAUDE.md and CHANGELOG.md to pickier ignores ([bdd97bc](https://github.com/stacksjs/rpx/commit/bdd97bc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- remove .pickierignore ([8bcc3ea](https://github.com/stacksjs/rpx/commit/8bcc3ea)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- enrich CLAUDE.md with detailed project context from README ([8a6eb04](https://github.com/stacksjs/rpx/commit/8a6eb04)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update CLAUDE.md with project context and crosswind details ([7355f18](https://github.com/stacksjs/rpx/commit/7355f18)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add proper claude code guidelines ([f55c4d1](https://github.com/stacksjs/rpx/commit/f55c4d1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use pantry monorepo action instead of pantry-setup ([152c9df](https://github.com/stacksjs/rpx/commit/152c9df)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- ignore claude config in linter ([f931a57](https://github.com/stacksjs/rpx/commit/f931a57)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add claude code guidelines ([e842f6d](https://github.com/stacksjs/rpx/commit/e842f6d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([8702f7d](https://github.com/stacksjs/rpx/commit/8702f7d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([f161a0b](https://github.com/stacksjs/rpx/commit/f161a0b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([f04231a](https://github.com/stacksjs/rpx/commit/f04231a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.2...HEAD)
+
+### 🚀 Features
+
+- add path-based routing with pathRewrites config ([d8f8ce0](https://github.com/stacksjs/rpx/commit/d8f8ce0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- chain pantry publish:commit calls for single-arg CLI ([d090369](https://github.com/stacksjs/rpx/commit/d090369)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- resolve typecheck errors ([63ba8e4](https://github.com/stacksjs/rpx/commit/63ba8e4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- resolve typecheck errors ([26dde11](https://github.com/stacksjs/rpx/commit/26dde11)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- exclude .sh files from pickier lint until shell linter bugs are fixed ([0fb4305](https://github.com/stacksjs/rpx/commit/0fb4305)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix remaining shell lint warnings ([e30510c](https://github.com/stacksjs/rpx/commit/e30510c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix shell lint warnings in scripts ([cefaf5d](https://github.com/stacksjs/rpx/commit/cefaf5d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add publishConfig so "bun" condition resolves on npm installs ([aa6886e](https://github.com/stacksjs/rpx/commit/aa6886e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- gitignore pantry directory ([a9858a2](https://github.com/stacksjs/rpx/commit/a9858a2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix lint errors ([bf7e4bc](https://github.com/stacksjs/rpx/commit/bf7e4bc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update vscode config ([fc82e6c](https://github.com/stacksjs/rpx/commit/fc82e6c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fix lint errors ([5698c1c](https://github.com/stacksjs/rpx/commit/5698c1c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- repo cleanup and modernization ([632f4ce](https://github.com/stacksjs/rpx/commit/632f4ce)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add git-hooks config ([ad60c2b](https://github.com/stacksjs/rpx/commit/ad60c2b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use Pantry action for publish-commit and add job dependencies ([13d78d3](https://github.com/stacksjs/rpx/commit/13d78d3)) _(by Chris <chrisbreuer93@gmail.com>)_
+- fix better-dx version to ^0.2.7 ([244fc43](https://github.com/stacksjs/rpx/commit/244fc43)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- migrate to better-dx ([096e5eb](https://github.com/stacksjs/rpx/commit/096e5eb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update pantry lockfile ([cd45a3c](https://github.com/stacksjs/rpx/commit/cd45a3c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- pre-acquire sudo priveleges ([3c12f35](https://github.com/stacksjs/rpx/commit/3c12f35)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([6924cbe](https://github.com/stacksjs/rpx/commit/6924cbe)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([cbe07d1](https://github.com/stacksjs/rpx/commit/cbe07d1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- remove file ignores from pickier config ([1a1f3ed](https://github.com/stacksjs/rpx/commit/1a1f3ed)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add CLAUDE.md and CHANGELOG.md to pickier ignores ([bdd97bc](https://github.com/stacksjs/rpx/commit/bdd97bc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- remove .pickierignore ([8bcc3ea](https://github.com/stacksjs/rpx/commit/8bcc3ea)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- enrich CLAUDE.md with detailed project context from README ([8a6eb04](https://github.com/stacksjs/rpx/commit/8a6eb04)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- update CLAUDE.md with project context and crosswind details ([7355f18](https://github.com/stacksjs/rpx/commit/7355f18)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add proper claude code guidelines ([f55c4d1](https://github.com/stacksjs/rpx/commit/f55c4d1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use pantry monorepo action instead of pantry-setup ([152c9df](https://github.com/stacksjs/rpx/commit/152c9df)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- ignore claude config in linter ([f931a57](https://github.com/stacksjs/rpx/commit/f931a57)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add claude code guidelines ([e842f6d](https://github.com/stacksjs/rpx/commit/e842f6d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([8702f7d](https://github.com/stacksjs/rpx/commit/8702f7d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([f161a0b](https://github.com/stacksjs/rpx/commit/f161a0b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([f04231a](https://github.com/stacksjs/rpx/commit/f04231a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.1...v0.11.2)
 
