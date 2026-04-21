@@ -1,7 +1,8 @@
 # Changelog
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.2...v0.11.3)
 
-### 🚀 Features
+## 🚀 Features
 
 - add path-based routing with pathRewrites config ([d8f8ce0](https://github.com/stacksjs/rpx/commit/d8f8ce0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 

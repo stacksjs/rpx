@@ -1,7 +1,7 @@
 {
   "name": "@stacksjs/rpx",
   "type": "module",
-  "version": "0.11.3",
+  "version": "0.11.2",
   "private": true,
   "description": "A modern and smart reverse proxy.",
   "author": "Chris Breuer <chris@stacksjs.org>",
@@ -44,8 +44,8 @@
   "scripts": {
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
     "test": "bun test packages/rpx/test && bun test packages/vite-plugin/test",
-    "lint": "bunx --bun pickier '**/*.{ts,js,json,yaml,yml,md}'",
-    "lint:fix": "bunx --bun pickier '**/*.{ts,js,json,yaml,yml,md}' --fix",
+    "lint": "bunx --bun pickier .",
+    "lint:fix": "bunx --bun pickier . --fix",
     "format": "bunx --bun pickier . --format",
     "format:fix": "bunx --bun pickier . --format --write",
     "changelog": "bunx --bun logsmith --verbose",
@@ -67,5 +67,13 @@
   },
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "git-hooks": {
+    "pre-commit": {
+      "staged-lint": {
+        "*.{js,ts,json,yaml,yml,md}": "bunx --bun pickier lint --fix"
+      }
+    },
+    "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"
+  }
 }
