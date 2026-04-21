@@ -6,7 +6,7 @@ set -e
 # Enable debug if needed
 # set -x
 
-echo "Publishing all packages..."
+printf 'Publishing all packages...\n'
 
 for dir in packages/*/ ; do
   if [[ -d "$dir" ]]; then
