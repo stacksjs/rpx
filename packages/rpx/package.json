@@ -31,15 +31,6 @@
       "import": "./dist/src/index.js"
     }
   },
-  "publishConfig": {
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "bun": "./dist/src/index.js",
-        "import": "./dist/src/index.js"
-      }
-    }
-  },
   "module": "./dist/src/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -48,7 +39,8 @@
   },
   "files": [
     "README.md",
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "bun build.ts && bun run compile",
