@@ -1,4 +1,23 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.3...v0.11.4)
+
+### 🚀 Features
+
+- ship src/ and add release scripts ([87ca44d](https://github.com/stacksjs/rpx/commit/87ca44d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- revert lint script and fix CHANGELOG heading ([f45da79](https://github.com/stacksjs/rpx/commit/f45da79)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.4 ([db4c1d6](https://github.com/stacksjs/rpx/commit/db4c1d6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- fresh install to pick up pickier 0.1.21 ([1c2381e](https://github.com/stacksjs/rpx/commit/1c2381e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.2...v0.11.3)
 
