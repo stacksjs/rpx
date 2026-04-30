@@ -1,20 +1,21 @@
 # Changelog
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.3...v0.11.4)
 
-### 🚀 Features
+## 🚀 Features
 
 - ship src/ and add release scripts ([87ca44d](https://github.com/stacksjs/rpx/commit/87ca44d)) _(by Chris <chrisbreuer93@gmail.com>)_
 
-### 🐛 Bug Fixes
+## 🐛 Bug Fixes
 
 - revert lint script and fix CHANGELOG heading ([f45da79](https://github.com/stacksjs/rpx/commit/f45da79)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### 🧹 Chores
+## 🧹 Chores
 
 - release v0.11.4 ([db4c1d6](https://github.com/stacksjs/rpx/commit/db4c1d6)) _(by Chris <chrisbreuer93@gmail.com>)_
 - fresh install to pick up pickier 0.1.21 ([1c2381e](https://github.com/stacksjs/rpx/commit/1c2381e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### Contributors
+## Contributors
 
 - _Chris <chrisbreuer93@gmail.com>_
 - _glennmichael123 <gtorregosa@gmail.com>_
@@ -25,13 +26,13 @@
 
 - add path-based routing with pathRewrites config ([d8f8ce0](https://github.com/stacksjs/rpx/commit/d8f8ce0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### 🐛 Bug Fixes
+## 🐛 Bug Fixes
 
 - chain pantry publish:commit calls for single-arg CLI ([d090369](https://github.com/stacksjs/rpx/commit/d090369)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - resolve typecheck errors ([63ba8e4](https://github.com/stacksjs/rpx/commit/63ba8e4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - resolve typecheck errors ([26dde11](https://github.com/stacksjs/rpx/commit/26dde11)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### 🧹 Chores
+## 🧹 Chores
 
 - release v0.11.3 ([c1e1b3d](https://github.com/stacksjs/rpx/commit/c1e1b3d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - exclude .sh files from pickier lint until shell linter bugs are fixed ([0fb4305](https://github.com/stacksjs/rpx/commit/0fb4305)) _(by glennmichael123 <gtorregosa@gmail.com>)_
@@ -64,24 +65,24 @@
 - wip ([f161a0b](https://github.com/stacksjs/rpx/commit/f161a0b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - wip ([f04231a](https://github.com/stacksjs/rpx/commit/f04231a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### Contributors
+## Contributors
 
 - _Chris <chrisbreuer93@gmail.com>_
 - _glennmichael123 <gtorregosa@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.2...HEAD)
 
-### 🚀 Features
+## 🚀 Features
 
 - add path-based routing with pathRewrites config ([d8f8ce0](https://github.com/stacksjs/rpx/commit/d8f8ce0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### 🐛 Bug Fixes
+## 🐛 Bug Fixes
 
 - chain pantry publish:commit calls for single-arg CLI ([d090369](https://github.com/stacksjs/rpx/commit/d090369)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - resolve typecheck errors ([63ba8e4](https://github.com/stacksjs/rpx/commit/63ba8e4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - resolve typecheck errors ([26dde11](https://github.com/stacksjs/rpx/commit/26dde11)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### 🧹 Chores
+## 🧹 Chores
 
 - exclude .sh files from pickier lint until shell linter bugs are fixed ([0fb4305](https://github.com/stacksjs/rpx/commit/0fb4305)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - fix remaining shell lint warnings ([e30510c](https://github.com/stacksjs/rpx/commit/e30510c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
@@ -113,7 +114,7 @@
 - wip ([f161a0b](https://github.com/stacksjs/rpx/commit/f161a0b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 - wip ([f04231a](https://github.com/stacksjs/rpx/commit/f04231a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
 
-### Contributors
+## Contributors
 
 - _Chris <chrisbreuer93@gmail.com>_
 - _glennmichael123 <gtorregosa@gmail.com>_
