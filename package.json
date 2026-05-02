@@ -63,10 +63,10 @@
     "fix-certs": "bun scripts/fix-certs.js"
   },
   "devDependencies": {
-    "@stacksjs/tlsx": "^0.13.0",
-    "better-dx": "^0.2.7",
+    "@stacksjs/tlsx": "^0.13.2",
+    "better-dx": "^0.2.12",
     "typescript": "^5.9.3",
-    "vite": "^8.0.1"
+    "vite": "^8.0.10"
   },
   "workspaces": [
     "packages/*"
