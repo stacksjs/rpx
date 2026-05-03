@@ -67,10 +67,10 @@
     "zip:darwin-arm64": "zip -j bin/rpx-darwin-arm64.zip bin/rpx-darwin-arm64"
   },
   "devDependencies": {
-    "@stacksjs/clapp": "^0.2.0",
+    "@stacksjs/clapp": "^0.2.6",
     "@stacksjs/tlsx": "^0.13.0",
     "bun-plugin-dtsx": "^0.21.17",
-    "bunfig": "^0.15.6",
+    "bunfig": "^0.15.11",
     "typescript": "^5.9.3"
   },
   "simple-git-hooks": {
