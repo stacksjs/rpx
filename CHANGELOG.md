@@ -1,4 +1,52 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.4...v0.11.5)
+
+### 🐛 Bug Fixes
+
+- **path-rewrites**: preserve path by default, expose resolvePathRewrite helper ([4df7d1d](https://github.com/stacksjs/rpx/commit/4df7d1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **changelog**: demote h3 sections to h2 ([fdebaaf](https://github.com/stacksjs/rpx/commit/fdebaaf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add setup-bun to publish-commit job ([d996606](https://github.com/stacksjs/rpx/commit/d996606)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🤖 Continuous Integration
+
+- drop redundant setup-bun (pantry installs bun via deps.yaml) ([021e19d](https://github.com/stacksjs/rpx/commit/021e19d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.5 ([066a81b](https://github.com/stacksjs/rpx/commit/066a81b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- refresh bun.lock and apply pickier --fix ([6d8acfc](https://github.com/stacksjs/rpx/commit/6d8acfc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock ([91d827b](https://github.com/stacksjs/rpx/commit/91d827b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock to pick up latest pickier ([732d1dd](https://github.com/stacksjs/rpx/commit/732d1dd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fresh install to pick up dtsx 0.9.14 and bunfig 0.15.9 ([449c417](https://github.com/stacksjs/rpx/commit/449c417)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.4...HEAD)
+
+### 🐛 Bug Fixes
+
+- **path-rewrites**: preserve path by default, expose resolvePathRewrite helper ([4df7d1d](https://github.com/stacksjs/rpx/commit/4df7d1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **changelog**: demote h3 sections to h2 ([fdebaaf](https://github.com/stacksjs/rpx/commit/fdebaaf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add setup-bun to publish-commit job ([d996606](https://github.com/stacksjs/rpx/commit/d996606)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🤖 Continuous Integration
+
+- drop redundant setup-bun (pantry installs bun via deps.yaml) ([021e19d](https://github.com/stacksjs/rpx/commit/021e19d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- refresh bun.lock and apply pickier --fix ([6d8acfc](https://github.com/stacksjs/rpx/commit/6d8acfc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock ([91d827b](https://github.com/stacksjs/rpx/commit/91d827b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- refresh bun.lock to pick up latest pickier ([732d1dd](https://github.com/stacksjs/rpx/commit/732d1dd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- fresh install to pick up dtsx 0.9.14 and bunfig 0.15.9 ([449c417](https://github.com/stacksjs/rpx/commit/449c417)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.3...v0.11.4)
 
