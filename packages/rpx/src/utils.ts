@@ -1,4 +1,4 @@
-import type { MultiProxyConfig, ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig } from './types'
+import type { MultiProxyConfig, PathRewrite, ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig } from './types'
 import { execSync } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import { Logger } from '@stacksjs/clarity'
@@ -107,6 +107,35 @@ export function isSingleProxyOptions(options: ProxyOption | ProxyOptions): optio
 
 export function isSingleProxyConfig(options: ProxyConfigs | ProxyOptions): options is SingleProxyConfig {
   return !!(options && 'to' in options && !('proxies' in options))
+}
+
+/**
+ * Resolve a path against a list of `pathRewrites`.
+ *
+ * Returns `null` if no rewrite matches; otherwise returns `{ targetHost, targetPath }`
+ * with the prefix preserved by default (or stripped when `stripPrefix === true`).
+ *
+ * Matching rule: rewrite matches if `pathname` is exactly `from` OR starts with
+ * `from + '/'`. So `/api` matches `/api`, `/api/`, `/api/cart` — but not `/apidocs`.
+ */
+export function resolvePathRewrite(
+  pathname: string,
+  rewrites: PathRewrite[] | undefined,
+): { targetHost: string, targetPath: string } | null {
+  if (!rewrites || rewrites.length === 0)
+    return null
+
+  for (const rewrite of rewrites) {
+    if (pathname === rewrite.from || pathname.startsWith(`${rewrite.from}/`)) {
+      const targetHost = rewrite.to.startsWith('http') ? new URL(rewrite.to).host : rewrite.to
+      const targetPath = rewrite.stripPrefix === true
+        ? (pathname.slice(rewrite.from.length) || '/')
+        : pathname
+      return { targetHost, targetPath }
+    }
+  }
+
+  return null
 }
 
 /**

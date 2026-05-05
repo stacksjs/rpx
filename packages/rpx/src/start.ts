@@ -20,7 +20,7 @@ import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
 import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
 import { ProcessManager } from './process-manager'
-import { debugLog, getSudoPassword } from './utils'
+import { debugLog, getSudoPassword, resolvePathRewrite } from './utils'
 
 const processManager = new ProcessManager()
 // Create a global port manager for coordinating port usage
@@ -1236,18 +1236,14 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           let targetHost = route.sourceHost
           let targetPath = url.pathname
 
-          // Check path rewrites — route specific path prefixes to different backends
-          if (route.pathRewrites) {
-            for (const rewrite of route.pathRewrites) {
-              if (url.pathname === rewrite.from || url.pathname.startsWith(`${rewrite.from}/`)) {
-                targetHost = rewrite.to.startsWith('http') ? new URL(rewrite.to).host : rewrite.to
-                if (rewrite.stripPrefix !== false) {
-                  targetPath = url.pathname.slice(rewrite.from.length) || '/'
-                }
-                debugLog('request', `Path rewrite: ${url.pathname} → ${targetHost}${targetPath}`, verbose)
-                break
-              }
-            }
+          // Check path rewrites — route specific path prefixes to different backends.
+          // By default the prefix is preserved (matches Vite/nginx/http-proxy-middleware
+          // semantics); set `stripPrefix: true` per-rewrite to strip.
+          const rewriteMatch = resolvePathRewrite(url.pathname, route.pathRewrites)
+          if (rewriteMatch) {
+            targetHost = rewriteMatch.targetHost
+            targetPath = rewriteMatch.targetPath
+            debugLog('request', `Path rewrite: ${url.pathname} → ${targetHost}${targetPath}`, verbose)
           }
 
           const targetUrl = `http://${targetHost}${targetPath}${url.search}`

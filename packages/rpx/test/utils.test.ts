@@ -185,4 +185,74 @@ describe('utils', () => {
       expect(() => utils.debugLog('test', 'message', true)).not.toThrow()
     })
   })
+
+  describe('resolvePathRewrite', () => {
+    const apiRewrite = { from: '/api', to: 'localhost:3008' }
+
+    it('returns null when no rewrites are configured', () => {
+      expect(utils.resolvePathRewrite('/api/cart', undefined)).toBeNull()
+      expect(utils.resolvePathRewrite('/api/cart', [])).toBeNull()
+    })
+
+    it('returns null when no rewrite matches', () => {
+      expect(utils.resolvePathRewrite('/products', [apiRewrite])).toBeNull()
+    })
+
+    it('preserves the path by default (stripPrefix unset)', () => {
+      expect(utils.resolvePathRewrite('/api/cart/add', [apiRewrite])).toEqual({
+        targetHost: 'localhost:3008',
+        targetPath: '/api/cart/add',
+      })
+    })
+
+    it('preserves the path when stripPrefix is explicitly false', () => {
+      const rewrites = [{ ...apiRewrite, stripPrefix: false }]
+      expect(utils.resolvePathRewrite('/api/cart/add', rewrites)).toEqual({
+        targetHost: 'localhost:3008',
+        targetPath: '/api/cart/add',
+      })
+    })
+
+    it('strips the prefix when stripPrefix is true', () => {
+      const rewrites = [{ ...apiRewrite, stripPrefix: true }]
+      expect(utils.resolvePathRewrite('/api/cart/add', rewrites)).toEqual({
+        targetHost: 'localhost:3008',
+        targetPath: '/cart/add',
+      })
+    })
+
+    it('strips to "/" when path equals the prefix exactly', () => {
+      const rewrites = [{ ...apiRewrite, stripPrefix: true }]
+      expect(utils.resolvePathRewrite('/api', rewrites)).toEqual({
+        targetHost: 'localhost:3008',
+        targetPath: '/',
+      })
+    })
+
+    it('matches the prefix exactly without false-matching similar paths', () => {
+      // /apidocs must NOT match /api
+      expect(utils.resolvePathRewrite('/apidocs', [apiRewrite])).toBeNull()
+      // /api itself must match
+      expect(utils.resolvePathRewrite('/api', [apiRewrite])?.targetPath).toBe('/api')
+      // /api/ must match
+      expect(utils.resolvePathRewrite('/api/', [apiRewrite])?.targetPath).toBe('/api/')
+    })
+
+    it('uses the first matching rewrite when multiple match', () => {
+      const rewrites = [
+        { from: '/api/v2', to: 'localhost:4000' },
+        { from: '/api', to: 'localhost:3008' },
+      ]
+      expect(utils.resolvePathRewrite('/api/v2/users', rewrites)?.targetHost).toBe('localhost:4000')
+      expect(utils.resolvePathRewrite('/api/users', rewrites)?.targetHost).toBe('localhost:3008')
+    })
+
+    it('extracts host from a fully-qualified URL in `to`', () => {
+      const rewrites = [{ from: '/api', to: 'http://upstream.test:9000/anything' }]
+      expect(utils.resolvePathRewrite('/api/x', rewrites)).toEqual({
+        targetHost: 'upstream.test:9000',
+        targetPath: '/api/x',
+      })
+    })
+  })
 })

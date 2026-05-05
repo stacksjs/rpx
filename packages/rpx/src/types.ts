@@ -11,7 +11,16 @@ export interface PathRewrite {
   from: string
   /** Target backend to route to, e.g. 'localhost:3008' */
   to: string
-  /** Strip the matched prefix before forwarding (default: true) */
+  /**
+   * Strip the matched prefix before forwarding. Default: `false` (preserve path).
+   *
+   * Matches the behavior of Vite's `server.proxy`, nginx `proxy_pass http://host:port`
+   * (no trailing slash), and http-proxy-middleware's default. Most upstreams that own
+   * a `/api` namespace expect the prefix to remain on the request URL.
+   *
+   * Set to `true` only when the upstream registers routes WITHOUT the prefix
+   * (e.g., upstream serves `/cart/add` and you want `/api/cart/add` to reach it).
+   */
   stripPrefix?: boolean
 }
 
