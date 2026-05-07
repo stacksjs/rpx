@@ -1,7 +1,8 @@
 # Changelog
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.4...v0.11.5)
 
-### 🐛 Bug Fixes
+## 🐛 Bug Fixes
 
 - **path-rewrites**: preserve path by default, expose resolvePathRewrite helper ([4df7d1d](https://github.com/stacksjs/rpx/commit/4df7d1d)) _(by Chris <chrisbreuer93@gmail.com>)_
 - **changelog**: demote h3 sections to h2 ([fdebaaf](https://github.com/stacksjs/rpx/commit/fdebaaf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
