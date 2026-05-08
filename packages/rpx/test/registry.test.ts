@@ -188,14 +188,19 @@ describe('watchRegistry', () => {
   })
 
   it('coalesces rapid changes through the debounce', async () => {
+    // Use a generous debounce so a slow CI machine doesn't push individual
+    // writes outside the window — that would make each one trigger its own
+    // fire and turn this test into a no-op timing check rather than a real
+    // coalescing assertion.
+    const debounceMs = 250
     const seen: string[][] = []
     const handle = watchRegistry(
       (entries) => { seen.push(entries.map(e => e.id).sort()) },
-      { dir: tmpDir, debounceMs: 60 },
+      { dir: tmpDir, debounceMs },
     )
 
     // Drain the startup fire first
-    await new Promise(r => setTimeout(r, 100))
+    await new Promise(r => setTimeout(r, debounceMs + 60))
     const seenAfterStartup = seen.length
 
     // Burst of writes within the debounce window
@@ -203,12 +208,13 @@ describe('watchRegistry', () => {
     await writeEntry(entry('b'), tmpDir)
     await writeEntry(entry('c'), tmpDir)
 
-    await new Promise(r => setTimeout(r, 150))
+    // Wait long enough for the (single) coalesced fire to land
+    await new Promise(r => setTimeout(r, debounceMs + 100))
     handle.close()
 
     const burstFires = seen.length - seenAfterStartup
-    // We allow up to 2 fires (one for the burst, occasionally a stragger from
-    // the rename event) but never N=3 for three writes.
+    // 3 writes in a 250ms window must coalesce. Allow up to 2 fires to
+    // account for an occasional rename-event straggler, but never N=3.
     expect(burstFires).toBeGreaterThan(0)
     expect(burstFires).toBeLessThanOrEqual(2)
     // The final state should reflect all three writes
