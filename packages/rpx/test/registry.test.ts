@@ -150,10 +150,16 @@ describe('gcStaleEntries', () => {
   })
 
   it('skips entries without a pid (manual entries opt out of GC)', async () => {
-    // Build an entry with no pid field at all.
-    const e = entry('manual') as Record<string, unknown>
-    delete e.pid
-    await writeEntry(e as never, tmpDir)
+    // Build an entry with no pid field at all — pid is optional and its
+    // absence opts the entry out of PID-based GC.
+    const manual: RegistryEntry = {
+      id: 'manual',
+      from: 'localhost:5173',
+      to: 'manual.localhost',
+      cwd: process.cwd(),
+      createdAt: new Date().toISOString(),
+    }
+    await writeEntry(manual, tmpDir)
     // Plus a dead-pid entry to prove GC still works for entries that DO opt in.
     await writeEntry(entry('dead', { pid: 2_000_000_000 }), tmpDir)
 
