@@ -130,6 +130,88 @@ rpx --help
 rpx --version
 ```
 
+## Daemon mode (shared `:443` for multiple apps)
+
+By default, every `rpx start` binds its own `:443`. That works for one app at a
+time. If you want **several local apps reachable concurrently** at
+`https://<app>.localhost` — Valet-style — run them through the rpx daemon
+instead.
+
+The daemon is a single long-running process that owns `:443` + `:80`, holds the
+shared Root CA, and routes traffic per a small file-based registry under
+`~/.stacks/rpx/`. Each `rpx register` (or `rpx start --via-daemon`) drops one
+JSON file into the registry; the daemon hot-reloads its routing table on
+change.
+
+### Quick start
+
+```bash
+# Lazy-spawns the daemon if it isn't running, then registers your app.
+# Survives across sessions until you `unregister` or kill the daemon.
+rpx register --id pet-store --from localhost:5173 --to pet-store.localhost
+rpx register --id training  --from localhost:5174 --to training.localhost
+
+# Inspect what the daemon is routing right now.
+rpx daemon:status
+# rpx daemon: running (pid=12345)
+# registered hosts (2):
+# - https://pet-store.localhost -> localhost:5173 (id=pet-store, ...)
+# - https://training.localhost -> localhost:5174 (id=training, ...)
+
+# Remove an app.
+rpx unregister pet-store
+
+# Stop the daemon entirely.
+rpx daemon:stop
+```
+
+### `rpx start --via-daemon`
+
+If you'd rather keep the familiar `rpx start` flow but participate in the
+shared `:443` server, opt in with `--via-daemon`:
+
+```bash
+rpx start --from localhost:5173 --to pet-store.localhost --via-daemon
+```
+
+This registers an entry, spawns/attaches the daemon, prints the URL, and
+unregisters when you Ctrl+C — so two `rpx start --via-daemon` invocations no
+longer fight over `:443`.
+
+The same flag is available as a config option (`viaDaemon: true`) and can be
+set per-proxy or at the top level of `rpx.config.ts`.
+
+### What lives where
+
+| Path                              | What                                                                 |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `~/.stacks/rpx/daemon.pid`        | Single-instance lock (atomic `O_CREAT \| O_EXCL`)                    |
+| `~/.stacks/rpx/registry.d/<id>.json` | One file per registered app                                       |
+| Root CA (via `@stacksjs/tlsx`)    | Persisted between regens; trust prompt happens once, not per app     |
+
+The daemon GCs entries whose writer PID is dead, so `kill -9` on a dev server
+cleans itself up within a few seconds.
+
+### Library API
+
+```ts
+import { ensureDaemonRunning, runViaDaemon, stopDaemon } from '@stacksjs/rpx'
+
+// Register one or more proxies and ensure the daemon is up.
+await runViaDaemon({
+  proxies: [
+    { id: 'pet-store', from: 'localhost:5173', to: 'pet-store.localhost' },
+    { id: 'training',  from: 'localhost:5174', to: 'training.localhost', cleanUrls: true },
+  ],
+})
+
+// Or just make sure the daemon is running, without registering anything.
+const { pid, spawned } = await ensureDaemonRunning()
+
+// Shut it down.
+await stopDaemon()
+```
+
 ## Configuration
 
 The Reverse Proxy can be configured using a `rpx.config.ts` _(or `rpx.config.js`)_ file and it will be automatically loaded when running the `reverse-proxy` command.

@@ -22,6 +22,48 @@ export {
 
 export { DefaultPortManager, findAvailablePort, isPortInUse, portManager } from './port-manager'
 
+export {
+  gcStaleEntries,
+  getRegistryDir,
+  isPidAlive,
+  isValidId,
+  readAll,
+  readEntry,
+  removeEntry,
+  watchRegistry,
+  writeEntry,
+} from './registry'
+
+export type { RegistryEntry, WatchHandle, WatchOptions } from './registry'
+
+export {
+  acquireDaemonLock,
+  defaultDaemonSpawnCommand,
+  ensureDaemonRunning,
+  getDaemonPidPath,
+  getDaemonRpxDir,
+  isDaemonRunning,
+  readDaemonPid,
+  releaseDaemonLock,
+  runDaemon,
+  stopDaemon,
+} from './daemon'
+
+export type {
+  DaemonHandle,
+  DaemonOptions,
+  EnsureDaemonOptions,
+  EnsureDaemonResult,
+  StopDaemonOptions,
+  StopDaemonResult,
+} from './daemon'
+
+export { createProxyFetchHandler } from './proxy-handler'
+export type { GetRoute, ProxyFetchHandler, ProxyRoute } from './proxy-handler'
+
+export { deriveIdFromTarget, runViaDaemon } from './daemon-runner'
+export type { DaemonRunnerOptions, DaemonRunnerProxy } from './daemon-runner'
+
 export { cleanup } from './start'
 
 export { startProxies, startProxy, startServer } from './start'

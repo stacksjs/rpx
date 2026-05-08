@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import type { IncomingHttpHeaders, SecureServerOptions } from 'node:http2'
 import type { ServerOptions } from 'node:https'
-import type { BaseProxyConfig, CleanupOptions, PathRewrite, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
+import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
 import { exec, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
@@ -16,11 +16,14 @@ import { log } from './logger'
 import { colors } from './colors'
 import { version } from '../package.json'
 import { config } from './config'
+import { runViaDaemon } from './daemon-runner'
 import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
 import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
 import { ProcessManager } from './process-manager'
-import { debugLog, getSudoPassword, resolvePathRewrite } from './utils'
+import { createProxyFetchHandler } from './proxy-handler'
+import type { ProxyRoute } from './proxy-handler'
+import { debugLog, getSudoPassword } from './utils'
 
 const processManager = new ProcessManager()
 // Create a global port manager for coordinating port usage
@@ -829,6 +832,31 @@ export function startProxy(options: ProxyOption): void {
 
   debugLog('proxy', `Starting proxy with options: ${JSON.stringify(mergedOptions)}`, mergedOptions?.verbose)
 
+  // viaDaemon: register with the long-running daemon instead of binding our
+  // own :443. The daemon owns TLS termination and host-header routing for
+  // every concurrent `rpx start` on this machine.
+  if (mergedOptions.viaDaemon) {
+    if (!mergedOptions.from || !mergedOptions.to) {
+      log.error('viaDaemon mode requires both `from` and `to`')
+      return
+    }
+    runViaDaemon({
+      proxies: [{
+        id: mergedOptions.id,
+        from: mergedOptions.from,
+        to: mergedOptions.to,
+        cleanUrls: mergedOptions.cleanUrls,
+        changeOrigin: mergedOptions.changeOrigin,
+        pathRewrites: mergedOptions.pathRewrites,
+      }],
+      verbose: mergedOptions.verbose,
+    }).catch((err) => {
+      log.error(`Failed to register with rpx daemon: ${err.message}`)
+      process.exit(1)
+    })
+    return
+  }
+
   // Start DNS server for custom domains on macOS (any domain that's not localhost/127.0.0.1)
   const targetDomain = mergedOptions.to || ''
   const tld = targetDomain.split('.').pop()?.toLowerCase() || ''
@@ -931,6 +959,32 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   const verbose = getVerbose(mergedOptions)
   debugLog('config', `Starting with config: ${JSON.stringify(mergedOptions, null, 2)}`, verbose)
   debugLog('config', `Is multi-proxy? ${'proxies' in mergedOptions}`, verbose)
+
+  // viaDaemon mode short-circuits before any port binding / cert work — the
+  // daemon owns all of that. We only need to register entries and block.
+  if (mergedOptions.viaDaemon) {
+    const isMulti = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
+    const proxies = isMulti
+      ? (mergedOptions.proxies as Array<BaseProxyConfig & { cleanUrls?: boolean, changeOrigin?: boolean }>)
+        .map(p => ({
+          id: p.id,
+          from: p.from,
+          to: p.to,
+          cleanUrls: p.cleanUrls ?? mergedOptions.cleanUrls,
+          changeOrigin: p.changeOrigin ?? mergedOptions.changeOrigin,
+          pathRewrites: p.pathRewrites,
+        }))
+      : [{
+          id: mergedOptions.id,
+          from: mergedOptions.from,
+          to: mergedOptions.to,
+          cleanUrls: mergedOptions.cleanUrls,
+          changeOrigin: mergedOptions.changeOrigin,
+          pathRewrites: mergedOptions.pathRewrites,
+        }]
+    await runViaDaemon({ proxies, verbose })
+    return
+  }
 
   // Start dev servers first if configured
   if ('proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)) {
@@ -1161,16 +1215,13 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   if (sslConfig && proxyOptions.length > 1) {
     debugLog('proxies', `Creating shared HTTPS server for ${proxyOptions.length} domains`, verbose)
 
-    // Build routing table: domain → { fromPort, sourceHost, cleanUrls, changeOrigin, pathRewrites }
-    const routingTable = new Map<string, { fromPort: number, sourceHost: string, cleanUrls: boolean, changeOrigin: boolean, pathRewrites?: PathRewrite[] }>()
+    const routingTable = new Map<string, ProxyRoute>()
 
     for (const option of proxyOptions) {
       const domain = option.to || 'rpx.localhost'
       const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
-      const fromPort = Number.parseInt(fromUrl.port) || 80
 
       routingTable.set(domain, {
-        fromPort,
         sourceHost: fromUrl.host,
         cleanUrls: option.cleanUrls || false,
         changeOrigin: option.changeOrigin || false,
@@ -1221,72 +1272,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           requestCert: false,
           rejectUnauthorized: false,
         },
-        async fetch(req: Request) {
-          const url = new URL(req.url)
-          const hostHeader = req.headers.get('host') || ''
-          // Strip port from Host header (e.g., "stacks.localhost:443" → "stacks.localhost")
-          const hostname = hostHeader.split(':')[0]
-
-          const route = routingTable.get(hostname)
-          if (!route) {
-            debugLog('request', `No route found for host: ${hostname}`, verbose)
-            return new Response(`No proxy configured for ${hostname}`, { status: 404 })
-          }
-
-          let targetHost = route.sourceHost
-          let targetPath = url.pathname
-
-          // Check path rewrites — route specific path prefixes to different backends.
-          // By default the prefix is preserved (matches Vite/nginx/http-proxy-middleware
-          // semantics); set `stripPrefix: true` per-rewrite to strip.
-          const rewriteMatch = resolvePathRewrite(url.pathname, route.pathRewrites)
-          if (rewriteMatch) {
-            targetHost = rewriteMatch.targetHost
-            targetPath = rewriteMatch.targetPath
-            debugLog('request', `Path rewrite: ${url.pathname} → ${targetHost}${targetPath}`, verbose)
-          }
-
-          const targetUrl = `http://${targetHost}${targetPath}${url.search}`
-
-          try {
-            const headers = new Headers(req.headers)
-            headers.set('host', targetHost)
-            if (route.changeOrigin) {
-              headers.set('origin', `http://${route.sourceHost}`)
-            }
-            headers.set('x-forwarded-for', '127.0.0.1')
-            headers.set('x-forwarded-proto', 'https')
-            headers.set('x-forwarded-host', hostname)
-
-            const response = await fetch(targetUrl, {
-              method: req.method,
-              headers,
-              body: req.body,
-              redirect: 'manual',
-            })
-
-            const responseHeaders = new Headers(response.headers)
-
-            // Handle clean URLs redirect
-            if (route.cleanUrls && url.pathname.endsWith('.html')) {
-              const cleanPath = url.pathname.replace(/\.html$/, '')
-              return new Response(null, {
-                status: 301,
-                headers: { Location: cleanPath },
-              })
-            }
-
-            return new Response(response.body, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: responseHeaders,
-            })
-          }
-          catch (err) {
-            debugLog('request', `Proxy error for ${hostname}: ${err}`, verbose)
-            return new Response(`Proxy Error: ${err}`, { status: 502 })
-          }
-        },
+        fetch: createProxyFetchHandler(host => routingTable.get(host), verbose),
         error(err: Error) {
           debugLog('server', `Shared proxy server error: ${err}`, verbose)
           return new Response(`Server Error: ${err.message}`, { status: 500 })

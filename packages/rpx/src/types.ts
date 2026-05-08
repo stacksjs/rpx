@@ -29,6 +29,11 @@ export interface BaseProxyConfig {
   to: string // stacks.localhost
   start?: StartOptions
   pathRewrites?: PathRewrite[]
+  /**
+   * Stable id used when registering this proxy with the rpx daemon. Derived
+   * from `to` if omitted. Must match `/^[a-zA-Z0-9._-]+$/` and be ≤128 chars.
+   */
+  id?: string
 }
 
 export type BaseProxyOptions = Partial<BaseProxyConfig>
@@ -53,6 +58,12 @@ export interface SharedProxyConfig {
   cleanUrls: boolean
   changeOrigin?: boolean // default: false - changes the origin of the host header to the target URL
   regenerateUntrustedCerts?: boolean // If true, will regenerate and re-trust certs that exist but are not trusted by the system.
+  /**
+   * Route this proxy through the long-running rpx daemon instead of binding
+   * its own :443. Lets multiple `rpx start` invocations coexist on shared
+   * `:443` (Valet-style). Default: `false` for backward compatibility.
+   */
+  viaDaemon?: boolean
 }
 
 export type SharedProxyOptions = Partial<SharedProxyConfig>

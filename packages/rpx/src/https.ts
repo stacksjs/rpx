@@ -13,6 +13,50 @@ import { debugLog, execSudoSync, getPrimaryDomain, isMultiProxyConfig, isMultiPr
 
 let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
 
+// Canonical filenames for the shared Root CA. The CA is a singleton across all
+// rpx-managed domains so that browsers only need to trust it once. Host certs
+// for individual domains are issued from this CA on demand.
+const ROOT_CA_CERT_FILENAME = 'rpx-root-ca.crt'
+const ROOT_CA_KEY_FILENAME = 'rpx-root-ca.key'
+
+export interface RootCAPaths {
+  caCertPath: string
+  caKeyPath: string
+}
+
+/**
+ * Returns the canonical Root CA cert + key paths inside `basePath`.
+ */
+export function getRootCAPaths(basePath: string): RootCAPaths {
+  return {
+    caCertPath: join(basePath, ROOT_CA_CERT_FILENAME),
+    caKeyPath: join(basePath, ROOT_CA_KEY_FILENAME),
+  }
+}
+
+/**
+ * Load a previously-persisted Root CA (cert + private key). Returns `null` if
+ * either file is missing or unreadable, signalling that a fresh CA needs to be
+ * created.
+ */
+async function loadRootCA(paths: RootCAPaths, verbose?: boolean): Promise<{ certificate: string, privateKey: string } | null> {
+  try {
+    const [certificate, privateKey] = await Promise.all([
+      fs.readFile(paths.caCertPath, 'utf8'),
+      fs.readFile(paths.caKeyPath, 'utf8'),
+    ])
+    if (!certificate.includes('-----BEGIN CERTIFICATE-----') || !privateKey.includes('PRIVATE KEY-----')) {
+      debugLog('ssl', `Root CA files at ${paths.caCertPath} look malformed, will regenerate`, verbose)
+      return null
+    }
+    return { certificate, privateKey }
+  }
+  catch (err) {
+    debugLog('ssl', `No existing Root CA at ${paths.caCertPath} (${(err as NodeJS.ErrnoException).code || err}), will create one`, verbose)
+    return null
+  }
+}
+
 /**
  * Resolves SSL paths based on configuration
  */
@@ -274,15 +318,37 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
 
   debugLog('ssl', `Generating certificate for domains: ${domains.join(', ')}`, options.verbose)
 
-  // Generate Root CA first
-  const rootCAConfig = httpsConfig(options, options.verbose)
-
-  if (options.verbose)
-    log.info('Generating Root CA certificate...')
-  const caCert = await createRootCA(rootCAConfig)
-
-  // Generate the host certificate with all domains
   const hostConfig = httpsConfig(options, options.verbose)
+  const sslDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
+  await fs.mkdir(sslDir, { recursive: true })
+  const rootCAPaths = getRootCAPaths(sslDir)
+
+  // Reuse the persisted Root CA when present so the user only has to trust it
+  // once. A fresh CA gets created (and persisted) on first run.
+  let caCert = await loadRootCA(rootCAPaths, options.verbose)
+  let caIsNew = false
+  if (!caCert) {
+    if (options.verbose)
+      log.info('Generating Root CA certificate (one-time)...')
+    caCert = await createRootCA(hostConfig)
+    try {
+      await Promise.all([
+        fs.writeFile(rootCAPaths.caCertPath, caCert.certificate),
+        fs.writeFile(rootCAPaths.caKeyPath, caCert.privateKey, { mode: 0o600 }),
+      ])
+      caIsNew = true
+      debugLog('ssl', `Persisted Root CA at ${rootCAPaths.caCertPath}`, options.verbose)
+    }
+    catch (err) {
+      debugLog('ssl', `Error saving Root CA files: ${err}`, options.verbose)
+      throw new Error(`Failed to save Root CA files: ${err}`)
+    }
+  }
+  else {
+    debugLog('ssl', `Reusing existing Root CA from ${rootCAPaths.caCertPath}`, options.verbose)
+  }
+
+  // Issue the host cert with all SANs from the (possibly reused) CA.
   if (options.verbose)
     log.info(`Generating host certificate for: ${domains.join(', ')}`)
 
@@ -294,14 +360,9 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
     },
   })
 
-  // Save the certificate files first before trying to trust them
-  // This prevents multiple trust attempts when files don't exist
+  // Persist host cert + key. Also write a copy of the CA cert at the per-domain
+  // `caCertPath` for back-compat with anything that still reads from there.
   try {
-    // Ensure the SSL directory exists
-    const sslDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
-    await fs.mkdir(sslDir, { recursive: true })
-
-    // Write certificate files
     await Promise.all([
       fs.writeFile(hostConfig.certPath, hostCert.certificate),
       fs.writeFile(hostConfig.keyPath, hostCert.privateKey),
@@ -315,15 +376,19 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
     throw new Error(`Failed to save certificate files: ${err}`)
   }
 
-  // Check if certificate is already trusted before attempting to add it
-  // This avoids unnecessary sudo prompts
-  const alreadyTrusted = await isCertTrusted(hostConfig.certPath, { verbose: options.verbose, regenerateUntrustedCerts: true })
-  if (alreadyTrusted) {
-    debugLog('ssl', 'Certificate is already trusted, skipping trust store update', options.verbose)
-    if (options.verbose)
-      log.success('Certificate is already trusted in system trust store')
+  // The CA is the trust anchor — only it needs to live in the trust store.
+  // Skip the install step when the CA is already trusted (a freshly minted CA
+  // is never trusted yet; a reused one might still need a one-time install if
+  // someone wiped their keychain).
+  const caTrusted = caIsNew
+    ? false
+    : await isCertTrusted(rootCAPaths.caCertPath, { verbose: options.verbose, regenerateUntrustedCerts: true })
 
-    // Cache the SSL config for reuse
+  if (caTrusted) {
+    debugLog('ssl', 'Root CA already trusted, skipping trust store update', options.verbose)
+    if (options.verbose)
+      log.success('Root CA is already trusted in system trust store')
+
     cachedSSLConfig = {
       key: hostCert.privateKey,
       cert: hostCert.certificate,
@@ -342,19 +407,16 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
 
   let isTrusted = false
 
-  // We'll use a stronger approach to ensure the certificate is properly trusted
+  // We install only the Root CA — host certs derive their trust from it.
   if (process.platform === 'darwin') {
     try {
-      // For macOS, add both CA and host certificates to system trust store in a single sudo call
-      // Combine both certificate trust operations into a single sudo command to avoid multiple password prompts
-      const combinedCmd = `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}" && security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"`
-      execSudoSync(combinedCmd)
+      execSudoSync(`security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"`)
       if (options.verbose)
-        log.success('Successfully added CA and host certificates to system trust store')
+        log.success('Successfully added Root CA to system trust store')
 
       // Also add to login keychain (no sudo needed)
       try {
-        execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${hostConfig.certPath}"`, { stdio: 'pipe' })
+        execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${rootCAPaths.caCertPath}"`, { stdio: 'pipe' })
       }
       catch {
         // Ignore login keychain errors - system keychain is sufficient
@@ -362,30 +424,25 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
 
       isTrusted = true
 
-      // Create a simple trust-helper script for easy manual trust if needed
-      const sslScriptDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
-      const scriptPath = join(sslScriptDir, 'trust-rpx-cert.sh')
+      // Helper script for manual re-trust if the user ever wipes their keychain.
+      const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
-echo "Trusting RPX certificate for domains: ${domains.join(', ')}"
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}"
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"
-echo "Certificates trusted! Please restart your browser."
+echo "Trusting RPX Root CA"
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
+echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
       await fs.writeFile(scriptPath, scriptContent, { mode: 0o755 }) // Make it executable
     }
     catch (err) {
       if (options.verbose)
-        log.warn(`Could not add certificate to trust store automatically: ${err}`)
+        log.warn(`Could not add Root CA to trust store automatically: ${err}`)
 
-      // Create a trust helper script for manual trust
-      const sslScriptDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
-      const scriptPath = join(sslScriptDir, 'trust-rpx-cert.sh')
+      const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
-echo "Trusting RPX certificate for domains: ${domains.join(', ')}"
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.caCertPath}"
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${hostConfig.certPath}"
-echo "Certificates trusted! Please restart your browser."
+echo "Trusting RPX Root CA"
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
+echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
       await fs.writeFile(scriptPath, scriptContent, { mode: 0o755 })
@@ -404,10 +461,9 @@ echo "If you still see certificate warnings, type 'thisisunsafe' on the warning 
       // Create a more reliable trust script
       const trustScript = `
 mkdir -p "${certDir}" 2>/dev/null || true
-cp "${hostConfig.caCertPath}" "${certDir}/"
-cp "${hostConfig.certPath}" "${certDir}/"
+cp "${rootCAPaths.caCertPath}" "${certDir}/"
 update-ca-certificates
-echo "RPX certificates installed. Please restart your browser."
+echo "RPX Root CA installed. Please restart your browser."
 `
       // Use a temp file for the script
       const tmpScript = join(os.tmpdir(), `rpx-trust-${Date.now()}.sh`)
@@ -444,12 +500,12 @@ echo "RPX certificates installed. Please restart your browser."
     try {
       // Windows is different - use a PowerShell approach
       const winScript = `
-$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("${hostConfig.caCertPath.replace(/\//g, '\\')}")
+$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("${rootCAPaths.caCertPath.replace(/\//g, '\\')}")
 $store = New-Object System.Security.Cryptography.X509Certificates.X509Store("ROOT", "LocalMachine")
 $store.Open("ReadWrite")
 $store.Add($cert)
 $store.Close()
-Write-Host "Certificate trusted successfully!"
+Write-Host "Root CA trusted successfully!"
 `
       const psPath = join(os.tmpdir(), 'rpx-trust.ps1')
       await fs.writeFile(psPath, winScript)

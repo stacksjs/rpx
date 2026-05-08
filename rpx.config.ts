@@ -29,8 +29,16 @@ const config: ProxyOptions = {
     certs: false,
   },
 
+  // Set to `true` to route through the long-running rpx daemon on shared
+  // :443 instead of binding our own. Required when running multiple apps
+  // concurrently (Valet-style); see README "Daemon mode" for details.
+  // viaDaemon: true,
+
   proxies: [
     {
+      // Optional. Stable id for this proxy in the daemon's registry.
+      // Auto-derived from `to` when omitted.
+      // id: 'rpx-docs',
       from: 'localhost:5173',
       to: 'rpx.localhost',
       cleanUrls: true,
