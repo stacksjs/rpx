@@ -208,7 +208,13 @@ describe('watchRegistry', () => {
     await writeEntry(entry('b'), tmpDir)
     await writeEntry(entry('c'), tmpDir)
 
-    // Wait long enough for the (single) coalesced fire to land
+    // Poll for the coalesced fire to land. CI filesystems (especially
+    // GHA Linux runners) are slower than dev machines, so a fixed wait
+    // sometimes misses the fire entirely. Poll up to ~2s.
+    const deadline = Date.now() + 2000
+    while (seen.length === seenAfterStartup && Date.now() < deadline)
+      await new Promise(r => setTimeout(r, 50))
+    // Small grace window in case a second fire is still in flight
     await new Promise(r => setTimeout(r, debounceMs + 100))
     handle.close()
 
