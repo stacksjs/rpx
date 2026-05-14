@@ -72,7 +72,7 @@
     "@stacksjs/tlsx": "^0.13.6"
   },
   "devDependencies": {
-    "bunfig": "^0.15.6",
+    "bunfig": "^0.15.13",
     "typescript": "^5.9.3"
   },
   "simple-git-hooks": {
