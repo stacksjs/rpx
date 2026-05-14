@@ -15,7 +15,7 @@ await Bun.build({
 
 await Bun.build({
   entrypoints: ['./bin/cli.ts'],
-  outdir: './dist',
+  outdir: './dist/bin',
   format: 'esm',
   target: 'node',
   minify: true,
