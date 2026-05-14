@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@stacksjs/rpx": "workspace:*",
-    "@stacksjs/tlsx": "^0.13.5"
+    "@stacksjs/tlsx": "^0.13.6"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"

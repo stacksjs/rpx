@@ -146,22 +146,22 @@ change.
 ### Quick start
 
 ```bash
-# Lazy-spawns the daemon if it isn't running, then registers your app.
-# Survives across sessions until you `unregister` or kill the daemon.
+# Lazy-spawns the daemon if it isn't running, then registers your app
+# Survives across sessions until you `unregister` or kill the daemon
 rpx register --id pet-store --from localhost:5173 --to pet-store.localhost
 rpx register --id training  --from localhost:5174 --to training.localhost
 
-# Inspect what the daemon is routing right now.
+# Inspect what the daemon is routing right now
 rpx daemon:status
 # rpx daemon: running (pid=12345)
-# registered hosts (2):
+# registered hosts (2)
 # - https://pet-store.localhost -> localhost:5173 (id=pet-store, ...)
 # - https://training.localhost -> localhost:5174 (id=training, ...)
 
-# Remove an app.
+# Remove an app
 rpx unregister pet-store
 
-# Stop the daemon entirely.
+# Stop the daemon entirely
 rpx daemon:stop
 ```
 

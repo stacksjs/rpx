@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import type { BaseProxyConfig, ProxyOption, StartOptions } from '../src/types'
 import * as process from 'node:process'
-import { CAC } from 'cac'
+import { CLI } from '@stacksjs/clapp'
 import { config } from '../src/config'
 import {
   ensureDaemonRunning,
@@ -24,7 +24,7 @@ import {
 import { startProxies, startProxy } from '../src/start'
 import { isMultiProxyConfig } from '../src/utils'
 
-const cli = new CAC('rpx')
+const cli = new CLI('rpx')
 const version = '0.12.0'
 
 // Define CLI options interface to match our core types
@@ -381,4 +381,4 @@ cli.command('version', 'Show the version of the Reverse Proxy CLI').action(() =>
 
 cli.version(version)
 cli.help()
-cli.parse()
+cli.run()
