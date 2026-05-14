@@ -68,7 +68,7 @@
     "zip:darwin-arm64": "zip -j bin/rpx-darwin-arm64.zip bin/rpx-darwin-arm64"
   },
   "dependencies": {
-    "@stacksjs/clapp": "^0.2.9",
+    "@stacksjs/clapp": "^0.2.10",
     "@stacksjs/tlsx": "^0.13.6"
   },
   "devDependencies": {
