@@ -186,6 +186,30 @@ describe('utils', () => {
     })
   })
 
+  describe('safeStringify', () => {
+    it('redacts secrets and PEM material without hiding paths', () => {
+      const output = utils.safeStringify({
+        certPath: '/tmp/rpx/cert.pem',
+        keyPath: '/tmp/rpx/key.pem',
+        rootCA: {
+          certificate: '-----BEGIN CERTIFICATE-----\nsecret\n-----END CERTIFICATE-----',
+          privateKey: '-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----',
+        },
+        env: {
+          SUDO_PASSWORD: 'secret',
+          API_TOKEN: 'token',
+        },
+      })
+
+      expect(output).toContain('/tmp/rpx/cert.pem')
+      expect(output).toContain('/tmp/rpx/key.pem')
+      expect(output).not.toContain('BEGIN CERTIFICATE')
+      expect(output).not.toContain('BEGIN PRIVATE KEY')
+      expect(output).not.toContain('secret')
+      expect(output).not.toContain('token')
+    })
+  })
+
   describe('resolvePathRewrite', () => {
     const apiRewrite = { from: '/api', to: 'localhost:3008' }
 

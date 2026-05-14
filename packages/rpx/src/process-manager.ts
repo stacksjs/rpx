@@ -3,7 +3,7 @@ import type { StartOptions } from './types'
 import { spawn } from 'node:child_process'
 import * as process from 'node:process'
 import { log } from './logger'
-import { debugLog } from './utils'
+import { debugLog, safeStringify } from './utils'
 
 export interface ManagedProcess {
   command: string
@@ -28,7 +28,7 @@ export class ProcessManager {
     debugLog('start', `Starting process ${id}:`, verbose)
     debugLog('start', `  Command: ${cmd} ${args.join(' ')}`, verbose)
     debugLog('start', `  Working directory: ${cwd}`, verbose)
-    debugLog('start', `  Environment variables: ${JSON.stringify(options.env)}`, verbose)
+    debugLog('start', `  Environment variables: ${safeStringify(options.env)}`, verbose)
 
     const childProcess = spawn(cmd, args, {
       cwd,

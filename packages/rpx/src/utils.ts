@@ -36,6 +36,54 @@ export function debugLog(category: string, message: string, verbose?: boolean): 
     logger.debug(`[rpx:${category}] ${message}`)
 }
 
+const REDACTED = '[redacted]'
+const SENSITIVE_KEYS = new Set([
+  'certificate',
+  'privatekey',
+  'key',
+  'cert',
+  'ca',
+  'rootca',
+  'password',
+  'sudo_password',
+])
+const PEM_BLOCK_RE = /-----BEGIN [A-Z ]+-----[\s\S]*?-----END [A-Z ]+-----/
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase()
+  return SENSITIVE_KEYS.has(normalized)
+    || normalized.endsWith('password')
+    || normalized.includes('secret')
+    || normalized.includes('token')
+}
+
+export function redactSensitive(value: unknown): unknown {
+  if (Array.isArray(value))
+    return value.map(item => redactSensitive(item))
+
+  if (typeof value === 'string')
+    return PEM_BLOCK_RE.test(value) ? REDACTED : value
+
+  if (!value || typeof value !== 'object')
+    return value
+
+  const output: Record<string, unknown> = {}
+  for (const [key, nested] of Object.entries(value)) {
+    if (isSensitiveKey(key)) {
+      output[key] = REDACTED
+      continue
+    }
+
+    output[key] = redactSensitive(nested)
+  }
+
+  return output
+}
+
+export function safeStringify(value: unknown, space?: number): string {
+  return JSON.stringify(redactSensitive(value), null, space)
+}
+
 /**
  * Extracts hostnames from proxy configuration
  */

@@ -14,7 +14,6 @@ import * as process from 'node:process'
 import * as tls from 'node:tls'
 import { log } from './logger'
 import { colors } from './colors'
-import { version } from '../package.json'
 import { config } from './config'
 import { runViaDaemon } from './daemon-runner'
 import { addHosts, checkHosts, removeHosts } from './hosts'
@@ -23,9 +22,10 @@ import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manag
 import { ProcessManager } from './process-manager'
 import { createProxyFetchHandler } from './proxy-handler'
 import type { ProxyRoute } from './proxy-handler'
-import { debugLog, getSudoPassword } from './utils'
+import { debugLog, getSudoPassword, safeStringify } from './utils'
 
 const processManager = new ProcessManager()
+const version = '0.12.0'
 // Create a global port manager for coordinating port usage
 const globalPortManager = new DefaultPortManager('0.0.0.0')
 
@@ -298,7 +298,7 @@ async function testConnection(hostname: string, port: number, verbose?: boolean,
 }
 
 export async function startServer(options: SingleProxyConfig): Promise<void> {
-  debugLog('server', `Starting server with options: ${JSON.stringify(options)}`, options.verbose)
+  debugLog('server', `Starting server with options: ${safeStringify(options)}`, options.verbose)
 
   // Parse URLs early to get the hostnames
   const fromUrl = new URL((options.from?.startsWith('http') ? options.from : `http://${options.from}`) || 'localhost:5173')
@@ -490,7 +490,7 @@ async function createProxyServer(
       headers: normalizedHeaders,
     }
 
-    debugLog('request', `Proxy request options: ${JSON.stringify(proxyOptions)}`, verbose)
+    debugLog('request', `Proxy request options: ${safeStringify(proxyOptions)}`, verbose)
 
     const proxyReq = http.request(proxyOptions, (proxyRes) => {
       debugLog('response', `Proxy response received with status ${proxyRes.statusCode}`, verbose)
@@ -700,7 +700,7 @@ async function createProxyServer(
 }
 
 export async function setupProxy(options: ProxySetupOptions): Promise<void> {
-  debugLog('setup', `Setting up reverse proxy: ${JSON.stringify(options)}`, options.verbose)
+  debugLog('setup', `Setting up reverse proxy: ${safeStringify(options)}`, options.verbose)
 
   const { from, to, fromPort, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
   const httpPort = 80
@@ -830,7 +830,7 @@ export function startProxy(options: ProxyOption): void {
     ...options,
   }
 
-  debugLog('proxy', `Starting proxy with options: ${JSON.stringify(mergedOptions)}`, mergedOptions?.verbose)
+  debugLog('proxy', `Starting proxy with options: ${safeStringify(mergedOptions)}`, mergedOptions?.verbose)
 
   // viaDaemon: register with the long-running daemon instead of binding our
   // own :443. The daemon owns TLS termination and host-header routing for
@@ -912,7 +912,7 @@ export function startProxy(options: ProxyOption): void {
     regenerateUntrustedCerts: mergedOptions.regenerateUntrustedCerts,
   }
 
-  debugLog('proxy', `Server options: ${JSON.stringify(serverOptions)}`, mergedOptions.verbose)
+  debugLog('proxy', `Server options: ${safeStringify(serverOptions)}`, mergedOptions.verbose)
 
   startServer(serverOptions).catch((err) => {
     debugLog('proxy', `Failed to start proxy: ${err}`, mergedOptions.verbose)
@@ -946,7 +946,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     verbose: false,
     cleanUrls: false,
     changeOrigin: false,
-    regenerateUntrustedCerts: false,
+    regenerateUntrustedCerts: true,
   } as any
 
   if (options) {
@@ -957,7 +957,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   }
 
   const verbose = getVerbose(mergedOptions)
-  debugLog('config', `Starting with config: ${JSON.stringify(mergedOptions, null, 2)}`, verbose)
+  debugLog('config', `Starting with config: ${safeStringify(mergedOptions, 2)}`, verbose)
   debugLog('config', `Is multi-proxy? ${'proxies' in mergedOptions}`, verbose)
 
   // viaDaemon mode short-circuits before any port binding / cert work — the
