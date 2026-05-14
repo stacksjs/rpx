@@ -1,4 +1,70 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.5...v0.11.6)
+
+### 🚀 Features
+
+- rpx daemon, registry, proxy-handler + tests ([5da2485](https://github.com/stacksjs/rpx/commit/5da2485)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **rpx**: redact debug output and refresh untrusted certs ([1dc2258](https://github.com/stacksjs/rpx/commit/1dc2258)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: use clapp for cli runtime ([ba5b2e6](https://github.com/stacksjs/rpx/commit/ba5b2e6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: trust root certificates once ([0d06657](https://github.com/stacksjs/rpx/commit/0d06657)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: harden package build tooling ([a4248bf](https://github.com/stacksjs/rpx/commit/a4248bf)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **test**: skip flaky fs.watch coalesce test on CI ([aa25ae1](https://github.com/stacksjs/rpx/commit/aa25ae1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **test**: poll for fs.watch fire on slow CI filesystems ([0d35194](https://github.com/stacksjs/rpx/commit/0d35194)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.6 ([371a88d](https://github.com/stacksjs/rpx/commit/371a88d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: update clapp runtime ([73072ff](https://github.com/stacksjs/rpx/commit/73072ff)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([d9eaef7](https://github.com/stacksjs/rpx/commit/d9eaef7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([1798c96](https://github.com/stacksjs/rpx/commit/1798c96)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- switch lint scripts from eslint to pickier across all 3 packages ([5532226](https://github.com/stacksjs/rpx/commit/5532226)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: decouple npm publish from cross-platform binary builds ([576cf0c](https://github.com/stacksjs/rpx/commit/576cf0c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([4c78008](https://github.com/stacksjs/rpx/commit/4c78008)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### ⏪ Reverts
+
+- keep staged-lint kebab + bunx gitlint shorthand ([4cdf9ad](https://github.com/stacksjs/rpx/commit/4cdf9ad)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.5...HEAD)
+
+### 🚀 Features
+
+- rpx daemon, registry, proxy-handler + tests ([5da2485](https://github.com/stacksjs/rpx/commit/5da2485)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **rpx**: redact debug output and refresh untrusted certs ([1dc2258](https://github.com/stacksjs/rpx/commit/1dc2258)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: use clapp for cli runtime ([ba5b2e6](https://github.com/stacksjs/rpx/commit/ba5b2e6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: trust root certificates once ([0d06657](https://github.com/stacksjs/rpx/commit/0d06657)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: harden package build tooling ([a4248bf](https://github.com/stacksjs/rpx/commit/a4248bf)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **test**: skip flaky fs.watch coalesce test on CI ([aa25ae1](https://github.com/stacksjs/rpx/commit/aa25ae1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **test**: poll for fs.watch fire on slow CI filesystems ([0d35194](https://github.com/stacksjs/rpx/commit/0d35194)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- **rpx**: update clapp runtime ([73072ff](https://github.com/stacksjs/rpx/commit/73072ff)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([d9eaef7](https://github.com/stacksjs/rpx/commit/d9eaef7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- wip ([1798c96](https://github.com/stacksjs/rpx/commit/1798c96)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- switch lint scripts from eslint to pickier across all 3 packages ([5532226](https://github.com/stacksjs/rpx/commit/5532226)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: decouple npm publish from cross-platform binary builds ([576cf0c](https://github.com/stacksjs/rpx/commit/576cf0c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- wip ([4c78008](https://github.com/stacksjs/rpx/commit/4c78008)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### ⏪ Reverts
+
+- keep staged-lint kebab + bunx gitlint shorthand ([4cdf9ad](https://github.com/stacksjs/rpx/commit/4cdf9ad)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
 
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.4...v0.11.5)
 
