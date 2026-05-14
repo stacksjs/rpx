@@ -1,7 +1,7 @@
+#!/usr/bin/env bun
 import type { BaseProxyConfig, ProxyOption, StartOptions } from '../src/types'
 import * as process from 'node:process'
 import { CAC } from 'cac'
-import { version } from '../package.json'
 import { config } from '../src/config'
 import {
   ensureDaemonRunning,
@@ -25,6 +25,7 @@ import { startProxies, startProxy } from '../src/start'
 import { isMultiProxyConfig } from '../src/utils'
 
 const cli = new CAC('rpx')
+const version = '0.12.0'
 
 // Define CLI options interface to match our core types
 interface CLIOptions {

@@ -49,9 +49,6 @@
   "dependencies": {
     "@stacksjs/rpx": "workspace:*"
   },
-  "devDependencies": {
-    "bun-plugin-dtsx": "^0.21.17"
-  },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
   },

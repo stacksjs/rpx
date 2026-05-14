@@ -51,9 +51,9 @@
     "changelog": "bunx --bun logsmith --verbose",
     "changelog:generate": "bunx --bun logsmith --output CHANGELOG.md",
     "release": "bun --bun run changelog:generate && bunx --bun bumpx prompt --recursive",
-    "release:patch": "bun --bun run changelog:generate && bunx --bun bumpx patch --recursive --yes && cd packages/rpx && bun publish",
-    "release:minor": "bun --bun run changelog:generate && bunx --bun bumpx minor --recursive --yes && cd packages/rpx && bun publish",
-    "release:major": "bun --bun run changelog:generate && bunx --bun bumpx major --recursive --yes && cd packages/rpx && bun publish",
+    "release:patch": "bun --bun run changelog:generate && bunx --bun bumpx patch --recursive --yes",
+    "release:minor": "bun --bun run changelog:generate && bunx --bun bumpx minor --recursive --yes",
+    "release:major": "bun --bun run changelog:generate && bunx --bun bumpx major --recursive --yes",
     "postinstall": "bunx git-hooks",
     "typecheck": "bunx tsc --noEmit",
     "build": "for dir in packages/*; do if [ -f \"$dir/package.json\" ]; then echo \"Building $dir\" && bun run --cwd $dir build; fi; done",
@@ -63,8 +63,8 @@
     "fix-certs": "bun scripts/fix-certs.js"
   },
   "devDependencies": {
-    "@stacksjs/tlsx": "^0.13.0",
-    "better-dx": "^0.2.7",
+    "@stacksjs/tlsx": "^0.13.5",
+    "better-dx": "^0.2.15",
     "typescript": "^5.9.3",
     "vite": "^8.0.1"
   },
@@ -74,7 +74,7 @@
   "git-hooks": {
     "pre-commit": {
       "staged-lint": {
-        "*.{js,ts,json,yaml,yml,md}": "bunx --bun pickier lint --fix"
+        "*.{js,ts,json,yaml,yml,md}": "bunx --bun pickier . --fix"
       }
     },
     "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"

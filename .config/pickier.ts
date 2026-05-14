@@ -2,6 +2,19 @@ import type { PickierConfig } from 'pickier'
 
 const config: PickierConfig = {
   verbose: false,
+  ignores: [
+    'CHANGELOG.md',
+    '**/node_modules/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/bin/**',
+    '**/.git/**',
+    '**/coverage/**',
+    '**/*.min.js',
+    '**/bun.lock',
+    '**/package.json',
+    '**/pantry/**',
+  ],
 
   rules: {
     noDebugger: 'error',
