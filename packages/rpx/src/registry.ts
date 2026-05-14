@@ -231,6 +231,7 @@ export interface WatchHandle {
 
 export interface WatchOptions {
   debounceMs?: number
+  pollMs?: number
   verbose?: boolean
 }
 
@@ -249,6 +250,7 @@ export function watchRegistry(
 ): WatchHandle {
   const dir = opts.dir ?? getRegistryDir()
   const debounceMs = opts.debounceMs ?? 100
+  const pollMs = opts.pollMs ?? Math.max(debounceMs * 2, 250)
   const verbose = opts.verbose
 
   // Create the dir up front so fs.watch has something to attach to.
@@ -256,13 +258,34 @@ export function watchRegistry(
 
   let pending: ReturnType<typeof setTimeout> | null = null
   let closed = false
+  let lastSignature: string | null = null
+  let pollInFlight = false
+
+  const signatureFor = (entries: RegistryEntry[]): string => {
+    return JSON.stringify(
+      entries
+        .map(entry => ({
+          id: entry.id,
+          from: entry.from,
+          to: entry.to,
+          pid: entry.pid,
+          pathRewrites: entry.pathRewrites,
+          cleanUrls: entry.cleanUrls,
+          changeOrigin: entry.changeOrigin,
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    )
+  }
 
   const fire = () => {
     pending = null
     if (closed)
       return
     readAll(dir, verbose)
-      .then(entries => onChange(entries))
+      .then((entries) => {
+        lastSignature = signatureFor(entries)
+        return onChange(entries)
+      })
       .catch((err) => {
         debugLog('registry', `watcher onChange failed: ${err}`, verbose)
       })
@@ -275,6 +298,27 @@ export function watchRegistry(
       clearTimeout(pending)
     pending = setTimeout(fire, debounceMs)
   }
+
+  const poll = () => {
+    if (closed || pollInFlight)
+      return
+
+    pollInFlight = true
+    readAll(dir, verbose)
+      .then((entries) => {
+        const signature = signatureFor(entries)
+        if (signature !== lastSignature)
+          schedule()
+      })
+      .catch((err) => {
+        debugLog('registry', `watcher poll failed: ${err}`, verbose)
+      })
+      .finally(() => {
+        pollInFlight = false
+      })
+  }
+
+  const pollInterval = setInterval(poll, pollMs)
 
   const watcher = fs.watch(dir, { persistent: true }, (_eventType, filename) => {
     // Ignore temp files from our own atomic-write protocol.
@@ -295,6 +339,7 @@ export function watchRegistry(
       closed = true
       if (pending)
         clearTimeout(pending)
+      clearInterval(pollInterval)
       watcher.close()
     },
   }
