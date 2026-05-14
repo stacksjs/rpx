@@ -290,14 +290,7 @@ async function forceTrustCertificateMacOS(certPath: string): Promise<boolean> {
       return true
     }
     catch {
-      // If system keychain fails, try with the user's login keychain (no sudo needed)
-      try {
-        execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${certPath}"`)
-        return true
-      }
-      catch {
-        return false
-      }
+      return false
     }
   }
   catch {
@@ -413,14 +406,6 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
       execSudoSync(`security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"`)
       if (options.verbose)
         log.success('Successfully added Root CA to system trust store')
-
-      // Also add to login keychain (no sudo needed)
-      try {
-        execSync(`security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db "${rootCAPaths.caCertPath}"`, { stdio: 'pipe' })
-      }
-      catch {
-        // Ignore login keychain errors - system keychain is sufficient
-      }
 
       isTrusted = true
 
