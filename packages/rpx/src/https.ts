@@ -284,10 +284,19 @@ async function forceTrustCertificateMacOS(certPath: string): Promise<boolean> {
 
     debugLog('ssl', 'Trusting certificate via macOS security command', false)
 
-    // Use execSudoSync which handles SUDO_PASSWORD from env
+    // Login keychain — no sudo; Chrome/Arc often read this store on macOS.
+    const loginKeychain = join(homedir(), 'Library/Keychains/login.keychain-db')
     try {
-      execSudoSync(`security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${certPath}"`)
-      return true
+      execSync(`security add-trusted-cert -d -r trustRoot -p ssl -p basic -k "${loginKeychain}" "${certPath}"`, { stdio: 'ignore' })
+      if (await isCertTrusted(certPath, { verbose: false, regenerateUntrustedCerts: true }))
+        return true
+    }
+    catch { /* fall through to system keychain */ }
+
+    // System keychain — requires sudo / SUDO_PASSWORD.
+    try {
+      execSudoSync(`security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${certPath}"`)
+      return await isCertTrusted(certPath, { verbose: false, regenerateUntrustedCerts: true })
     }
     catch {
       return false
@@ -299,10 +308,11 @@ async function forceTrustCertificateMacOS(certPath: string): Promise<boolean> {
 }
 
 export async function generateCertificate(options: ProxyOptions): Promise<void> {
-  if (cachedSSLConfig) {
+  if (cachedSSLConfig && !(options as { forceRegenerate?: boolean }).forceRegenerate) {
     debugLog('ssl', 'Using cached SSL configuration', options.verbose)
     return
   }
+  clearSslConfigCache()
 
   // Get all unique domains from the configuration
   const domains: string[] = isMultiProxyOptions(options)
@@ -403,7 +413,7 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
   // We install only the Root CA — host certs derive their trust from it.
   if (process.platform === 'darwin') {
     try {
-      execSudoSync(`security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"`)
+      execSudoSync(`security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"`)
       if (options.verbose)
         log.success('Successfully added Root CA to system trust store')
 
@@ -413,7 +423,7 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
       const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
 echo "Trusting RPX Root CA"
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
+sudo security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
 echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
@@ -426,7 +436,7 @@ echo "If you still see certificate warnings, type 'thisisunsafe' on the warning 
       const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
 echo "Trusting RPX Root CA"
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
+sudo security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
 echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
@@ -539,6 +549,11 @@ export function getSSLConfig(): { key: string, cert: string, ca?: string } | nul
   return cachedSSLConfig
 }
 
+/** Clear in-process TLS cache so the next generate/load picks up new files on disk. */
+export function clearSslConfigCache(): void {
+  cachedSSLConfig = null
+}
+
 // needs to accept the options
 export async function checkExistingCertificates(options?: ProxyOptions): Promise<SSLConfig | null> {
   if (!options)
@@ -569,10 +584,15 @@ export async function checkExistingCertificates(options?: ProxyOptions): Promise
     const flagValue = options.regenerateUntrustedCerts
     const shouldCheckTrust = hasFlag ? flagValue !== false : true
     debugLog('ssl', `Trust check: hasFlag=${hasFlag}, flagValue=${flagValue}, shouldCheckTrust=${shouldCheckTrust}`, options.verbose)
-    const certIsTrusted = shouldCheckTrust ? await isCertTrusted(sslConfig.certPath, options) : true
+    // Trust anchor is the shared Root CA — host certs are not installed individually.
+    const sslDir = sslConfig.basePath || join(homedir(), '.stacks', 'ssl')
+    const rootCAPaths = getRootCAPaths(sslDir)
+    const caIsTrusted = shouldCheckTrust
+      ? await isCertTrusted(rootCAPaths.caCertPath, options)
+      : true
 
-    if (!certIsTrusted) {
-      debugLog('ssl', 'Certificate exists but is not trusted, will regenerate', options.verbose)
+    if (!caIsTrusted) {
+      debugLog('ssl', 'Root CA exists but is not trusted, will regenerate', options.verbose)
       // Don't attempt to trust here - let generateCertificate handle it in one place
       // This avoids multiple sudo prompts
       return null
@@ -721,23 +741,33 @@ export async function isCertTrusted(certPath: string, options?: { verbose?: bool
       try {
         // Get certificate fingerprint
         const certFingerprint = execSync(`openssl x509 -noout -fingerprint -sha256 -in "${certPath}"`).toString().trim()
-        const fingerprintValue = certFingerprint.split('=')[1]?.trim() || ''
+        const normalize = (raw: string) => raw.split('=').pop()!.replace(/SHA-256\s+hash:\s*/gi, '').replace(/:/g, '').trim().toUpperCase()
+        const fingerprintValue = normalize(certFingerprint)
 
         if (!fingerprintValue) {
           debugLog('ssl', 'Could not extract certificate fingerprint', options?.verbose)
           return false
         }
 
-        // Check if the fingerprint exists in the system keychain and is trusted
-        const keychainOutput = execSync(`security find-certificate -a -Z -p | openssl x509 -noout -fingerprint -sha256`).toString()
+        const keychains = [
+          '/Library/Keychains/System.keychain',
+          join(homedir(), 'Library/Keychains/login.keychain-db'),
+        ]
 
-        // If the fingerprint is found in the trusted certs, consider it trusted
-        if (keychainOutput.includes(fingerprintValue)) {
-          debugLog('ssl', 'Certificate fingerprint found in system keychain', options?.verbose)
-          return true
+        for (const keychain of keychains) {
+          try {
+            const listing = execSync(`security find-certificate -a -Z "${keychain}" 2>/dev/null || true`).toString()
+            for (const line of listing.split('\n')) {
+              if (line.toUpperCase().includes('SHA-256') && normalize(line) === fingerprintValue) {
+                debugLog('ssl', `Certificate fingerprint found in ${keychain}`, options?.verbose)
+                return true
+              }
+            }
+          }
+          catch { /* try next keychain */ }
         }
 
-        debugLog('ssl', 'Certificate fingerprint not found in system keychain', options?.verbose)
+        debugLog('ssl', 'Certificate fingerprint not found in system keychains', options?.verbose)
         return false
       }
       catch (error) {

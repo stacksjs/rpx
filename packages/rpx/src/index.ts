@@ -13,6 +13,7 @@ export {
 export {
   checkExistingCertificates,
   cleanupCertificates,
+  clearSslConfigCache,
   forceTrustCertificate,
   generateCertificate,
   httpsConfig,
