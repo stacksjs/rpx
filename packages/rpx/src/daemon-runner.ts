@@ -42,6 +42,16 @@ export interface DaemonRunnerOptions {
   detached?: boolean
   /** Override the daemon spawn command (tests). */
   spawnCommand?: string[]
+  /** Passed through to `ensureDaemonRunning` (default 5000ms). */
+  startupTimeoutMs?: number
+  /** Extra env for the daemon child (e.g. `SUDO_PASSWORD`). */
+  spawnEnv?: Record<string, string>
+  /**
+   * When true, registry entries omit `pid` so they persist until
+   * `rpx unregister` — avoids PID-GC dropping routes when the registering
+   * process is short-lived (e.g. a CLI wrapper).
+   */
+  persistent?: boolean
 }
 
 /**
@@ -78,14 +88,15 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
     return { ...p, id }
   })
 
+  const createdAt = new Date().toISOString()
   for (const p of resolved) {
     await writeEntry({
       id: p.id,
       from: p.from,
       to: p.to,
-      pid: process.pid,
+      pid: opts.persistent ? undefined : process.pid,
       cwd: process.cwd(),
-      createdAt: new Date().toISOString(),
+      createdAt,
       cleanUrls: p.cleanUrls,
       changeOrigin: p.changeOrigin,
       pathRewrites: p.pathRewrites,
@@ -96,6 +107,8 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
     rpxDir: opts.rpxDir,
     verbose,
     spawnCommand: opts.spawnCommand,
+    startupTimeoutMs: opts.startupTimeoutMs,
+    spawnEnv: opts.spawnEnv,
   })
 
   for (const p of resolved)
