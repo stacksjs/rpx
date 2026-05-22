@@ -1,4 +1,20 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.9...v0.11.10)
+
+### 🐛 Bug Fixes
+
+- **dns**: use domain-scoped resolvers and reconcile stale overrides ([9da592e](https://github.com/stacksjs/rpx/commit/9da592e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **scripts**: stop double-generating CHANGELOG on release ([43d0172](https://github.com/stacksjs/rpx/commit/43d0172)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.10 ([5002868](https://github.com/stacksjs/rpx/commit/5002868)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.8...v0.11.9)
 
 ### 🧹 Chores
