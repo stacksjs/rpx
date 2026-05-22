@@ -9,7 +9,38 @@ import * as process from 'node:process'
 import { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate as generateCert } from '@stacksjs/tlsx'
 import { log } from './logger'
 import { config } from './config'
+import {
+  MACOS_CA_TRUST_FLAGS,
+  MACOS_SYSTEM_KEYCHAIN,
+  getMacosLoginKeychainPath,
+  isRootCaFingerprintInKeychains,
+  isRootCaTrustedForSsl,
+  pruneStaleRootCas,
+  trustRootCaForBrowsers,
+} from './macos-trust'
 import { debugLog, execSudoSync, getPrimaryDomain, isMultiProxyConfig, isMultiProxyOptions, isSingleProxyOptions, isValidRootCA, safeDeleteFile } from './utils'
+
+export {
+  MACOS_CA_TRUST_FLAGS,
+  MACOS_SYSTEM_KEYCHAIN,
+  RPX_ROOT_CA_COMMON_NAME,
+  getMacosLoginKeychainPath,
+  getMacosTrustKeychains,
+  isRootCaFingerprintInKeychains,
+  isRootCaTrustedForSsl,
+  listCertSha256HashesByCommonName,
+  pruneStaleRootCas,
+  trustRootCaForBrowsers,
+} from './macos-trust'
+
+export {
+  certIncludesSanHostnames,
+  normalizeSha256Fingerprint,
+  parseSha256HashesFromSecurityListing,
+  readCertCommonName,
+  readCertSha256Fingerprint,
+  verifyHttpsChain,
+} from './cert-inspect'
 
 let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
 
@@ -31,6 +62,21 @@ export function getRootCAPaths(basePath: string): RootCAPaths {
   return {
     caCertPath: join(basePath, ROOT_CA_CERT_FILENAME),
     caKeyPath: join(basePath, ROOT_CA_KEY_FILENAME),
+  }
+}
+
+/** Paths for the shared multi-host daemon cert under `~/.stacks/ssl`. */
+export function getSharedDaemonCertPaths(sslDir: string): {
+  certPath: string
+  keyPath: string
+  caCertPath: string
+  rootCA: RootCAPaths
+} {
+  return {
+    certPath: join(sslDir, 'rpx.localhost.crt'),
+    keyPath: join(sslDir, 'rpx.localhost.key'),
+    caCertPath: join(sslDir, 'rpx.localhost.ca.crt'),
+    rootCA: getRootCAPaths(sslDir),
   }
 }
 
@@ -230,9 +276,12 @@ export async function loadSSLConfig(options: ProxyOption): Promise<SSLConfig | n
 /**
  * Force trust a certificate - exposing for direct use
  */
-export async function forceTrustCertificate(certPath: string): Promise<boolean> {
+export async function forceTrustCertificate(
+  certPath: string,
+  options?: { serverName?: string, verbose?: boolean },
+): Promise<boolean> {
   if (process.platform === 'darwin')
-    return forceTrustCertificateMacOS(certPath)
+    return forceTrustCertificateMacOS(certPath, options)
 
   if (process.platform === 'linux') {
     try {
@@ -270,37 +319,24 @@ export async function forceTrustCertificate(certPath: string): Promise<boolean> 
  * Force trust a certificate on macOS using direct security command
  * This function first checks if the certificate is already trusted to avoid unnecessary sudo prompts
  */
-async function forceTrustCertificateMacOS(certPath: string): Promise<boolean> {
+async function forceTrustCertificateMacOS(
+  certPath: string,
+  options?: { serverName?: string, verbose?: boolean },
+): Promise<boolean> {
   if (process.platform !== 'darwin')
     return false
 
+  const serverName = options?.serverName ?? 'rpx.localhost'
+  const verbose = options?.verbose ?? false
+
   try {
-    // First check if already trusted to avoid unnecessary sudo prompts
-    const alreadyTrusted = await isCertTrusted(certPath, { verbose: false, regenerateUntrustedCerts: true })
-    if (alreadyTrusted) {
-      debugLog('ssl', 'Certificate is already trusted, skipping trust operation', false)
+    if (isRootCaTrustedForSsl(certPath, serverName, { verbose })) {
+      debugLog('ssl', 'Root CA already trusted for SSL, skipping trust operation', verbose)
       return true
     }
 
-    debugLog('ssl', 'Trusting certificate via macOS security command', false)
-
-    // Login keychain — no sudo; Chrome/Arc often read this store on macOS.
-    const loginKeychain = join(homedir(), 'Library/Keychains/login.keychain-db')
-    try {
-      execSync(`security add-trusted-cert -d -r trustRoot -p ssl -p basic -k "${loginKeychain}" "${certPath}"`, { stdio: 'ignore' })
-      if (await isCertTrusted(certPath, { verbose: false, regenerateUntrustedCerts: true }))
-        return true
-    }
-    catch { /* fall through to system keychain */ }
-
-    // System keychain — requires sudo / SUDO_PASSWORD.
-    try {
-      execSudoSync(`security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${certPath}"`)
-      return await isCertTrusted(certPath, { verbose: false, regenerateUntrustedCerts: true })
-    }
-    catch {
-      return false
-    }
+    debugLog('ssl', 'Trusting Root CA for browsers (login + system keychains)', verbose)
+    return trustRootCaForBrowsers(certPath, { serverName, verbose })
   }
   catch {
     return false
@@ -413,7 +449,13 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
   // We install only the Root CA — host certs derive their trust from it.
   if (process.platform === 'darwin') {
     try {
-      execSudoSync(`security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"`)
+      pruneStaleRootCas({ caPath: rootCAPaths.caCertPath, verbose: options.verbose })
+      const loginKeychain = getMacosLoginKeychainPath()
+      try {
+        execSync(`security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k "${loginKeychain}" "${rootCAPaths.caCertPath}"`, { stdio: 'ignore' })
+      }
+      catch { /* login keychain optional */ }
+      execSudoSync(`security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"`)
       if (options.verbose)
         log.success('Successfully added Root CA to system trust store')
 
@@ -423,7 +465,7 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
       const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
 echo "Trusting RPX Root CA"
-sudo security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
+sudo security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
 echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
@@ -436,7 +478,7 @@ echo "If you still see certificate warnings, type 'thisisunsafe' on the warning 
       const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
 echo "Trusting RPX Root CA"
-sudo security add-trusted-cert -d -r trustRoot -p ssl -p basic -k /Library/Keychains/System.keychain "${rootCAPaths.caCertPath}"
+sudo security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
 echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
@@ -731,49 +773,18 @@ export async function cleanupCertificates(domain: string, verbose?: boolean): Pr
  * Checks if a certificate is trusted by the system (macOS only for now)
  * If options.regenerateUntrustedCerts is false, always returns true (skips trust check)
  */
-export async function isCertTrusted(certPath: string, options?: { verbose?: boolean, regenerateUntrustedCerts?: boolean }): Promise<boolean> {
+export async function isCertTrusted(
+  certPath: string,
+  options?: { verbose?: boolean, regenerateUntrustedCerts?: boolean, serverName?: string },
+): Promise<boolean> {
   try {
     debugLog('ssl', `Checking if certificate is trusted: ${certPath}`, options?.verbose)
 
     // Different check methods per platform
     if (process.platform === 'darwin') {
-      // On macOS, use the security command to check if the cert is trusted
-      try {
-        // Get certificate fingerprint
-        const certFingerprint = execSync(`openssl x509 -noout -fingerprint -sha256 -in "${certPath}"`).toString().trim()
-        const normalize = (raw: string) => raw.split('=').pop()!.replace(/SHA-256\s+hash:\s*/gi, '').replace(/:/g, '').trim().toUpperCase()
-        const fingerprintValue = normalize(certFingerprint)
-
-        if (!fingerprintValue) {
-          debugLog('ssl', 'Could not extract certificate fingerprint', options?.verbose)
-          return false
-        }
-
-        const keychains = [
-          '/Library/Keychains/System.keychain',
-          join(homedir(), 'Library/Keychains/login.keychain-db'),
-        ]
-
-        for (const keychain of keychains) {
-          try {
-            const listing = execSync(`security find-certificate -a -Z "${keychain}" 2>/dev/null || true`).toString()
-            for (const line of listing.split('\n')) {
-              if (line.toUpperCase().includes('SHA-256') && normalize(line) === fingerprintValue) {
-                debugLog('ssl', `Certificate fingerprint found in ${keychain}`, options?.verbose)
-                return true
-              }
-            }
-          }
-          catch { /* try next keychain */ }
-        }
-
-        debugLog('ssl', 'Certificate fingerprint not found in system keychains', options?.verbose)
-        return false
-      }
-      catch (error) {
-        debugLog('ssl', `Error checking certificate trust: ${error}`, options?.verbose)
-        return false
-      }
+      if (options?.serverName)
+        return isRootCaTrustedForSsl(certPath, options.serverName, { verbose: options.verbose })
+      return isRootCaFingerprintInKeychains(certPath, { verbose: options.verbose })
     }
     else if (process.platform === 'win32') {
       // On Windows, use PowerShell to check the certificate store

@@ -16,10 +16,34 @@ export {
   clearSslConfigCache,
   forceTrustCertificate,
   generateCertificate,
+  getRootCAPaths,
+  getSharedDaemonCertPaths,
   httpsConfig,
   isCertTrusted,
   loadSSLConfig,
 } from './https'
+
+export {
+  MACOS_CA_TRUST_FLAGS,
+  MACOS_SYSTEM_KEYCHAIN,
+  RPX_ROOT_CA_COMMON_NAME,
+  getMacosLoginKeychainPath,
+  getMacosTrustKeychains,
+  isRootCaFingerprintInKeychains,
+  isRootCaTrustedForSsl,
+  listCertSha256HashesByCommonName,
+  pruneStaleRootCas,
+  trustRootCaForBrowsers,
+} from './macos-trust'
+
+export {
+  certIncludesSanHostnames,
+  normalizeSha256Fingerprint,
+  parseSha256HashesFromSecurityListing,
+  readCertCommonName,
+  readCertSha256Fingerprint,
+  verifyHttpsChain,
+} from './cert-inspect'
 
 export { DefaultPortManager, findAvailablePort, isPortInUse, portManager } from './port-manager'
 

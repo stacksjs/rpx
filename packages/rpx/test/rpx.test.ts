@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { config } from '../src/config'
 import { addHosts, removeHosts } from '../src/hosts'
-import { httpsConfig } from '../src/https'
+import { trustRootCaForBrowsers } from '../src/macos-trust'
+import { httpsConfig, verifyHttpsChain } from '../src/https'
 import { DefaultPortManager, findAvailablePort, isPortInUse, portManager } from '../src/port-manager'
 import { cleanup, startProxies, startProxy } from '../src/start'
 import { extractHostname, getPrimaryDomain, isMultiProxyConfig, isSingleProxyConfig } from '../src/utils'
@@ -42,6 +43,10 @@ describe('@stacksjs/rpx', () => {
     // Check HTTPS configuration functions
     expect(httpsConfig).toBeDefined()
     expect(typeof httpsConfig).toBe('function')
+    expect(verifyHttpsChain).toBeDefined()
+    expect(typeof verifyHttpsChain).toBe('function')
+    expect(trustRootCaForBrowsers).toBeDefined()
+    expect(typeof trustRootCaForBrowsers).toBe('function')
 
     // Check port management functions
     expect(portManager).toBeDefined()
