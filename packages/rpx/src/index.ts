@@ -62,6 +62,34 @@ export {
 export type { RegistryEntry, WatchHandle, WatchOptions } from './registry'
 
 export {
+  DNS_PORT,
+  RPX_RESOLVER_MARKER,
+  contentLooksLikeRpxResolver,
+  isDnsServerRunning,
+  reconcileStaleDevelopmentDns,
+  removeLegacyTldResolvers,
+  removeResolver,
+  resolverFilePath,
+  setupDevelopmentDns,
+  setupResolver,
+  startDnsServer,
+  stopDnsServer,
+  syncDevelopmentDnsFromRegistry,
+  tearDownDevelopmentDns,
+} from './dns'
+
+export type { DevelopmentDnsOptions } from './dns'
+
+export {
+  DNS_STATE_VERSION,
+  LEGACY_TLD_RESOLVER_LABELS,
+  devDomainsFromHosts,
+  normalizeDevDomain,
+  resolverBasenameForDomain,
+  resolverBasenamesForDomains,
+} from './dns-state'
+
+export {
   acquireDaemonLock,
   defaultDaemonSpawnCommand,
   ensureDaemonRunning,
@@ -69,6 +97,7 @@ export {
   getDaemonRpxDir,
   isDaemonRunning,
   readDaemonPid,
+  reconcileDevelopmentDnsOnIdle,
   releaseDaemonLock,
   runDaemon,
   stopDaemon,

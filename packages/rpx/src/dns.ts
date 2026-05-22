@@ -1,12 +1,49 @@
 /**
- * Minimal DNS server for local development
- * Handles DNS queries for configured domains and responds with localhost IPs
+ * Local development DNS for macOS.
+ *
+ * Uses domain-scoped `/etc/resolver/<base-domain>` files (never whole-TLD hijacks like
+ * `/etc/resolver/com`) so real sites keep working when the rpx DNS server is down.
  */
 import dgram from 'node:dgram'
+import * as fsp from 'node:fs/promises'
+import * as path from 'node:path'
+import * as process from 'node:process'
+import type { RegistryEntry } from './registry'
+import { getDaemonRpxDir } from './daemon'
+import {
+  type DnsState,
+  DNS_STATE_VERSION,
+  devDomainsFromHosts,
+  LEGACY_TLD_RESOLVER_LABELS,
+  loadDnsState,
+  resolverBasenamesForDomains,
+  saveDnsState,
+  clearDnsState,
+} from './dns-state'
+import { isPidAlive } from './registry'
 import { debugLog } from './utils'
 
-// Use a high port that doesn't require root
-const DNS_PORT = 15353
+/** High port — does not require root. */
+export const DNS_PORT = 15353
+
+export const RPX_RESOLVER_MARKER = '# managed-by: rpx'
+
+const MACOS_RESOLVER_DIR = '/etc/resolver'
+
+export interface DevelopmentDnsOptions {
+  domains: string[]
+  rpxDir?: string
+  verbose?: boolean
+  /** Defaults to `process.pid` — stored so stale state can be reconciled after crashes. */
+  ownerPid?: number
+}
+
+let dnsServer: dgram.Socket | null = null
+let configuredDomains: Set<string> = new Set()
+
+// ---------------------------------------------------------------------------
+// DNS UDP server
+// ---------------------------------------------------------------------------
 
 interface DnsHeader {
   id: number
@@ -23,9 +60,6 @@ interface DnsQuestion {
   class: number
 }
 
-/**
- * Parse DNS header from buffer
- */
 function parseHeader(buffer: Buffer): DnsHeader {
   return {
     id: buffer.readUInt16BE(0),
@@ -37,9 +71,6 @@ function parseHeader(buffer: Buffer): DnsHeader {
   }
 }
 
-/**
- * Parse domain name from DNS message
- */
 function parseName(buffer: Buffer, offset: number): { name: string, newOffset: number } {
   const labels: string[] = []
   let currentOffset = offset
@@ -52,7 +83,6 @@ function parseName(buffer: Buffer, offset: number): { name: string, newOffset: n
       break
     }
 
-    // Check for pointer (compression)
     if ((length & 0xC0) === 0xC0) {
       const pointer = buffer.readUInt16BE(currentOffset) & 0x3FFF
       const { name } = parseName(buffer, pointer)
@@ -69,9 +99,6 @@ function parseName(buffer: Buffer, offset: number): { name: string, newOffset: n
   return { name: labels.join('.'), newOffset: currentOffset }
 }
 
-/**
- * Parse DNS question section
- */
 function parseQuestion(buffer: Buffer, offset: number): { question: DnsQuestion, newOffset: number } {
   const { name, newOffset } = parseName(buffer, offset)
   const type = buffer.readUInt16BE(newOffset)
@@ -83,9 +110,6 @@ function parseQuestion(buffer: Buffer, offset: number): { question: DnsQuestion,
   }
 }
 
-/**
- * Encode domain name for DNS response
- */
 function encodeName(name: string): Buffer {
   const labels = name.split('.')
   const parts: Buffer[] = []
@@ -94,87 +118,68 @@ function encodeName(name: string): Buffer {
     parts.push(Buffer.from([label.length]))
     parts.push(Buffer.from(label, 'ascii'))
   }
-  parts.push(Buffer.from([0])) // Null terminator
+  parts.push(Buffer.from([0]))
 
   return Buffer.concat(parts)
 }
 
-/**
- * Build DNS response
- */
-function buildResponse(
-  queryId: number,
-  question: DnsQuestion,
-  ip: string,
-): Buffer {
+function buildResponse(queryId: number, question: DnsQuestion, ip: string): Buffer {
   const parts: Buffer[] = []
 
-  // Header
   const header = Buffer.alloc(12)
-  header.writeUInt16BE(queryId, 0) // ID
-  header.writeUInt16BE(0x8180, 2) // Flags: Response, Authoritative, No error
-  header.writeUInt16BE(1, 4) // Questions: 1
-  header.writeUInt16BE(1, 6) // Answers: 1
-  header.writeUInt16BE(0, 8) // Authority: 0
-  header.writeUInt16BE(0, 10) // Additional: 0
+  header.writeUInt16BE(queryId, 0)
+  header.writeUInt16BE(0x8180, 2)
+  header.writeUInt16BE(1, 4)
+  header.writeUInt16BE(1, 6)
+  header.writeUInt16BE(0, 8)
+  header.writeUInt16BE(0, 10)
   parts.push(header)
 
-  // Question section (echo back)
   parts.push(encodeName(question.name))
   const qtype = Buffer.alloc(4)
   qtype.writeUInt16BE(question.type, 0)
   qtype.writeUInt16BE(question.class, 2)
   parts.push(qtype)
 
-  // Answer section
   parts.push(encodeName(question.name))
 
   const answer = Buffer.alloc(10)
-  answer.writeUInt16BE(question.type, 0) // Type
-  answer.writeUInt16BE(1, 2) // Class: IN
-  answer.writeUInt32BE(300, 4) // TTL: 5 minutes
+  answer.writeUInt16BE(question.type, 0)
+  answer.writeUInt16BE(1, 2)
+  answer.writeUInt32BE(300, 4)
 
   if (question.type === 1) {
-    // A record (IPv4)
-    answer.writeUInt16BE(4, 8) // Data length
+    answer.writeUInt16BE(4, 8)
     parts.push(answer)
     const ipParts = ip.split('.').map(p => Number.parseInt(p, 10))
     parts.push(Buffer.from(ipParts))
   }
   else if (question.type === 28) {
-    // AAAA record (IPv6)
-    answer.writeUInt16BE(16, 8) // Data length
+    answer.writeUInt16BE(16, 8)
     parts.push(answer)
-    // ::1 as bytes
     parts.push(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]))
   }
   else {
-    // Unsupported type - return NXDOMAIN
-    header.writeUInt16BE(0x8183, 2) // Flags with NXDOMAIN
-    header.writeUInt16BE(0, 6) // No answers
+    header.writeUInt16BE(0x8183, 2)
+    header.writeUInt16BE(0, 6)
     return Buffer.concat([header, encodeName(question.name), qtype])
   }
 
   return Buffer.concat(parts)
 }
 
-/**
- * Build NXDOMAIN response for unknown domains
- */
 function buildNxdomainResponse(queryId: number, question: DnsQuestion): Buffer {
   const parts: Buffer[] = []
 
-  // Header with NXDOMAIN
   const header = Buffer.alloc(12)
-  header.writeUInt16BE(queryId, 0) // ID
-  header.writeUInt16BE(0x8183, 2) // Flags: Response, Authoritative, NXDOMAIN
-  header.writeUInt16BE(1, 4) // Questions: 1
-  header.writeUInt16BE(0, 6) // Answers: 0
-  header.writeUInt16BE(0, 8) // Authority: 0
-  header.writeUInt16BE(0, 10) // Additional: 0
+  header.writeUInt16BE(queryId, 0)
+  header.writeUInt16BE(0x8183, 2)
+  header.writeUInt16BE(1, 4)
+  header.writeUInt16BE(0, 6)
+  header.writeUInt16BE(0, 8)
+  header.writeUInt16BE(0, 10)
   parts.push(header)
 
-  // Question section (echo back)
   parts.push(encodeName(question.name))
   const qtype = Buffer.alloc(4)
   qtype.writeUInt16BE(question.type, 0)
@@ -184,28 +189,28 @@ function buildNxdomainResponse(queryId: number, question: DnsQuestion): Buffer {
   return Buffer.concat(parts)
 }
 
-let dnsServer: dgram.Socket | null = null
-let configuredDomains: Set<string> = new Set()
-
-/**
- * Start the DNS server
- */
 export async function startDnsServer(domains: string[], verbose?: boolean): Promise<boolean> {
+  if (process.platform !== 'darwin')
+    return false
+
+  const devDomains = devDomainsFromHosts(domains)
+  if (devDomains.length === 0)
+    return false
+
   if (dnsServer) {
-    debugLog('dns', 'DNS server already running', verbose)
+    for (const d of devDomains)
+      configuredDomains.add(d)
+    debugLog('dns', 'DNS server already running — merged domains', verbose)
     return true
   }
 
-  configuredDomains = new Set(domains.map(d => d.toLowerCase()))
+  configuredDomains = new Set(devDomains)
 
   return new Promise((resolve) => {
     dnsServer = dgram.createSocket('udp4')
 
     dnsServer.on('error', (err) => {
       debugLog('dns', `DNS server error: ${err.message}`, verbose)
-      if (err.message.includes('EACCES') || err.message.includes('permission')) {
-        debugLog('dns', 'DNS server requires root privileges to bind to port 53', verbose)
-      }
       dnsServer?.close()
       dnsServer = null
       resolve(false)
@@ -218,7 +223,6 @@ export async function startDnsServer(domains: string[], verbose?: boolean): Prom
 
         debugLog('dns', `Query for ${question.name} type ${question.type} from ${rinfo.address}`, verbose)
 
-        // Check if this domain should be handled
         const domainLower = question.name.toLowerCase()
         let shouldHandle = false
 
@@ -228,8 +232,6 @@ export async function startDnsServer(domains: string[], verbose?: boolean): Prom
             break
           }
         }
-
-        // Note: Only configured domains are handled, no hardcoded TLDs
 
         let response: Buffer
         if (shouldHandle && (question.type === 1 || question.type === 28)) {
@@ -254,7 +256,6 @@ export async function startDnsServer(domains: string[], verbose?: boolean): Prom
       resolve(true)
     })
 
-    // Try to bind to port 53 with sudo
     try {
       dnsServer.bind(DNS_PORT, '127.0.0.1')
     }
@@ -265,106 +266,103 @@ export async function startDnsServer(domains: string[], verbose?: boolean): Prom
   })
 }
 
-/**
- * Stop the DNS server
- */
 export function stopDnsServer(verbose?: boolean): void {
   if (dnsServer) {
     debugLog('dns', 'Stopping DNS server', verbose)
     dnsServer.close()
     dnsServer = null
+    configuredDomains = new Set()
   }
 }
 
-/**
- * Check if DNS server is running
- */
 export function isDnsServerRunning(): boolean {
   return dnsServer !== null
 }
 
-/**
- * Extract unique TLDs from domain list
- */
-function extractTLDs(domains: string[]): string[] {
-  const tlds = new Set<string>()
-  for (const domain of domains) {
-    const parts = domain.split('.')
-    if (parts.length >= 2) {
-      tlds.add(parts[parts.length - 1])
-    }
-  }
-  return Array.from(tlds)
+// ---------------------------------------------------------------------------
+// macOS resolver files
+// ---------------------------------------------------------------------------
+
+function resolverFileContent(): string {
+  return `${RPX_RESOLVER_MARKER}\nnameserver 127.0.0.1\nport ${DNS_PORT}\n`
 }
 
-// Track which TLDs we've created resolvers for
-const createdResolvers = new Set<string>()
+export function resolverFilePath(basename: string): string {
+  return path.join(MACOS_RESOLVER_DIR, basename)
+}
 
-/**
- * Flush macOS DNS cache to ensure resolver changes take effect
- */
-async function flushDnsCache(verbose?: boolean): Promise<void> {
-  if (process.platform !== 'darwin') {
-    return
+/** True when a resolver file points at the rpx local DNS port. */
+export function contentLooksLikeRpxResolver(content: string): boolean {
+  return content.includes('127.0.0.1') && content.includes(String(DNS_PORT))
+}
+
+async function readResolverFile(basename: string): Promise<string | null> {
+  try {
+    return await fsp.readFile(resolverFilePath(basename), 'utf8')
   }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT')
+      return null
+    throw err
+  }
+}
+
+async function flushDnsCache(verbose?: boolean): Promise<void> {
+  if (process.platform !== 'darwin')
+    return
 
   const { execSudoSync, getSudoPassword } = await import('./utils')
-  const sudoPassword = getSudoPassword()
 
-  if (!sudoPassword) {
+  if (!getSudoPassword()) {
     debugLog('dns', 'Cannot flush DNS cache without SUDO_PASSWORD', verbose)
     return
   }
 
   try {
-    // Flush DNS cache and restart mDNSResponder
     execSudoSync('dscacheutil -flushcache')
     execSudoSync('killall -HUP mDNSResponder 2>/dev/null || true')
     debugLog('dns', 'DNS cache flushed', verbose)
   }
   catch (err) {
-    // Non-fatal - DNS cache flush failure shouldn't block startup
     debugLog('dns', `Could not flush DNS cache: ${err}`, verbose)
   }
 }
 
+async function writeResolverFile(basename: string, verbose?: boolean): Promise<void> {
+  const { execSudoSync } = await import('./utils')
+  const content = resolverFileContent().replace(/\n/g, '\\n')
+  const cmd = `bash -c 'mkdir -p ${MACOS_RESOLVER_DIR} && printf "%b" "${content}" > ${resolverFilePath(basename)}'`
+  execSudoSync(cmd)
+  debugLog('dns', `Created ${resolverFilePath(basename)}`, verbose)
+}
+
+async function removeResolverFile(basename: string, verbose?: boolean): Promise<void> {
+  const { execSudoSync } = await import('./utils')
+  execSudoSync(`rm -f ${resolverFilePath(basename)}`)
+  debugLog('dns', `Removed ${resolverFilePath(basename)}`, verbose)
+}
+
 /**
- * Set up the macOS resolver for configured domains
- * Creates /etc/resolver/<tld> files pointing to our local DNS server
+ * @deprecated Use {@link setupDevelopmentDns}. Domain-scoped resolver files only.
  */
 export async function setupResolver(verbose?: boolean, domains?: string[]): Promise<boolean> {
-  if (process.platform !== 'darwin') {
-    debugLog('dns', 'Resolver setup only needed on macOS', verbose)
+  return setupDevelopmentDns({ domains: domains ?? [], verbose })
+}
+
+async function installResolvers(basenames: string[], verbose?: boolean): Promise<boolean> {
+  if (process.platform !== 'darwin')
     return true
-  }
 
-  const { execSudoSync, getSudoPassword } = await import('./utils')
-  const sudoPassword = getSudoPassword()
-
-  if (!sudoPassword) {
+  const { getSudoPassword } = await import('./utils')
+  if (!getSudoPassword()) {
     debugLog('dns', 'SUDO_PASSWORD not set, cannot create resolver files', verbose)
     return false
   }
 
-  // Get TLDs from configured domains
-  const tlds = domains ? extractTLDs(domains) : ['test']
-
   try {
-    for (const tld of tlds) {
-      if (createdResolvers.has(tld)) {
-        continue
-      }
-
-      // Use bash -c to properly handle the echo with newlines
-      const cmd = `bash -c 'mkdir -p /etc/resolver && echo -e "nameserver 127.0.0.1\\nport ${DNS_PORT}" > /etc/resolver/${tld}'`
-      execSudoSync(cmd)
-      createdResolvers.add(tld)
-      debugLog('dns', `Created /etc/resolver/${tld} for .${tld} TLD`, verbose)
-    }
-
-    // Flush DNS cache to ensure new resolver files take effect immediately
+    for (const basename of basenames)
+      await writeResolverFile(basename, verbose)
     await flushDnsCache(verbose)
-
     return true
   }
   catch (err) {
@@ -373,27 +371,139 @@ export async function setupResolver(verbose?: boolean, domains?: string[]): Prom
   }
 }
 
-/**
- * Remove the macOS resolver files we created
- */
-export async function removeResolver(verbose?: boolean): Promise<void> {
-  if (process.platform !== 'darwin') {
+async function uninstallResolvers(basenames: string[], verbose?: boolean): Promise<void> {
+  if (process.platform !== 'darwin')
     return
-  }
 
-  const { execSudoSync, getSudoPassword } = await import('./utils')
+  const { getSudoPassword } = await import('./utils')
+  if (!getSudoPassword())
+    return
 
   try {
-    const sudoPassword = getSudoPassword()
-    if (sudoPassword) {
-      for (const tld of createdResolvers) {
-        execSudoSync(`rm -f /etc/resolver/${tld}`)
-        debugLog('dns', `Removed /etc/resolver/${tld}`, verbose)
-      }
-      createdResolvers.clear()
-    }
+    for (const basename of basenames)
+      await removeResolverFile(basename, verbose)
+    await flushDnsCache(verbose)
   }
   catch (err) {
     debugLog('dns', `Failed to remove resolver files: ${err}`, verbose)
   }
+}
+
+/** Remove legacy whole-TLD resolver files (e.g. `/etc/resolver/com`). */
+export async function removeLegacyTldResolvers(verbose?: boolean): Promise<string[]> {
+  if (process.platform !== 'darwin')
+    return []
+
+  const removed: string[] = []
+  for (const label of LEGACY_TLD_RESOLVER_LABELS) {
+    const content = await readResolverFile(label)
+    if (content && contentLooksLikeRpxResolver(content)) {
+      await uninstallResolvers([label], verbose)
+      removed.push(label)
+    }
+  }
+  return removed
+}
+
+/**
+ * Start the local DNS server and install domain-scoped macOS resolver files.
+ */
+export async function setupDevelopmentDns(opts: DevelopmentDnsOptions): Promise<boolean> {
+  const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
+  const domains = devDomainsFromHosts(opts.domains)
+  if (domains.length === 0)
+    return false
+
+  const basenames = resolverBasenamesForDomains(domains)
+  const started = await startDnsServer(domains, opts.verbose)
+  if (!started)
+    return false
+
+  const installed = await installResolvers(basenames, opts.verbose)
+  if (!installed)
+    return false
+
+  const state: DnsState = {
+    version: DNS_STATE_VERSION,
+    resolvers: basenames,
+    domains,
+    ownerPid: opts.ownerPid ?? process.pid,
+    updatedAt: new Date().toISOString(),
+  }
+  await saveDnsState(rpxDir, state)
+  return true
+}
+
+/**
+ * Sync resolver + DNS state to the current set of registry hosts (daemon mode).
+ */
+export async function syncDevelopmentDnsFromRegistry(
+  entries: RegistryEntry[],
+  opts: { rpxDir?: string, verbose?: boolean, ownerPid?: number } = {},
+): Promise<void> {
+  const domains = entries.map(e => e.to).filter(Boolean)
+  const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
+  const wanted = resolverBasenamesForDomains(domains)
+  const state = await loadDnsState(rpxDir)
+  const previous = state?.resolvers ?? []
+  const toRemove = previous.filter(b => !wanted.includes(b))
+
+  if (toRemove.length > 0)
+    await uninstallResolvers(toRemove, opts.verbose)
+
+  if (wanted.length === 0) {
+    stopDnsServer(opts.verbose)
+    await clearDnsState(rpxDir)
+    return
+  }
+
+  await setupDevelopmentDns({
+    domains,
+    rpxDir,
+    verbose: opts.verbose,
+    ownerPid: opts.ownerPid ?? process.pid,
+  })
+}
+
+/**
+ * Stop DNS and remove all resolver files recorded in state (plus legacy TLD files).
+ */
+export async function tearDownDevelopmentDns(opts: { rpxDir?: string, verbose?: boolean } = {}): Promise<void> {
+  const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
+  stopDnsServer(opts.verbose)
+
+  const state = await loadDnsState(rpxDir)
+  const fromState = state?.resolvers ?? []
+  await uninstallResolvers(fromState, opts.verbose)
+  await removeLegacyTldResolvers(opts.verbose)
+  await clearDnsState(rpxDir)
+}
+
+/**
+ * @deprecated Use {@link tearDownDevelopmentDns}.
+ */
+export async function removeResolver(verbose?: boolean): Promise<void> {
+  await tearDownDevelopmentDns({ verbose })
+}
+
+/**
+ * Remove stale DNS overrides left after a crashed dev session or legacy TLD hijacks.
+ * Safe to call before starting the daemon or `./buddy dev`.
+ */
+export async function reconcileStaleDevelopmentDns(opts: { rpxDir?: string, verbose?: boolean } = {}): Promise<void> {
+  const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
+  const state = await loadDnsState(rpxDir)
+  const ownerAlive = state?.ownerPid != null && isPidAlive(state.ownerPid)
+
+  if (state && !ownerAlive) {
+    debugLog('dns', `reconcile: owner pid ${state.ownerPid} is gone — tearing down DNS`, opts.verbose)
+    await tearDownDevelopmentDns(opts)
+    return
+  }
+
+  const legacyRemoved = await removeLegacyTldResolvers(opts.verbose)
+  if (legacyRemoved.length > 0)
+    debugLog('dns', `reconcile: removed legacy TLD resolvers: ${legacyRemoved.join(', ')}`, opts.verbose)
+
+  await flushDnsCache(opts.verbose)
 }

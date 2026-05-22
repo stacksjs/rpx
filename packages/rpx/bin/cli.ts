@@ -9,9 +9,11 @@ import {
   getDaemonRpxDir,
   isDaemonRunning,
   readDaemonPid,
+  reconcileDevelopmentDnsOnIdle,
   runDaemon,
   stopDaemon,
 } from '../src/daemon'
+import { reconcileStaleDevelopmentDns } from '../src/dns'
 import { processManager } from '../src/process-manager'
 import {
   getRegistryDir,
@@ -373,6 +375,20 @@ cli
     }
     await removeEntry(id, opts.registryDir, opts.verbose)
     console.log(`unregistered ${existing.to} (id=${id})`)
+  })
+
+cli
+  .command('dns:reconcile', 'Remove stale macOS DNS overrides left by crashed dev sessions')
+  .option('--rpx-dir <path>', 'Override the rpx state dir (default ~/.stacks/rpx)')
+  .option('--verbose', 'Enable verbose logging')
+  .action(async (opts: { rpxDir?: string, verbose?: boolean }) => {
+    const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
+    if (await isDaemonRunning(rpxDir)) {
+      console.log('rpx daemon is running — DNS overrides are managed by the daemon')
+      return
+    }
+    await reconcileDevelopmentDnsOnIdle({ rpxDir, verbose: opts.verbose })
+    console.log('DNS reconcile complete')
   })
 
 cli.command('version', 'Show the version of the Reverse Proxy CLI').action(() => {

@@ -28,6 +28,11 @@ import { checkExistingCertificates, generateCertificate } from './https'
 import { createProxyFetchHandler } from './proxy-handler'
 import { gcStaleEntries, getRegistryDir, isPidAlive, readAll, watchRegistry } from './registry'
 import type { RegistryEntry } from './registry'
+import {
+  reconcileStaleDevelopmentDns,
+  syncDevelopmentDnsFromRegistry,
+  tearDownDevelopmentDns,
+} from './dns'
 import { debugLog } from './utils'
 
 export interface DaemonOptions {
@@ -236,7 +241,15 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   await gcStaleEntries(registryDir, verbose).catch((err) => {
     debugLog('daemon', `initial gc failed: ${err}`, verbose)
   })
-  rebuild(await readAll(registryDir, verbose))
+  const initialEntries = await readAll(registryDir, verbose)
+  rebuild(initialEntries)
+
+  await reconcileStaleDevelopmentDns({ rpxDir, verbose }).catch((err) => {
+    debugLog('daemon', `DNS reconcile on start failed: ${err}`, verbose)
+  })
+  await syncDevelopmentDnsFromRegistry(initialEntries, { rpxDir, verbose, ownerPid: process.pid }).catch((err) => {
+    debugLog('daemon', `DNS setup on start failed: ${err}`, verbose)
+  })
 
   const sslConfig = await bootstrapTls(opts, registryDir)
 
@@ -280,7 +293,12 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   }
 
   const watcher = watchRegistry(
-    (entries) => { rebuild(entries) },
+    (entries) => {
+      rebuild(entries)
+      syncDevelopmentDnsFromRegistry(entries, { rpxDir, verbose, ownerPid: process.pid }).catch((err) => {
+        debugLog('daemon', `DNS sync on registry change failed: ${err}`, verbose)
+      })
+    },
     { dir: registryDir, verbose },
   )
 
@@ -311,6 +329,9 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     // `stop(false)` lets in-flight requests drain before closing the listener.
     httpsServer.stop(false)
     httpServer?.stop(false)
+    await tearDownDevelopmentDns({ rpxDir, verbose }).catch((err) => {
+      debugLog('daemon', `DNS teardown failed: ${err}`, verbose)
+    })
     await releaseDaemonLock(rpxDir)
     if (verbose)
       log.info('rpx daemon stopped')
@@ -390,6 +411,10 @@ export function defaultDaemonSpawnCommand(): string[] {
 export async function ensureDaemonRunning(opts: EnsureDaemonOptions = {}): Promise<EnsureDaemonResult> {
   const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
   const verbose = opts.verbose ?? false
+
+  await reconcileStaleDevelopmentDns({ rpxDir, verbose }).catch((err) => {
+    debugLog('daemon', `DNS reconcile before ensureDaemonRunning: ${err}`, verbose)
+  })
 
   const existingPid = await readDaemonPid(rpxDir)
   if (existingPid !== null && isPidAlive(existingPid)) {
@@ -477,6 +502,7 @@ export async function stopDaemon(opts: StopDaemonOptions = {}): Promise<StopDaem
   if (pid === null || !isPidAlive(pid)) {
     if (pid !== null)
       await releaseDaemonLock(rpxDir)
+    await reconcileStaleDevelopmentDns({ rpxDir, verbose }).catch(() => {})
     return { stopped: false, pid, forced: false }
   }
 
@@ -514,5 +540,18 @@ export async function stopDaemon(opts: StopDaemonOptions = {}): Promise<StopDaem
   }
   // SIGKILL bypasses the cleanup handler, so remove the pid file ourselves.
   await releaseDaemonLock(rpxDir)
+  await tearDownDevelopmentDns({ rpxDir, verbose }).catch((err) => {
+    debugLog('daemon', `DNS teardown after SIGKILL: ${err}`, verbose)
+  })
   return { stopped: true, pid, forced: true }
+}
+
+/**
+ * When the daemon is not running, ensure no stale macOS resolver overrides remain.
+ */
+export async function reconcileDevelopmentDnsOnIdle(opts: { rpxDir?: string, verbose?: boolean } = {}): Promise<void> {
+  const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
+  if (await isDaemonRunning(rpxDir))
+    return
+  await reconcileStaleDevelopmentDns({ rpxDir, verbose: opts.verbose })
 }

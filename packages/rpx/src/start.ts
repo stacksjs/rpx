@@ -877,10 +877,10 @@ export function startProxy(options: ProxyOption): void {
   }
 
   if (isCustomDomain) {
-    import('./dns').then(({ startDnsServer, setupResolver }) => {
-      startDnsServer([targetDomain], mergedOptions.verbose).then((started) => {
+    import('./dns').then(({ setupDevelopmentDns }) => {
+      setupDevelopmentDns({ domains: [targetDomain], verbose: mergedOptions.verbose }).then((started) => {
         if (started) {
-          setupResolver(mergedOptions.verbose, [targetDomain]).then(() => {
+          Promise.resolve().then(() => {
             if (mergedOptions.verbose) {
               if (reservedTlds.includes(tld)) {
                 log.success(`DNS server started for .${tld} domains`)
@@ -1152,10 +1152,9 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   }
 
   if (process.platform === 'darwin' && customDomains.length > 0) {
-    const { startDnsServer, setupResolver } = await import('./dns')
-    const dnsStarted = await startDnsServer(customDomains, verbose)
+    const { setupDevelopmentDns } = await import('./dns')
+    const dnsStarted = await setupDevelopmentDns({ domains: customDomains, verbose })
     if (dnsStarted) {
-      await setupResolver(verbose, customDomains)
       if (verbose) {
         const hasReservedOnly = uniqueTlds.every((t): t is string => !!t && reservedTlds.includes(t as string))
         if (hasReservedOnly) {
@@ -1177,9 +1176,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
     try {
       // Stop DNS server
-      const { stopDnsServer, removeResolver } = await import('./dns')
-      stopDnsServer(mergedOptions.verbose)
-      await removeResolver(mergedOptions.verbose)
+      const { tearDownDevelopmentDns } = await import('./dns')
+      await tearDownDevelopmentDns({ verbose: mergedOptions.verbose })
     }
     catch (err) {
       debugLog('cleanup', `Error stopping DNS server: ${err}`, mergedOptions.verbose)
