@@ -1,4 +1,40 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.7...v0.11.8)
+
+### 🚀 Features
+
+- **daemon-runner**: add persistent registry entries and spawn options ([6b762ab](https://github.com/stacksjs/rpx/commit/6b762ab)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **daemon**: bootstrap TLS from registry with app hostname as CN ([1eb5ac3](https://github.com/stacksjs/rpx/commit/1eb5ac3)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **https**: improve local CA trust and certificate reuse on macOS ([1ff9b1d](https://github.com/stacksjs/rpx/commit/1ff9b1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **build**: stop prepending a second shebang to the cli bundle ([ea77504](https://github.com/stacksjs/rpx/commit/ea77504)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.8 ([e36169d](https://github.com/stacksjs/rpx/commit/e36169d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.7...HEAD)
+
+### 🚀 Features
+
+- **daemon-runner**: add persistent registry entries and spawn options ([6b762ab](https://github.com/stacksjs/rpx/commit/6b762ab)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🐛 Bug Fixes
+
+- **daemon**: bootstrap TLS from registry with app hostname as CN ([1eb5ac3](https://github.com/stacksjs/rpx/commit/1eb5ac3)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **https**: improve local CA trust and certificate reuse on macOS ([1ff9b1d](https://github.com/stacksjs/rpx/commit/1ff9b1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **build**: stop prepending a second shebang to the cli bundle ([ea77504](https://github.com/stacksjs/rpx/commit/ea77504)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.6...v0.11.7)
 
 ### 🐛 Bug Fixes
