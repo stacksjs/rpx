@@ -1,4 +1,25 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.8...v0.11.9)
+
+### 🧹 Chores
+
+- release v0.11.9 ([2dc9e6c](https://github.com/stacksjs/rpx/commit/2dc9e6c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- improve macos support ([f7b7263](https://github.com/stacksjs/rpx/commit/f7b7263)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.8...HEAD)
+
+### 🧹 Chores
+
+- improve macos support ([f7b7263](https://github.com/stacksjs/rpx/commit/f7b7263)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.7...v0.11.8)
 
 ### 🚀 Features
