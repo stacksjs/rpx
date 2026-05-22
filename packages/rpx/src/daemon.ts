@@ -156,16 +156,38 @@ function entryToRoute(entry: RegistryEntry): ProxyRoute {
  * Bootstrap the daemon's TLS material. Reuses the persisted Root CA and any
  * existing trusted host cert; mints fresh ones if none exist.
  *
- * The host cert is issued with the standard `*.localhost` SAN list (set by
- * `httpsConfig` via `getAllDomains`), so every `<app>.localhost` route is
- * covered without needing to regenerate when apps register.
+ * The host cert SAN list includes every hostname in the registry (e.g.
+ * `postline.localhost`, `api.postline.localhost`). Chrome does not treat
+ * `*.localhost` as matching `<app>.localhost`, so those names must be explicit.
  */
-async function bootstrapTls(opts: DaemonOptions): Promise<SSLConfig> {
+function pickPrimaryRegistryHost(hosts: string[]): string {
+  const appHost = hosts.find(h => !/^api\./.test(h) && !/^docs\./.test(h) && !/^dashboard\./.test(h))
+  return appHost ?? hosts[0] ?? 'rpx.localhost'
+}
+
+async function bootstrapTls(opts: DaemonOptions, registryDir: string): Promise<SSLConfig> {
+  const entries = await readAll(registryDir, opts.verbose)
+  const registryHosts = [...new Set(entries.map(e => e.to))]
+  const primary = pickPrimaryRegistryHost(registryHosts)
+  const hostnames = [...new Set([primary, ...registryHosts, 'rpx.localhost'])]
+
+  const sslDir = path.join(homedir(), '.stacks', 'ssl')
+  const sharedCert = path.join(sslDir, 'rpx.localhost.crt')
+
   const proxyOpts: ProxyOptions = {
-    https: opts.https ?? true,
-    to: 'rpx.localhost',
+    https: typeof opts.https === 'object'
+      ? { ...opts.https, certPath: sharedCert, keyPath: path.join(sslDir, 'rpx.localhost.key'), commonName: primary }
+      : {
+          certPath: sharedCert,
+          keyPath: path.join(sslDir, 'rpx.localhost.key'),
+          caCertPath: path.join(sslDir, 'rpx.localhost.ca.crt'),
+          commonName: primary,
+        },
     verbose: opts.verbose,
     regenerateUntrustedCerts: true,
+    ...(hostnames.length > 1
+      ? { proxies: hostnames.map(to => ({ from: 'localhost:1', to })) }
+      : { to: primary, from: 'localhost:1' }),
   }
 
   let sslConfig = await checkExistingCertificates(proxyOpts)
@@ -216,7 +238,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   })
   rebuild(await readAll(registryDir, verbose))
 
-  const sslConfig = await bootstrapTls(opts)
+  const sslConfig = await bootstrapTls(opts, registryDir)
 
   const httpsServer = Bun.serve({
     port: httpsPort,
