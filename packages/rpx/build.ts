@@ -1,5 +1,5 @@
 import { dts } from 'bun-plugin-dtsx'
-import { chmod, readFile, writeFile } from 'node:fs/promises'
+import { chmod } from 'node:fs/promises'
 
 console.log('Building...')
 
@@ -22,11 +22,6 @@ await Bun.build({
   banner: '#!/usr/bin/env bun',
 })
 
-const cliPath = './dist/bin/cli.js'
-const cli = await readFile(cliPath, 'utf8')
-if (!cli.startsWith('#!')) {
-  await writeFile(cliPath, `#!/usr/bin/env bun\n${cli}`)
-}
-await chmod(cliPath, 0o755)
+await chmod('./dist/bin/cli.js', 0o755)
 
 console.log('Built')
