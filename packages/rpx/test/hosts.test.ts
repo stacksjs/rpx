@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import * as hostsModule from '../src/hosts'
+import { isLoopbackDevelopmentHost } from '../src/hosts'
+
+describe('isLoopbackDevelopmentHost', () => {
+  it('treats RFC 6761 .localhost names as loopback dev hosts', () => {
+    expect(isLoopbackDevelopmentHost('nsdap-registry.localhost')).toBe(true)
+    expect(isLoopbackDevelopmentHost('api.foo.localhost.')).toBe(true)
+    expect(isLoopbackDevelopmentHost('localhost')).toBe(true)
+    expect(isLoopbackDevelopmentHost('example.test')).toBe(false)
+  })
+})
 
 // Mock the entire module to avoid making actual system changes
 describe('hosts', () => {

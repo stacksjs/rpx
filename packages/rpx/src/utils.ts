@@ -28,7 +28,13 @@ export function execSudoSync(command: string): string {
     })
   }
 
-  return execSync(`sudo sh -c '${escaped}'`, { encoding: 'utf-8' })
+  // Never block on an interactive password prompt — dev servers must start headlessly.
+  try {
+    return execSync(`sudo -n sh -c '${escaped}'`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
+  }
+  catch {
+    throw new Error('sudo required but no cached credentials (set SUDO_PASSWORD in .env or run sudo -v)')
+  }
 }
 
 export function debugLog(category: string, message: string, verbose?: boolean): void {

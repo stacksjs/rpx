@@ -1,6 +1,11 @@
 #!/usr/bin/env bun
 import type { BaseProxyConfig, ProxyOption, StartOptions } from '../src/types'
+import { dirname, join } from 'node:path'
 import * as process from 'node:process'
+import { fileURLToPath } from 'node:url'
+
+// Avoid loading a Stacks app's bunfig/preloader when invoked from a project cwd.
+process.chdir(join(dirname(fileURLToPath(import.meta.url)), '..'))
 import { CLI } from '@stacksjs/clapp'
 import { config } from '../src/config'
 import {

@@ -8,6 +8,14 @@ import { debugLog, getSudoPassword } from './utils'
 
 const execAsync = promisify(exec)
 
+/** `.localhost` names resolve to loopback per RFC 6761 — no /etc/hosts entry needed. */
+export function isLoopbackDevelopmentHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase()
+  return normalized === 'localhost'
+    || normalized.endsWith('.localhost')
+    || normalized.endsWith('.localhost.')
+}
+
 export const hostsFilePath: string = process.platform === 'win32'
   ? path.join(process.env.windir || 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
   : '/etc/hosts'
@@ -42,9 +50,14 @@ async function execSudo(command: string): Promise<string> {
       }
     }
 
-    const { stdout } = await execAsync(`sudo sh -c '${escaped}'`)
-    sudoPrivilegesAcquired = true
-    return stdout
+    try {
+      const { stdout } = await execAsync(`sudo -n sh -c '${escaped}'`)
+      sudoPrivilegesAcquired = true
+      return stdout
+    }
+    catch {
+      throw new Error('sudo required but no cached credentials (set SUDO_PASSWORD in .env or run sudo -v)')
+    }
   }
   catch (error) {
     throw new Error(`Failed to execute sudo command: ${(error as Error).message}`)
@@ -52,7 +65,15 @@ async function execSudo(command: string): Promise<string> {
 }
 
 export async function addHosts(hosts: string[], verbose?: boolean): Promise<void> {
-  debugLog('hosts', `Adding hosts: ${hosts.join(', ')}`, verbose)
+  const needsHostsFile = hosts.filter(h => !isLoopbackDevelopmentHost(h))
+  const skipped = hosts.filter(h => isLoopbackDevelopmentHost(h))
+  if (skipped.length > 0) {
+    debugLog('hosts', `Skipping /etc/hosts for loopback dev names: ${skipped.join(', ')}`, verbose)
+  }
+  if (needsHostsFile.length === 0)
+    return
+
+  debugLog('hosts', `Adding hosts: ${needsHostsFile.join(', ')}`, verbose)
   debugLog('hosts', `Using hosts file at: ${hostsFilePath}`, verbose)
 
   try {
@@ -76,7 +97,7 @@ export async function addHosts(hosts: string[], verbose?: boolean): Promise<void
     }
 
     // Prepare new entries, only including those that don't exist
-    const newEntries = hosts.filter((host) => {
+    const newEntries = needsHostsFile.filter((host) => {
       const ipv4Entry = `127.0.0.1 ${host}`
       const ipv6Entry = `::1 ${host}`
       return !existingContent.includes(ipv4Entry) && !existingContent.includes(ipv6Entry)
