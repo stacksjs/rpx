@@ -207,6 +207,87 @@ async function bootstrapTls(opts: DaemonOptions, registryDir: string): Promise<S
 }
 
 /**
+ * Binding :443/:80 requires root. When the daemon is launched as a normal user
+ * (the common case — `./buddy dev`), re-exec it through `sudo` so the elevated
+ * copy can bind the privileged ports. HOME/PATH are forwarded explicitly (via
+ * `env`) so the root daemon reads the *user's* `~/.stacks/rpx` state, certs and
+ * registry instead of root's home. The password is fed on stdin only — never
+ * placed in argv — so it can't leak via `ps`, and the root daemon doesn't need
+ * it (it can already sudo).
+ *
+ * Returns a launcher handle: this unprivileged process has done its job once
+ * the elevated daemon has written its pid, so `done` resolves immediately and
+ * the launcher exits, leaving the root daemon running independently (its pid
+ * file is how everyone else finds it).
+ */
+async function elevateDaemonToRoot(
+  rpxDir: string,
+  httpsPort: number,
+  httpPort: number,
+  verbose: boolean,
+): Promise<DaemonHandle> {
+  const sudoPassword = process.env.SUDO_PASSWORD
+  const home = process.env.HOME ?? homedir()
+  const inner = [process.execPath, ...process.argv.slice(1)]
+  const forwardedEnv = [`HOME=${home}`, `PATH=${process.env.PATH ?? ''}`]
+  if (verbose)
+    forwardedEnv.push('RPX_VERBOSE=1')
+
+  // `sudo -S` reads the password from stdin; `-n` (no password) relies on a
+  // cached credential. Either way we never block on an interactive prompt.
+  const sudoArgs = sudoPassword
+    ? ['-S', '-p', '', 'env', ...forwardedEnv, ...inner]
+    : ['-n', 'env', ...forwardedEnv, ...inner]
+
+  debugLog('daemon', `elevating daemon via sudo for privileged ports ${httpsPort}/${httpPort}`, verbose)
+  const child = nodeSpawn('sudo', sudoArgs, { detached: true, stdio: ['pipe', 'ignore', 'ignore'] })
+
+  let spawnError: Error | null = null
+  let sudoExitCode: number | null = null
+  child.once('error', (err) => { spawnError = err })
+  child.once('exit', (code) => { sudoExitCode = code ?? 0 })
+
+  if (sudoPassword && child.stdin) {
+    child.stdin.write(`${sudoPassword}\n`)
+    child.stdin.end()
+  }
+  child.unref()
+
+  const pidPath = getDaemonPidPath(rpxDir)
+  const deadline = Date.now() + 15000
+  while (Date.now() < deadline) {
+    if (spawnError)
+      throw spawnError
+    const pid = await readDaemonPid(rpxDir)
+    if (pid !== null && isPidAlive(pid)) {
+      if (verbose)
+        log.success(`rpx daemon elevated to root (pid=${pid}, https on :${httpsPort})`)
+      return {
+        httpsPort,
+        httpPort,
+        pidPath,
+        done: Promise.resolve(),
+        stop: async () => {
+          // The daemon is root-owned; a normal user can't signal it. `./buddy
+          // dev` intentionally leaves the shared daemon running across sessions.
+          try { process.kill(pid, 'SIGTERM') }
+          catch { /* EPERM — root-owned shared daemon */ }
+        },
+      }
+    }
+    // sudo exits fast when auth fails; while the daemon runs it stays alive.
+    if (sudoExitCode !== null && sudoExitCode !== 0) {
+      throw new Error(
+        `rpx daemon could not elevate to bind :${httpsPort} (sudo exited ${sudoExitCode}). `
+        + 'Set SUDO_PASSWORD in .env or run `sudo -v` first.',
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`rpx daemon failed to elevate within 15000ms (rpxDir=${rpxDir})`)
+}
+
+/**
  * Start the daemon. Returns a handle that resolves `done` once the daemon has
  * cleanly shut down (signal received and listeners closed).
  *
@@ -222,6 +303,14 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const httpPort = opts.httpPort ?? 80
   const hostname = opts.hostname ?? '0.0.0.0'
   const gcIntervalMs = opts.gcIntervalMs ?? DEFAULT_GC_INTERVAL_MS
+
+  // Privileged ports need root. If we were launched unprivileged (the usual
+  // `./buddy dev` case), re-exec through sudo and hand off to the elevated
+  // copy — it becomes the real daemon. Tests inject high ports and so skip this.
+  const needsPrivilegedPort = (httpsPort > 0 && httpsPort < 1024) || (httpPort > 0 && httpPort < 1024)
+  const alreadyRoot = typeof process.getuid === 'function' && process.getuid() === 0
+  if (process.platform !== 'win32' && needsPrivilegedPort && !alreadyRoot)
+    return elevateDaemonToRoot(rpxDir, httpsPort, httpPort, verbose)
 
   const pidPath = await acquireDaemonLock(rpxDir)
 
