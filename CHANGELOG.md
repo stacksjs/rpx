@@ -1,4 +1,16 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.11...v0.11.12)
+
+### 🧹 Chores
+
+- release v0.11.12 ([27baac4](https://github.com/stacksjs/rpx/commit/27baac4)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: refresh bun.lock to pick up buddy-bot 0.9.20 ([bd4f216](https://github.com/stacksjs/rpx/commit/bd4f216)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.10...v0.11.11)
 
 ### 🐛 Bug Fixes
