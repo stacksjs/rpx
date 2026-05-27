@@ -1,4 +1,20 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.12...v0.11.13)
+
+### 🐛 Bug Fixes
+
+- **daemon**: self-elevate via sudo to bind privileged :443/:80 ([a9aef73](https://github.com/stacksjs/rpx/commit/a9aef73)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.13 ([ad57358](https://github.com/stacksjs/rpx/commit/ad57358)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: refresh bun.lock to pick up @stacksjs/logsmith 0.2.3 ([da4018f](https://github.com/stacksjs/rpx/commit/da4018f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.11...v0.11.12)
 
 ### 🧹 Chores
