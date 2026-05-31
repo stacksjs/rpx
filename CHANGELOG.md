@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.15...v0.11.16)
+
+## 🚀 Features
+
+- **routing**: wire path-based host routes through daemon + in-process ([6764fe1](https://github.com/stacksjs/rpx/commit/6764fe1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **routing**: path-based routing within a host ([57440bf](https://github.com/stacksjs/rpx/commit/57440bf)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.16 ([a422b32](https://github.com/stacksjs/rpx/commit/a422b32)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.14...v0.11.15)
 
 ## 🚀 Features
