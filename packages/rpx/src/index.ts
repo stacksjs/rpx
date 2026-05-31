@@ -112,8 +112,22 @@ export type {
   StopDaemonResult,
 } from './daemon'
 
-export { createProxyFetchHandler } from './proxy-handler'
-export type { GetRoute, ProxyFetchHandler, ProxyRoute } from './proxy-handler'
+export { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
+export type { GetRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
+
+export { isWildcardPattern, matchesWildcard, matchHost } from './host-match'
+
+export {
+  contentTypeFor,
+  resolveStaticFile,
+  resolveStaticRoute,
+  safeRelativePath,
+  serveStaticFile,
+} from './static-files'
+export type { ResolvedStaticRoute, StaticResolution } from './static-files'
+
+export { buildSniTlsConfig, serverNameFromCertFilename } from './sni'
+export type { SniTlsEntry } from './sni'
 
 export { deriveIdFromTarget, runViaDaemon } from './daemon-runner'
 export type { DaemonRunnerOptions, DaemonRunnerProxy } from './daemon-runner'

@@ -16,8 +16,8 @@
  * paths are reachable without touching `~/.stacks/rpx` or :443.
  */
 /* eslint-disable no-console */
-import type { ProxyOptions, SSLConfig, TlsOption } from './types'
-import type { ProxyRoute } from './proxy-handler'
+import type { ProductionTlsConfig, ProxyOptions, SSLConfig, TlsOption } from './types'
+import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
 import { spawn as nodeSpawn } from 'node:child_process'
 import * as fsp from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -25,7 +25,10 @@ import * as path from 'node:path'
 import * as process from 'node:process'
 import { log } from './logger'
 import { checkExistingCertificates, generateCertificate } from './https'
-import { createProxyFetchHandler } from './proxy-handler'
+import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
+import { matchHost } from './host-match'
+import { buildSniTlsConfig } from './sni'
+import { resolveStaticRoute } from './static-files'
 import { gcStaleEntries, getRegistryDir, isPidAlive, readAll, watchRegistry } from './registry'
 import type { RegistryEntry } from './registry'
 import {
@@ -49,6 +52,12 @@ export interface DaemonOptions {
   hostname?: string
   /** TLS bootstrap options forwarded to httpsConfig. */
   https?: TlsOption
+  /**
+   * Production per-domain SNI certs (real PEMs on disk). When usable certs are
+   * found, the listener serves them per SNI server name instead of the dev
+   * self-signed shared cert.
+   */
+  productionCerts?: ProductionTlsConfig
   /** PID-GC interval in ms. Defaults to 5000. */
   gcIntervalMs?: number
 }
@@ -148,10 +157,18 @@ export async function releaseDaemonLock(rpxDir: string = getDaemonRpxDir()): Pro
  * fetch handler. The entry's `from` is normalized to `host:port`.
  */
 function entryToRoute(entry: RegistryEntry): ProxyRoute {
-  const fromUrl = new URL(entry.from.startsWith('http') ? entry.from : `http://${entry.from}`)
+  const cleanUrls = entry.cleanUrls ?? false
+  if (entry.static) {
+    return {
+      static: resolveStaticRoute(entry.static, cleanUrls),
+      cleanUrls,
+    }
+  }
+  const from = entry.from ?? 'localhost:1'
+  const fromUrl = new URL(from.startsWith('http') ? from : `http://${from}`)
   return {
     sourceHost: fromUrl.host,
-    cleanUrls: entry.cleanUrls ?? false,
+    cleanUrls,
     changeOrigin: entry.changeOrigin ?? false,
     pathRewrites: entry.pathRewrites,
   }
@@ -315,8 +332,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const pidPath = await acquireDaemonLock(rpxDir)
 
   // Module-scoped state so the watcher and fetch handler share one routing view.
+  // Routing table keyed by host pattern. Lookup prefers an exact match, then
+  // the most-specific `*.suffix` wildcard (see `matchHost`).
   let routingTable = new Map<string, ProxyRoute>()
-  const getRoute = (host: string): ProxyRoute | undefined => routingTable.get(host)
+  const getRoute = (host: string): ProxyRoute | undefined => matchHost(routingTable, host)
 
   function rebuild(entries: RegistryEntry[]): void {
     const next = new Map<string, ProxyRoute>()
@@ -340,19 +359,42 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     debugLog('daemon', `DNS setup on start failed: ${err}`, verbose)
   })
 
-  const sslConfig = await bootstrapTls(opts, registryDir)
+  // Production per-domain SNI: serve real PEM certs (e.g. Let's Encrypt) keyed
+  // by server name on the one listener. Falls back to the dev shared cert when
+  // no usable production certs are configured.
+  let sniTls: Array<{ serverName: string, cert: string, key: string }> = []
+  if (opts.productionCerts) {
+    sniTls = await buildSniTlsConfig(opts.productionCerts, verbose)
+    if (verbose && sniTls.length > 0)
+      log.info(`SNI: serving ${sniTls.length} real cert(s): ${sniTls.map(e => e.serverName).join(', ')}`)
+  }
 
-  const httpsServer = Bun.serve({
-    port: httpsPort,
-    hostname,
-    tls: {
+  const fetchHandler = createProxyFetchHandler(getRoute, verbose)
+  const wsHandler = createProxyWebSocketHandler(verbose)
+
+  let tlsConfig: unknown
+  if (sniTls.length > 0) {
+    tlsConfig = sniTls.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
+  }
+  else {
+    const sslConfig = await bootstrapTls(opts, registryDir)
+    tlsConfig = {
       key: sslConfig.key,
       cert: sslConfig.cert,
       ca: sslConfig.ca,
       requestCert: false,
       rejectUnauthorized: false,
+    }
+  }
+
+  const httpsServer = Bun.serve({
+    port: httpsPort,
+    hostname,
+    tls: tlsConfig as any,
+    fetch(req: Request, server: unknown) {
+      return fetchHandler(req, server as ProxyServerLike)
     },
-    fetch: createProxyFetchHandler(getRoute, verbose),
+    websocket: wsHandler,
     error(err: Error) {
       debugLog('daemon', `https server error: ${err}`, verbose)
       return new Response(`Server Error: ${err.message}`, { status: 500 })

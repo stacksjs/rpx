@@ -10,7 +10,7 @@
  *
  * The daemon's PID-GC reaps anything we miss if this process dies `kill -9`.
  */
-import type { PathRewrite } from './types'
+import type { PathRewrite, StaticRouteConfig } from './types'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as process from 'node:process'
@@ -21,11 +21,14 @@ import { debugLog } from './utils'
 
 export interface DaemonRunnerProxy {
   id?: string
-  from: string
+  /** Upstream `host:port`. Optional when `static` is set. */
+  from?: string
   to: string
   cleanUrls?: boolean
   changeOrigin?: boolean
   pathRewrites?: PathRewrite[]
+  /** Serve a local directory for this route instead of proxying. */
+  static?: string | StaticRouteConfig
 }
 
 export interface DaemonRunnerOptions {
@@ -100,6 +103,7 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
       cleanUrls: p.cleanUrls,
       changeOrigin: p.changeOrigin,
       pathRewrites: p.pathRewrites,
+      static: p.static,
     }, registryDir, verbose)
   }
 
@@ -111,8 +115,12 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
     spawnEnv: opts.spawnEnv,
   })
 
-  for (const p of resolved)
-    log.success(`https://${p.to}  →  ${p.from}`)
+  for (const p of resolved) {
+    const target = p.static
+      ? `static ${typeof p.static === 'string' ? p.static : p.static.dir}`
+      : p.from
+    log.success(`https://${p.to}  →  ${target}`)
+  }
   log.info(`(via rpx daemon pid=${result.pid}; \`rpx daemon:status\` to inspect)`)
 
   if (opts.detached)

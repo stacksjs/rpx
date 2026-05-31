@@ -14,7 +14,7 @@
  *   - `id` is validated against a strict charset to keep it from escaping
  *     the registry directory.
  */
-import type { PathRewrite } from './types'
+import type { PathRewrite, StaticRouteConfig } from './types'
 import * as fs from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -24,7 +24,8 @@ import { debugLog } from './utils'
 
 export interface RegistryEntry {
   id: string
-  from: string
+  /** Upstream `host:port`. Optional when `static` is set. */
+  from?: string
   to: string
   /**
    * Optional. PID of the long-running process that owns this entry. When set,
@@ -38,6 +39,8 @@ export interface RegistryEntry {
   pathRewrites?: PathRewrite[]
   cleanUrls?: boolean
   changeOrigin?: boolean
+  /** Serve a local directory for this route instead of proxying. */
+  static?: string | StaticRouteConfig
 }
 
 const ID_PATTERN = /^[a-zA-Z0-9._-]+$/
@@ -89,9 +92,13 @@ function isValidEntry(value: unknown): value is RegistryEntry {
   // (manual entries from `rpx register`) the daemon's PID-GC skips it.
   const pidOk = e.pid === undefined
     || (typeof e.pid === 'number' && Number.isInteger(e.pid) && e.pid > 0)
+  // A route forwards to an upstream (`from`) OR serves files (`static`).
+  const hasFrom = typeof e.from === 'string' && e.from.length > 0
+  const hasStatic = typeof e.static === 'string'
+    || (!!e.static && typeof e.static === 'object' && typeof (e.static as StaticRouteConfig).dir === 'string')
   return (
     typeof e.id === 'string' && isValidId(e.id)
-    && typeof e.from === 'string' && e.from.length > 0
+    && (hasFrom || hasStatic)
     && typeof e.to === 'string' && e.to.length > 0
     && pidOk
     && typeof e.createdAt === 'string'
@@ -272,6 +279,7 @@ export function watchRegistry(
           pathRewrites: entry.pathRewrites,
           cleanUrls: entry.cleanUrls,
           changeOrigin: entry.changeOrigin,
+          static: entry.static,
         }))
         .sort((a, b) => a.id.localeCompare(b.id)),
     )

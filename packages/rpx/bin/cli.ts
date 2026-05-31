@@ -182,6 +182,7 @@ interface DaemonStartOptions {
   httpsPort?: number
   httpPort?: number
   hostname?: string
+  certsDir?: string
   verbose?: boolean
 }
 
@@ -192,6 +193,7 @@ cli
   .option('--https-port <port>', 'HTTPS port (default 443)', { default: 443 })
   .option('--http-port <port>', 'HTTP redirect port; 0 to disable (default 80)', { default: 80 })
   .option('--hostname <host>', 'Bind address (default 0.0.0.0)', { default: '0.0.0.0' })
+  .option('--certs-dir <path>', 'Directory of real PEM certs for per-domain SNI (<domain>.crt/.key, _wildcard.<apex>.crt/.key)')
   .option('--verbose', 'Enable verbose logging')
   .action(async (opts: DaemonStartOptions) => {
     try {
@@ -201,6 +203,7 @@ cli
         httpsPort: typeof opts.httpsPort === 'string' ? Number.parseInt(opts.httpsPort, 10) : opts.httpsPort,
         httpPort: typeof opts.httpPort === 'string' ? Number.parseInt(opts.httpPort, 10) : opts.httpPort,
         hostname: opts.hostname,
+        productionCerts: opts.certsDir ? { certsDir: opts.certsDir } : undefined,
         verbose: opts.verbose ?? true,
       })
       // Block until the daemon shuts down (via SIGINT/SIGTERM).

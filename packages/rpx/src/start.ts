@@ -20,8 +20,10 @@ import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
 import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
 import { ProcessManager } from './process-manager'
-import { createProxyFetchHandler } from './proxy-handler'
-import type { ProxyRoute } from './proxy-handler'
+import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
+import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
+import { isWildcardPattern, matchHost } from './host-match'
+import { resolveStaticRoute } from './static-files'
 import { debugLog, getSudoPassword, safeStringify } from './utils'
 
 const processManager = new ProcessManager()
@@ -307,7 +309,7 @@ export async function startServer(options: SingleProxyConfig): Promise<void> {
 
   // Check and update hosts file for custom domains
   const hostsToCheck = [toUrl.hostname]
-  if (!toUrl.hostname.includes('localhost') && !toUrl.hostname.includes('127.0.0.1')) {
+  if (isHostsManagementEnabled(options) && !toUrl.hostname.includes('localhost') && !toUrl.hostname.includes('127.0.0.1')) {
     debugLog('hosts', `Checking if hosts file entry exists for: ${toUrl.hostname}`, options?.verbose)
 
     try {
@@ -709,9 +711,11 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   // Use the global port manager if not provided
   const portManager = options.portManager || globalPortManager
 
+  const hostsEnabled = isHostsManagementEnabled(options)
+
   try {
     // Add an extra check to make sure the hostname is in the hosts file
-    if (to && !to.includes('localhost') && !to.includes('127.0.0.1')) {
+    if (hostsEnabled && to && !to.includes('localhost') && !to.includes('127.0.0.1')) {
       const hostsExist = await checkHosts([to], verbose)
       if (!hostsExist[0]) {
         log.warn(`The hostname ${to} isn't in your hosts file. Adding it now...`)
@@ -728,7 +732,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
     else {
       // On macOS, *.localhost domains resolve to 127.0.0.1 automatically (RFC 6761)
       // so we don't need to add them to /etc/hosts
-      if (process.platform !== 'darwin' && to && to.includes('localhost') && !to.match(/^(localhost|127\.0\.0\.1)$/)) {
+      if (hostsEnabled && process.platform !== 'darwin' && to && to.includes('localhost') && !to.match(/^(localhost|127\.0\.0\.1)$/)) {
         const hostsExist = await checkHosts([to], verbose)
         if (!hostsExist[0]) {
           debugLog('hosts', `${to} not found in hosts file, adding...`, verbose)
@@ -931,6 +935,23 @@ function getVerbose(options: any): boolean {
   return options?.verbose || false
 }
 
+/**
+ * Whether rpx may read/write `/etc/hosts`. Disabled when `hostsManagement` is
+ * explicitly `false`, or when `cleanup.hosts` is `false` (or `cleanup` is
+ * `false`). Real-server deployments with real DNS should set
+ * `hostsManagement: false` so rpx never touches `/etc/hosts`.
+ */
+function isHostsManagementEnabled(options: any): boolean {
+  if (options?.hostsManagement === false)
+    return false
+  const cleanup = options?.cleanup
+  if (cleanup === false)
+    return false
+  if (cleanup && typeof cleanup === 'object' && cleanup.hosts === false)
+    return false
+  return true
+}
+
 export async function startProxies(options?: ProxyOptions): Promise<void> {
   // Allow re-using a previous SSL config between multiple startProxies calls
   // This is particularly important for the Vite plugin
@@ -957,8 +978,13 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   }
 
   const verbose = getVerbose(mergedOptions)
+  // Master switch for /etc/hosts management. `hostsManagement: false` (real
+  // server with real DNS) or `cleanup: { hosts: false }` disables all hosts
+  // reads/writes. Defaults to enabled for backward compatibility.
+  const hostsEnabled = isHostsManagementEnabled(mergedOptions)
   debugLog('config', `Starting with config: ${safeStringify(mergedOptions, 2)}`, verbose)
   debugLog('config', `Is multi-proxy? ${'proxies' in mergedOptions}`, verbose)
+  debugLog('config', `Hosts management enabled? ${hostsEnabled}`, verbose)
 
   // viaDaemon mode short-circuits before any port binding / cert work — the
   // daemon owns all of that. We only need to register entries and block.
@@ -1072,7 +1098,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   // Pre-acquire sudo credentials once so that all subsequent sudo operations
   // (cert trust, hosts file, DNS resolver) reuse the cached credential
   // without prompting again. `sudo -v` validates and caches for the timeout period.
-  if (process.platform !== 'win32' && (mergedOptions.https || mergedOptions.cleanup?.hosts !== false)) {
+  if (process.platform !== 'win32' && (mergedOptions.https || hostsEnabled)) {
     const sudoPassword = getSudoPassword()
     if (!sudoPassword) {
       try {
@@ -1151,7 +1177,10 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     log.info(`  Consider using reserved TLDs: .test, .localhost, or .local`)
   }
 
-  if (process.platform === 'darwin' && customDomains.length > 0) {
+  // Local development DNS (resolver overrides + hosts entries) is a dev-only
+  // convenience. On a real server (`hostsManagement: false`) DNS is real, so
+  // skip it entirely — nothing under /etc should be touched.
+  if (hostsEnabled && process.platform === 'darwin' && customDomains.length > 0) {
     const { setupDevelopmentDns } = await import('./dns')
     const dnsStarted = await setupDevelopmentDns({ domains: customDomains, verbose })
     if (dnsStarted) {
@@ -1217,19 +1246,31 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
     for (const option of proxyOptions) {
       const domain = option.to || 'rpx.localhost'
-      const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
+      const cleanUrls = option.cleanUrls || false
 
-      routingTable.set(domain, {
-        sourceHost: fromUrl.host,
-        cleanUrls: option.cleanUrls || false,
-        changeOrigin: option.changeOrigin || false,
-        pathRewrites: option.pathRewrites,
-      })
+      // Static-file route: serve a local directory instead of proxying.
+      if (option.static) {
+        routingTable.set(domain, {
+          static: resolveStaticRoute(option.static, cleanUrls),
+          cleanUrls,
+        })
+        debugLog('proxies', `Route: ${domain} → static ${typeof option.static === 'string' ? option.static : option.static.dir}`, verbose)
+      }
+      else {
+        const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
+        routingTable.set(domain, {
+          sourceHost: fromUrl.host,
+          cleanUrls,
+          changeOrigin: option.changeOrigin || false,
+          pathRewrites: option.pathRewrites,
+        })
+        debugLog('proxies', `Route: ${domain} → ${fromUrl.host}`, verbose)
+      }
 
-      debugLog('proxies', `Route: ${domain} → ${fromUrl.host}`, verbose)
-
-      // Ensure hosts file entries exist for non-localhost domains
-      if (!domain.includes('localhost') && !domain.includes('127.0.0.1')) {
+      // Ensure hosts file entries exist for non-localhost domains. A wildcard
+      // domain (`*.example.com`) has no single hosts entry — skip it. Skipped
+      // entirely when hosts management is disabled (real-server mode).
+      if (hostsEnabled && !isWildcardPattern(domain) && !domain.includes('localhost') && !domain.includes('127.0.0.1')) {
         try {
           const hostsExist = await checkHosts([domain], verbose)
           if (!hostsExist[0]) {
@@ -1259,6 +1300,9 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       return
     }
 
+    const sharedFetchHandler = createProxyFetchHandler(host => matchHost(routingTable, host), verbose)
+    const sharedWsHandler = createProxyWebSocketHandler(verbose)
+
     try {
       const bunServer = Bun.serve({
         port: listenPort,
@@ -1270,7 +1314,10 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           requestCert: false,
           rejectUnauthorized: false,
         },
-        fetch: createProxyFetchHandler(host => routingTable.get(host), verbose),
+        fetch(req: Request, server: unknown) {
+          return sharedFetchHandler(req, server as ProxyServerLike)
+        },
+        websocket: sharedWsHandler,
         error(err: Error) {
           debugLog('server', `Shared proxy server error: ${err}`, verbose)
           return new Response(`Server Error: ${err.message}`, { status: 500 })

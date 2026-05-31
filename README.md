@@ -13,11 +13,13 @@
 ## Features
 
 - 🔀 Simple, lightweight Reverse Proxy
-- ♾️ Custom Domains _(with wildcard support)_
+- ♾️ Custom Domains _(with wildcard host routing)_
 - 0️⃣ Zero-Config Setup
-- 🔒 SSL Support _(HTTPS by default)_
+- 🔒 SSL Support _(HTTPS by default; per-domain SNI certs in production)_
+- 🔌 WebSocket Proxying _(transparent `Upgrade` pass-through)_
+- 📁 Static File Serving _(SPA / clean-URL / flat & directory SSG styles)_
 - 🛣️ Auto HTTP-to-HTTPS Redirection
-- ✏️ `/etc/hosts` Management
+- ✏️ `/etc/hosts` Management _(fully disable-able for real servers)_
 - 🧼 Clean URLs _(removes `.html` extension)_
 - 🤖 CLI & Library Support
 
@@ -174,6 +176,126 @@ export default config
 ```
 
 To learn more, head over to the [documentation](https://reverse-proxy.sh/).
+
+## Production: multi-app gateway on one server
+
+rpx can front many apps on a single server, routing by `Host`, terminating TLS
+with real certificates, proxying WebSockets, and serving static sites — all from
+one listener on `:443`.
+
+### WebSocket proxying
+
+WebSocket upgrades are proxied transparently for any upstream route. A request
+with `Upgrade: websocket` is upgraded by rpx and piped to the upstream
+(`ws://<from><path>`) in both directions — including the control-channel of a
+tunnel server that accepts the upgrade on any path. No configuration needed;
+it works wherever HTTP proxying works.
+
+### Static file serving
+
+A route can serve a local directory instead of proxying. Set `static` (and omit
+`from`):
+
+```ts
+const config: ProxyOptions = {
+  proxies: [
+    // Proxy an app
+    { from: 'localhost:3000', to: 'app.example.com' },
+
+    // Serve a built static site
+    {
+      to: 'docs.example.com',
+      static: {
+        dir: '/srv/docs/dist',
+        cleanUrls: true, // /about.html -> 301 /about
+        pathRewriteStyle: 'directory', // /about -> about/index.html ('flat' -> about.html)
+        maxAge: 3600, // Cache-Control: public, max-age=3600
+      },
+    },
+
+    // Single-page app (client-side routing fallback to index.html)
+    { to: 'spa.example.com', static: { dir: '/srv/spa/dist', spa: true } },
+  ],
+  https: true,
+}
+```
+
+`static` also accepts a bare string shorthand for the directory:
+`{ to: 'site.example.com', static: '/srv/site' }`.
+
+### Wildcard host routing
+
+Register a route for `_.example.com` and any `sub.example.com` matches it at
+request time. Lookup prefers an exact host match, then the most-specific
+(deepest-suffix) wildcard:
+
+```ts
+const config: ProxyOptions = {
+  proxies: [
+    { from: 'localhost:3002', to: '_.tunnel.example.com' }, // catch-all subdomains
+    { from: 'localhost:3000', to: 'api.tunnel.example.com' }, // exact wins over the wildcard
+  ],
+  https: true,
+}
+```
+
+A bare apex (`example.com`) is **not** matched by `_.example.com`.
+
+### Per-domain SNI certificates (Let's Encrypt)
+
+In production, serve a different real certificate per domain over SNI on one
+listener. Point the daemon at a directory of PEM files following the convention
+`<domain>.crt` / `<domain>.key`, with `_wildcard.<apex>.crt` / `.key` mapping to
+the SNI server name `_.<apex>`:
+
+```bash
+rpx daemon:start --certs-dir /etc/letsencrypt/rpx
+```
+
+Programmatically (or via an explicit map):
+
+```ts
+import { runDaemon } from '@stacksjs/rpx'
+
+await runDaemon({
+  productionCerts: {
+    certsDir: '/etc/letsencrypt/rpx',
+    // or explicit per-server-name:
+    domains: {
+      'api.example.com': { certPath: '/etc/ssl/api.crt', keyPath: '/etc/ssl/api.key' },
+      '_.example.com': { certPath: '/etc/ssl/wild.crt', keyPath: '/etc/ssl/wild.key' },
+    },
+  },
+})
+```
+
+When no usable production certs are found, rpx falls back to its local-CA /
+dev self-signed flow, so development is unchanged.
+
+### Running on a real server (hosts management off + systemd)
+
+On a real server with real DNS, rpx should never touch `/etc/hosts` or set up
+local DNS resolvers. Disable all hosts management with `hostsManagement: false`
+(or the legacy `cleanup: { hosts: false }`):
+
+```ts
+const config: ProxyOptions = {
+  proxies: [/_ ... */],
+  https: true,
+  hostsManagement: false, // no /etc/hosts reads/writes, no dev DNS
+}
+```
+
+Under systemd, run the daemon directly as root — when the process is already
+root it binds `:443`/`:80` without re-executing through `sudo`:
+
+```ini
+# /etc/systemd/system/rpx.service
+[Service]
+ExecStart=/usr/local/bin/rpx daemon:start --certs-dir /etc/letsencrypt/rpx
+User=root
+Restart=always
+```
 
 ## Testing
 
