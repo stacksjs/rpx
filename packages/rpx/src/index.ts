@@ -129,6 +129,9 @@ export type { ResolvedStaticRoute, StaticResolution } from './static-files'
 export { buildSniTlsConfig, serverNameFromCertFilename } from './sni'
 export type { SniTlsEntry } from './sni'
 
+export { isLikelyHostname, matchesAllowedSuffix, OnDemandCertManager } from './on-demand'
+export type { CertIssuer, OnDemandCertManagerOptions } from './on-demand'
+
 export { deriveIdFromTarget, runViaDaemon } from './daemon-runner'
 export type { DaemonRunnerOptions, DaemonRunnerProxy } from './daemon-runner'
 

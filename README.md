@@ -272,6 +272,73 @@ await runDaemon({
 When no usable production certs are found, rpx falls back to its local-CA /
 dev self-signed flow, so development is unchanged.
 
+### On-demand TLS (lazy Let's Encrypt for unknown hosts)
+
+rpx can issue a real Let's Encrypt certificate for an **unknown host the first
+time it's needed** — handy for wildcard/tunnel setups where you don't know every
+subdomain ahead of time. Issuance is **gated** by an `ask` callback and/or an
+`allowedSuffixes` allowlist so it can't be abused into minting certs for
+arbitrary hostnames.
+
+```ts
+import { runDaemon } from '@stacksjs/rpx'
+
+const daemon = await runDaemon({
+  // Seed the SNI set from any certs already on disk.
+  productionCerts: { certsDir: '/etc/letsencrypt/rpx' },
+  onDemandTls: {
+    enabled: true,
+    email: 'admin@example.com',
+    // Fast-path allowlist: any host under these suffixes is auto-issued.
+    allowedSuffixes: ['apps.example.com'],
+    // And/or decide dynamically (e.g. check a DB of registered tenants).
+    ask: async host => isRegisteredTenant(host),
+    // Where issued PEMs are written (<host>.crt / <host>.key). Defaults to the
+    // productionCerts certsDir so issued certs survive restarts.
+    certsDir: '/etc/letsencrypt/rpx',
+    // staging: true,  // use Let's Encrypt staging while testing
+  },
+})
+
+// Pre-warm a cert programmatically (e.g. a tunnel server registering a new
+// subdomain) so the cert exists before the first browser hit:
+await daemon.ensureCert('alice.apps.example.com')
+```
+
+A host is approved for issuance when **either**`allowedSuffixes` matches**or**
+`ask(host)` resolves truthy. With neither configured, on-demand issuance refuses
+every host (fail-closed). Concurrent requests for the same host are de-duped so
+exactly one ACME order runs; failures are negatively cached briefly so rpx
+doesn't hammer Let's Encrypt's rate limits.
+
+#### How it works (and the Bun limitation it works around)
+
+The challenge is served over HTTP-01: when the ACME CA fetches
+`http://<host>/.well-known/acme-challenge/<token>`, rpx answers it from its own
+`:80` listener (same process, so the token is reachable the instant issuance
+registers it).
+
+> **Important:** Bun cannot mint a certificate _during_ the TLS handshake.
+> `Bun.serve` has no working `SNICallback`, and `server.reload({ tls })` does
+> **not** update certificates at runtime (verified on Bun 1.3.14 and 1.4.0). So
+> rpx implements on-demand TLS as **ask-gated issuance + listener recreate**,
+> not at-handshake issuance:
+>
+> 1. The first plaintext request for an approved-but-uncovered host on `:80`
+> triggers `ensureCert(host)` (fire-and-forget) before the HTTP→HTTPS
+> redirect.
+> 2. Once the cert is obtained and written, rpx rebuilds the `:443` listener
+> with the augmented SNI set — a sub-second `server.stop()` + re-`Bun.serve()`
+> (the rebind is retried briefly while the OS frees the port; in-flight
+> requests on the old listener drain first).
+> 3. The browser's subsequent HTTPS request finds the freshly-issued cert.
+>
+> For a host you know about ahead of time, call `daemon.ensureCert(host)` to
+> pre-warm the cert so even the very first HTTPS request is already covered.
+
+On-demand TLS is fully opt-in (`onDemandTls.enabled`); existing deployments are
+unaffected.
+
 ### Running on a real server (hosts management off + systemd)
 
 On a real server with real DNS, rpx should never touch `/etc/hosts` or set up

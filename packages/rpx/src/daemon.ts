@@ -16,7 +16,7 @@
  * paths are reachable without touching `~/.stacks/rpx` or :443.
  */
 /* eslint-disable no-console */
-import type { ProductionTlsConfig, ProxyOptions, SSLConfig, TlsOption } from './types'
+import type { OnDemandTlsConfig, ProductionTlsConfig, ProxyOptions, SSLConfig, TlsOption } from './types'
 import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
 import { spawn as nodeSpawn } from 'node:child_process'
 import * as fsp from 'node:fs/promises'
@@ -28,6 +28,7 @@ import { checkExistingCertificates, generateCertificate } from './https'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import { matchHost } from './host-match'
 import { buildSniTlsConfig } from './sni'
+import { OnDemandCertManager } from './on-demand'
 import { resolveStaticRoute } from './static-files'
 import { gcStaleEntries, getRegistryDir, isPidAlive, readAll, watchRegistry } from './registry'
 import type { RegistryEntry } from './registry'
@@ -58,6 +59,12 @@ export interface DaemonOptions {
    * self-signed shared cert.
    */
   productionCerts?: ProductionTlsConfig
+  /**
+   * On-demand TLS: lazily issue real certs for approved unknown hosts via ACME
+   * http-01 (served from this daemon's `:80` listener). Opt-in via `enabled`.
+   * Seeded with the `productionCerts`/`certsDir` certs already on disk.
+   */
+  onDemandTls?: OnDemandTlsConfig
   /** PID-GC interval in ms. Defaults to 5000. */
   gcIntervalMs?: number
 }
@@ -70,6 +77,13 @@ export interface DaemonHandle {
   httpsPort: number
   httpPort: number
   pidPath: string
+  /**
+   * Pre-warm an on-demand cert for `host` (issue it now if approved & missing,
+   * rebuilding the `:443` listener). Resolves `true` if a cert is available
+   * afterwards. No-op resolving `false` when on-demand TLS isn't enabled. Lets a
+   * tunnel server warm a subdomain's cert at registration time.
+   */
+  ensureCert: (host: string) => Promise<boolean>
 }
 
 const DEFAULT_GC_INTERVAL_MS = 5000
@@ -290,6 +304,9 @@ async function elevateDaemonToRoot(
           try { process.kill(pid, 'SIGTERM') }
           catch { /* EPERM — root-owned shared daemon */ }
         },
+        // On-demand issuance runs inside the elevated child's own runDaemon
+        // handle; this caller-side stub can't reach it directly.
+        ensureCert: () => Promise.resolve(false),
       }
     }
     // sudo exits fast when auth fails; while the daemon runs it stays alive.
@@ -312,6 +329,9 @@ async function elevateDaemonToRoot(
  * listeners are bound and the initial routing table is populated. Use
  * `handle.done` for the lifetime promise.
  */
+// `opts` IS used throughout; pickier's no-unused-vars mis-fires on this fn after
+// the on-demand serve refactor (its --fix would wrongly rename to `_opts`).
+// eslint-disable-next-line pickier/no-unused-vars
 export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle> {
   const verbose = opts.verbose ?? false
   const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
@@ -372,34 +392,88 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const fetchHandler = createProxyFetchHandler(getRoute, verbose)
   const wsHandler = createProxyWebSocketHandler(verbose)
 
-  let tlsConfig: unknown
-  if (sniTls.length > 0) {
-    tlsConfig = sniTls.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
-  }
-  else {
-    const sslConfig = await bootstrapTls(opts, registryDir)
-    tlsConfig = {
-      key: sslConfig.key,
-      cert: sslConfig.cert,
-      ca: sslConfig.ca,
+  // Bootstrap the dev shared cert once when there's no real SNI set, so a single
+  // SNI listener with on-demand can still answer hosts that aren't covered yet.
+  let devSslConfig: SSLConfig | null = null
+  if (sniTls.length === 0)
+    devSslConfig = await bootstrapTls(opts, registryDir)
+
+  // On-demand TLS manager (opt-in). Holds the live SNI set; lazily issues real
+  // certs for approved unknown hosts via ACME http-01 served from our :80
+  // listener (Bun can't issue at handshake time — see on-demand.ts header).
+  const onDemandCfg = opts.onDemandTls
+  const onDemand: OnDemandCertManager | null = onDemandCfg?.enabled
+    ? new OnDemandCertManager({
+        config: onDemandCfg,
+        certsDir: onDemandCfg.certsDir ?? opts.productionCerts?.certsDir ?? path.join(rpxDir, 'on-demand-certs'),
+        initial: sniTls,
+        verbose,
+        // A new cert was issued/adopted — rebuild :443 with the augmented set.
+        onCertAdded: (entries) => { void rebuildTls(entries) },
+      })
+    : null
+
+  /** Build the TLS option for Bun.serve from the current SNI set (or dev cert). */
+  function tlsFor(entries: Array<{ serverName: string, cert: string, key: string }>): unknown {
+    if (entries.length > 0)
+      return entries.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
+    // No real certs: fall back to the dev self-signed shared cert.
+    return {
+      key: devSslConfig!.key,
+      cert: devSslConfig!.cert,
+      ca: devSslConfig!.ca,
       requestCert: false,
       rejectUnauthorized: false,
     }
   }
 
-  const httpsServer = Bun.serve({
-    port: httpsPort,
-    hostname,
-    tls: tlsConfig as any,
-    fetch(req: Request, server: unknown) {
-      return fetchHandler(req, server as ProxyServerLike)
-    },
-    websocket: wsHandler,
-    error(err: Error) {
-      debugLog('daemon', `https server error: ${err}`, verbose)
-      return new Response(`Server Error: ${err.message}`, { status: 500 })
-    },
-  })
+  /** (Re)create the :443 listener. Factored so on-demand can rebuild it. */
+  function serveHttps(entries: Array<{ serverName: string, cert: string, key: string }>): ReturnType<typeof Bun.serve> {
+    return Bun.serve({
+      port: httpsPort,
+      hostname,
+      tls: tlsFor(entries) as any,
+      fetch(req: Request, server: unknown) {
+        return fetchHandler(req, server as ProxyServerLike)
+      },
+      websocket: wsHandler,
+      error(err: Error) {
+        debugLog('daemon', `https server error: ${err}`, verbose)
+        return new Response(`Server Error: ${err.message}`, { status: 500 })
+      },
+    })
+  }
+
+  let httpsServer = serveHttps(onDemand ? onDemand.sniEntries() : sniTls)
+
+  /**
+   * Bun has no working SNICallback and `server.reload({ tls })` does not update
+   * certs at runtime (verified Bun 1.3.14/1.4.0). So to serve a freshly-issued
+   * cert we tear the old listener down and re-bind with the augmented SNI set.
+   * The rebind is sub-second; if the OS hasn't freed the port yet we retry on a
+   * short async backoff. In-flight requests on the old listener drain
+   * (`stop(false)`). Only ever invoked from the (async) issuance callback.
+   */
+  async function rebuildTls(entries: Array<{ serverName: string, cert: string, key: string }>): Promise<void> {
+    if (stopped)
+      return
+    debugLog('daemon', `rebuilding :443 with ${entries.length} SNI cert(s)`, verbose)
+    httpsServer.stop(false)
+    let lastErr: unknown
+    for (let attempt = 0; attempt < 20 && !stopped; attempt++) {
+      try {
+        httpsServer = serveHttps(entries)
+        return
+      }
+      catch (err) {
+        // EADDRINUSE while the old socket releases — back off briefly, retry.
+        lastErr = err
+        await new Promise(resolve => setTimeout(resolve, 25))
+      }
+    }
+    // Could not rebind: the old listener is already down. Surface the failure.
+    log.error(`rpx: failed to rebuild :443 after issuing cert: ${(lastErr as Error)?.message}`)
+  }
 
   let httpServer: ReturnType<typeof Bun.serve> | null = null
   if (httpPort > 0) {
@@ -409,6 +483,22 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       fetch(req: Request) {
         const u = new URL(req.url)
         const host = (req.headers.get('host') ?? u.hostname).split(':')[0]
+
+        // Serve ACME http-01 challenges for in-flight on-demand issuances.
+        if (onDemand && u.pathname.startsWith('/.well-known/acme-challenge/')) {
+          const keyAuth = onDemand.challengeStore.handlePath(u.pathname)
+          if (keyAuth !== undefined)
+            return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
+          return new Response('challenge not found', { status: 404 })
+        }
+
+        // First plaintext hit for an approved-but-uncovered host: kick off
+        // issuance so the cert exists for the subsequent HTTPS request. We don't
+        // block the redirect on it (the browser retries over HTTPS anyway).
+        if (onDemand && !onDemand.hasCert(host)) {
+          onDemand.ensureCert(host).catch(() => {})
+        }
+
         return new Response(null, {
           status: 301,
           headers: { Location: `https://${host}${u.pathname}${u.search}` },
@@ -483,6 +573,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     httpsPort: typeof httpsServer.port === 'number' ? httpsServer.port : httpsPort,
     httpPort: httpServer && typeof httpServer.port === 'number' ? httpServer.port : httpPort,
     pidPath,
+    ensureCert: (host: string) => (onDemand ? onDemand.ensureCert(host) : Promise.resolve(false)),
   }
 }
 
