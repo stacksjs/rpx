@@ -1,4 +1,22 @@
 # Changelog
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.13...v0.11.14)
+
+### 🚀 Features
+
+- **gateway**: wire ws proxying, static + wildcard routing, SNI certs ([53f01c1](https://github.com/stacksjs/rpx/commit/53f01c1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **tls**: build per-domain SNI cert array from real PEMs ([3e9c391](https://github.com/stacksjs/rpx/commit/3e9c391)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **static**: serve a local directory per route ([4c7df33](https://github.com/stacksjs/rpx/commit/4c7df33)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **routing**: wildcard host matching ([0611472](https://github.com/stacksjs/rpx/commit/0611472)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **types**: static-route, wildcard, SNI cert + hosts-management config ([32e2d4b](https://github.com/stacksjs/rpx/commit/32e2d4b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### 🧹 Chores
+
+- release v0.11.14 ([0acf16e](https://github.com/stacksjs/rpx/commit/0acf16e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.12...v0.11.13)
 
 ### 🐛 Bug Fixes
