@@ -57,6 +57,13 @@ export interface BaseProxyConfig {
    */
   from?: string // localhost:5173
   to: string // stacks.localhost
+  /**
+   * Optional path prefix this route owns under the host `to` (e.g. `'/api'`).
+   * Lets multiple routes share one host, each serving a different path —
+   * `/api` proxied to an app, `/docs` from a static dir, `/` from another.
+   * The longest matching prefix wins; omit (or `'/'`) for the host default.
+   */
+  path?: string
   start?: StartOptions
   pathRewrites?: PathRewrite[]
   /**

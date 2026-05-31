@@ -26,7 +26,8 @@ import * as process from 'node:process'
 import { log } from './logger'
 import { checkExistingCertificates, generateCertificate } from './https'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
-import { matchHost } from './host-match'
+import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
+import type { HostRoutes } from './host-routes'
 import { buildSniTlsConfig } from './sni'
 import { OnDemandCertManager } from './on-demand'
 import { resolveStaticRoute } from './static-files'
@@ -172,10 +173,12 @@ export async function releaseDaemonLock(rpxDir: string = getDaemonRpxDir()): Pro
  */
 function entryToRoute(entry: RegistryEntry): ProxyRoute {
   const cleanUrls = entry.cleanUrls ?? false
+  const basePath = normalizePathPrefix(entry.path)
   if (entry.static) {
     return {
       static: resolveStaticRoute(entry.static, cleanUrls),
       cleanUrls,
+      basePath,
     }
   }
   const from = entry.from ?? 'localhost:1'
@@ -185,6 +188,7 @@ function entryToRoute(entry: RegistryEntry): ProxyRoute {
     cleanUrls,
     changeOrigin: entry.changeOrigin ?? false,
     pathRewrites: entry.pathRewrites,
+    basePath,
   }
 }
 
@@ -352,17 +356,20 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const pidPath = await acquireDaemonLock(rpxDir)
 
   // Module-scoped state so the watcher and fetch handler share one routing view.
-  // Routing table keyed by host pattern. Lookup prefers an exact match, then
-  // the most-specific `*.suffix` wildcard (see `matchHost`).
-  let routingTable = new Map<string, ProxyRoute>()
-  const getRoute = (host: string): ProxyRoute | undefined => matchHost(routingTable, host)
+  // Routing table keyed by host pattern; each host owns an ordered list of
+  // path-scoped routes. Lookup prefers an exact host match, then the
+  // most-specific `*.suffix` wildcard (see `matchHostList`); within a host the
+  // longest matching path prefix wins (see `matchHostRoute`).
+  let routingTable: HostRoutes<ProxyRoute> = new Map()
+  const getRoute = (host: string, pathname: string): ProxyRoute | undefined =>
+    matchHostRoute(routingTable, host, pathname)
 
   function rebuild(entries: RegistryEntry[]): void {
-    const next = new Map<string, ProxyRoute>()
-    for (const e of entries)
-      next.set(e.to, entryToRoute(e))
-    routingTable = next
-    debugLog('daemon', `routing table now covers ${next.size} host(s): ${Array.from(next.keys()).join(', ') || '<empty>'}`, verbose)
+    routingTable = buildHostRoutes(
+      entries.map(e => ({ host: e.to, path: e.path, route: entryToRoute(e) })),
+    )
+    const hosts = Array.from(routingTable.keys())
+    debugLog('daemon', `routing table now covers ${hosts.length} host(s): ${hosts.join(', ') || '<empty>'}`, verbose)
   }
 
   // Initial GC + load before binding so the very first request finds a route.

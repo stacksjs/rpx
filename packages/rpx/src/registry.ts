@@ -28,6 +28,14 @@ export interface RegistryEntry {
   from?: string
   to: string
   /**
+   * Optional path prefix this route owns under the host `to` (e.g. `'/api'`).
+   * Enables several routes to share one host, each claiming a different path
+   * (`/api` → app, `/docs` → static dir, `/` → public). Omitted (or `'/'`)
+   * means the route is the host default and behaves exactly like host-only
+   * routing did before path routing existed.
+   */
+  path?: string
+  /**
    * Optional. PID of the long-running process that owns this entry. When set,
    * the daemon's PID-GC reaps the entry the moment that process dies. Omit
    * (or set to `undefined`) for manually-managed entries created via
@@ -96,10 +104,13 @@ function isValidEntry(value: unknown): value is RegistryEntry {
   const hasFrom = typeof e.from === 'string' && e.from.length > 0
   const hasStatic = typeof e.static === 'string'
     || (!!e.static && typeof e.static === 'object' && typeof (e.static as StaticRouteConfig).dir === 'string')
+  // path is optional; when present it must be a string.
+  const pathOk = e.path === undefined || typeof e.path === 'string'
   return (
     typeof e.id === 'string' && isValidId(e.id)
     && (hasFrom || hasStatic)
     && typeof e.to === 'string' && e.to.length > 0
+    && pathOk
     && pidOk
     && typeof e.createdAt === 'string'
   )
@@ -275,6 +286,7 @@ export function watchRegistry(
           id: entry.id,
           from: entry.from,
           to: entry.to,
+          path: entry.path,
           pid: entry.pid,
           pathRewrites: entry.pathRewrites,
           cleanUrls: entry.cleanUrls,

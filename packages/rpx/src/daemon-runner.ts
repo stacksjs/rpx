@@ -24,6 +24,13 @@ export interface DaemonRunnerProxy {
   /** Upstream `host:port`. Optional when `static` is set. */
   from?: string
   to: string
+  /**
+   * Optional path prefix this route owns under the host `to` (e.g. `'/api'`).
+   * Lets several routes share one host on different paths. When two proxies
+   * share `to` but differ by `path`, give each an explicit `id` (or rely on the
+   * path being folded into the derived id).
+   */
+  path?: string
   cleanUrls?: boolean
   changeOrigin?: boolean
   pathRewrites?: PathRewrite[]
@@ -62,8 +69,11 @@ export interface DaemonRunnerOptions {
  * that isn't `[a-zA-Z0-9._-]`, collapses runs to a single dash, and trims
  * leading/trailing dashes. Falls back to `'rpx'` if nothing's left.
  */
-export function deriveIdFromTarget(to: string): string {
-  const cleaned = to.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 128)
+export function deriveIdFromTarget(to: string, routePath?: string): string {
+  // Fold the path into the id so several routes on the same host don't collide
+  // (e.g. `stacksjs.com` + `/api` and `stacksjs.com` + `/docs`).
+  const base = routePath && routePath !== '/' ? `${to}${routePath}` : to
+  const cleaned = base.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 128)
   return cleaned.length > 0 ? cleaned : 'rpx'
 }
 
@@ -82,7 +92,7 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
 
   // Resolve and validate all ids up front so we don't half-register and bail.
   const resolved = opts.proxies.map((p) => {
-    const id = p.id ?? deriveIdFromTarget(p.to)
+    const id = p.id ?? deriveIdFromTarget(p.to, p.path)
     if (!isValidId(id))
       throw new Error(`invalid registry id "${id}" derived from to="${p.to}"`)
     if (ids.has(id))
@@ -97,6 +107,7 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
       id: p.id,
       from: p.from,
       to: p.to,
+      path: p.path,
       pid: opts.persistent ? undefined : process.pid,
       cwd: process.cwd(),
       createdAt,

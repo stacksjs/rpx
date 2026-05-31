@@ -74,6 +74,40 @@ await startProxy({
 })
 ```
 
+### Path-based routing within a host
+
+Several `proxies` can share the same `to` host, each claiming a different
+`path` prefix. The **longest matching prefix wins**, and a route with no `path`
+(or `path: '/'`) is the host default. Routes can mix proxied apps and static
+directories under one domain:
+
+```ts
+await startProxies({
+  https: true,
+  productionCerts: { certsDir: '/etc/rpx/certs' },
+  hostsManagement: false, // real server, real DNS
+  proxies: [
+    // App: stacksjs.com/api/* → localhost:3000
+    { to: 'stacksjs.com', path: '/api', from: 'localhost:3000' },
+    // Docs: stacksjs.com/docs* → files in /var/www/docs
+    { to: 'stacksjs.com', path: '/docs', static: '/var/www/docs', cleanUrls: true },
+    // Public site: everything else → /var/www/public
+    { to: 'stacksjs.com', static: '/var/www/public', cleanUrls: true },
+  ],
+})
+```
+
+Requests route as:
+
+- `stacksjs.com/api/users` → proxied to `localhost:3000/api/users`
+- `stacksjs.com/docs/guide` → served from `/var/www/docs/guide`
+- `stacksjs.com/about` → served from `/var/www/public/about`
+
+For a **static** route the mount prefix is stripped before file resolution
+(`/docs/guide` → `<root>/guide`); for a **proxy** route the prefix is preserved
+by default (the app still sees `/api/...`), opt into stripping with
+`stripBasePathPrefix: true`.
+
 ### Wildcard Subdomains
 
 Route wildcard subdomains:

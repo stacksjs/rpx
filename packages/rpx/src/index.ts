@@ -112,10 +112,19 @@ export type {
   StopDaemonResult,
 } from './daemon'
 
-export { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
+export { createProxyFetchHandler, createProxyWebSocketHandler, stripBasePath } from './proxy-handler'
 export type { GetRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
 
 export { isWildcardPattern, matchesWildcard, matchHost } from './host-match'
+
+export {
+  buildHostRoutes,
+  matchHostList,
+  matchHostRoute,
+  normalizePathPrefix,
+  pathPrefixMatches,
+} from './host-routes'
+export type { HostRoutes, PathRoute } from './host-routes'
 
 export {
   contentTypeFor,

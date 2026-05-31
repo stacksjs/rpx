@@ -22,7 +22,8 @@ import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manag
 import { ProcessManager } from './process-manager'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
-import { isWildcardPattern, matchHost } from './host-match'
+import { isWildcardPattern } from './host-match'
+import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
 import { resolveStaticRoute } from './static-files'
 import { debugLog, getSudoPassword, safeStringify } from './utils'
 
@@ -849,6 +850,7 @@ export function startProxy(options: ProxyOption): void {
         id: mergedOptions.id,
         from: mergedOptions.from,
         to: mergedOptions.to,
+        path: mergedOptions.path,
         cleanUrls: mergedOptions.cleanUrls,
         changeOrigin: mergedOptions.changeOrigin,
         pathRewrites: mergedOptions.pathRewrites,
@@ -996,6 +998,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           id: p.id,
           from: p.from,
           to: p.to,
+          path: p.path,
           cleanUrls: p.cleanUrls ?? mergedOptions.cleanUrls,
           changeOrigin: p.changeOrigin ?? mergedOptions.changeOrigin,
           pathRewrites: p.pathRewrites,
@@ -1004,6 +1007,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           id: mergedOptions.id,
           from: mergedOptions.from,
           to: mergedOptions.to,
+          path: mergedOptions.path,
           cleanUrls: mergedOptions.cleanUrls,
           changeOrigin: mergedOptions.changeOrigin,
           pathRewrites: mergedOptions.pathRewrites,
@@ -1242,34 +1246,52 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   if (sslConfig && proxyOptions.length > 1) {
     debugLog('proxies', `Creating shared HTTPS server for ${proxyOptions.length} domains`, verbose)
 
-    const routingTable = new Map<string, ProxyRoute>()
+    // Collect (host, path, route) tuples so several proxies can share one
+    // domain on different paths (e.g. `/api` → app, `/docs` → static dir,
+    // `/` → public). `buildHostRoutes` groups + longest-prefix-sorts them.
+    const routeEntries: Array<{ host: string, path?: string, route: ProxyRoute }> = []
+    const seenDomains = new Set<string>()
 
     for (const option of proxyOptions) {
       const domain = option.to || 'rpx.localhost'
       const cleanUrls = option.cleanUrls || false
+      const routePath = option.path
+
+      const basePath = normalizePathPrefix(routePath)
 
       // Static-file route: serve a local directory instead of proxying.
       if (option.static) {
-        routingTable.set(domain, {
-          static: resolveStaticRoute(option.static, cleanUrls),
-          cleanUrls,
+        routeEntries.push({
+          host: domain,
+          path: routePath,
+          route: { static: resolveStaticRoute(option.static, cleanUrls), cleanUrls, basePath },
         })
-        debugLog('proxies', `Route: ${domain} → static ${typeof option.static === 'string' ? option.static : option.static.dir}`, verbose)
+        debugLog('proxies', `Route: ${domain}${routePath ?? ''} → static ${typeof option.static === 'string' ? option.static : option.static.dir}`, verbose)
       }
       else {
         const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
-        routingTable.set(domain, {
-          sourceHost: fromUrl.host,
-          cleanUrls,
-          changeOrigin: option.changeOrigin || false,
-          pathRewrites: option.pathRewrites,
+        routeEntries.push({
+          host: domain,
+          path: routePath,
+          route: {
+            sourceHost: fromUrl.host,
+            cleanUrls,
+            changeOrigin: option.changeOrigin || false,
+            pathRewrites: option.pathRewrites,
+            basePath,
+          },
         })
-        debugLog('proxies', `Route: ${domain} → ${fromUrl.host}`, verbose)
+        debugLog('proxies', `Route: ${domain}${routePath ?? ''} → ${fromUrl.host}`, verbose)
       }
 
       // Ensure hosts file entries exist for non-localhost domains. A wildcard
       // domain (`*.example.com`) has no single hosts entry — skip it. Skipped
-      // entirely when hosts management is disabled (real-server mode).
+      // entirely when hosts management is disabled (real-server mode). Add each
+      // domain once even when several path-routes share it.
+      if (seenDomains.has(domain)) {
+        continue
+      }
+      seenDomains.add(domain)
       if (hostsEnabled && !isWildcardPattern(domain) && !domain.includes('localhost') && !domain.includes('127.0.0.1')) {
         try {
           const hostsExist = await checkHosts([domain], verbose)
@@ -1300,7 +1322,11 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       return
     }
 
-    const sharedFetchHandler = createProxyFetchHandler(host => matchHost(routingTable, host), verbose)
+    const routingTable = buildHostRoutes(routeEntries)
+    const sharedFetchHandler = createProxyFetchHandler(
+      (host, pathname) => matchHostRoute(routingTable, host, pathname),
+      verbose,
+    )
     const sharedWsHandler = createProxyWebSocketHandler(verbose)
 
     try {

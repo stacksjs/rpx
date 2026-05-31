@@ -33,9 +33,35 @@ export interface ProxyRoute {
   pathRewrites?: PathRewrite[]
   /** When set, serve files from a local directory instead of proxying. */
   static?: ResolvedStaticRoute
+  /**
+   * Path prefix this route is mounted under (e.g. `/docs`). Used together with
+   * {@link stripBasePathPrefix} to map request paths to the target. `/` (the
+   * host default) is a no-op.
+   */
+  basePath?: string
+  /**
+   * Whether to strip {@link basePath} from the request pathname before
+   * resolving the target.
+   *
+   * - Static routes default to `true`: a directory mounted at `/docs` serves
+   *   its own `index.html` for `/docs` and `<root>/guide` for `/docs/guide`.
+   * - Proxy routes default to `false`: most apps own their namespace (an app
+   *   mounted at `/api` expects to still see `/api/...`), matching rpx's
+   *   `PathRewrite.stripPrefix` default and nginx `proxy_pass` (no trailing
+   *   slash) behavior.
+   *
+   * When unset, the per-transport default above applies.
+   */
+  stripBasePathPrefix?: boolean
 }
 
-export type GetRoute = (hostname: string) => ProxyRoute | undefined
+/**
+ * Resolve a route for an incoming request. `pathname` enables path-based
+ * routing within a host (e.g. `/api/*` → app, `/docs*` → static dir). Callers
+ * that only route by host can ignore the second argument — it's optional so
+ * existing host-only `getRoute` callbacks remain valid.
+ */
+export type GetRoute = (hostname: string, pathname: string) => ProxyRoute | undefined
 
 export type ProxyFetchHandler = (req: Request, server?: ProxyServer) => Promise<Response | undefined>
 
@@ -80,15 +106,37 @@ function extractHostname(req: Request): string {
 }
 
 /**
+ * Strip the route's mount prefix (`basePath`) from a request pathname so a
+ * target mounted under `/docs` sees `/` for `/docs` and `/guide` for
+ * `/docs/guide`. A `/` (or empty) base strips nothing. The result always keeps
+ * a leading `/`.
+ */
+export function stripBasePath(pathname: string, basePath?: string): string {
+  if (!basePath || basePath === '/')
+    return pathname
+  if (pathname === basePath)
+    return '/'
+  if (pathname.startsWith(`${basePath}/`)) {
+    const rest = pathname.slice(basePath.length)
+    return rest === '' ? '/' : rest
+  }
+  return pathname
+}
+
+/**
  * Resolve the upstream target (`host` + `path`) for a request against a route,
  * applying any matching path rewrite.
  */
 function resolveTarget(req: Request, route: ProxyRoute, verbose?: boolean): { targetHost: string, targetPath: string, search: string } {
   const url = new URL(req.url)
   let targetHost = route.sourceHost ?? ''
-  let targetPath = url.pathname
+  // Proxy backends preserve their mount prefix by default (most apps own their
+  // `/api` namespace), opting in to stripping via `stripBasePathPrefix`.
+  // Explicit `pathRewrites` still apply on top of this.
+  const stripBase = route.stripBasePathPrefix ?? false
+  let targetPath = stripBase ? stripBasePath(url.pathname, route.basePath) : url.pathname
 
-  const rewriteMatch = resolvePathRewrite(url.pathname, route.pathRewrites)
+  const rewriteMatch = resolvePathRewrite(targetPath, route.pathRewrites)
   if (rewriteMatch) {
     targetHost = rewriteMatch.targetHost
     targetPath = rewriteMatch.targetPath
@@ -110,15 +158,20 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
     const url = new URL(req.url)
     const hostname = extractHostname(req)
 
-    const route = getRoute(hostname)
+    const route = getRoute(hostname, url.pathname)
     if (!route) {
       debugLog('request', `No route found for host: ${hostname}`, verbose)
       return new Response(`No proxy configured for ${hostname}`, { status: 404 })
     }
 
-    // Static file serving short-circuits everything else.
-    if (route.static)
-      return serveStaticFile(url.pathname, route.static)
+    // Static file serving short-circuits everything else. Strip the route's
+    // mount prefix (default for static) so a dir mounted at `/docs` serves its
+    // own root for `/docs`.
+    if (route.static) {
+      const strip = route.stripBasePathPrefix ?? true
+      const staticPath = strip ? stripBasePath(url.pathname, route.basePath) : url.pathname
+      return serveStaticFile(staticPath, route.static)
+    }
 
     // WebSocket upgrade: hand the socket to Bun and dial the upstream on open.
     if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
