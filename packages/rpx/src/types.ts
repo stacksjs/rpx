@@ -113,6 +113,60 @@ export interface ProductionTlsConfig {
   certsDir?: string
 }
 
+/**
+ * On-demand TLS: issue a real (Let's Encrypt, http-01) certificate for an
+ * unknown host the first time it's needed, gated by an `ask` callback and/or an
+ * `allowedSuffixes` allowlist to prevent abuse.
+ *
+ * ## Why this is "ask-gated issuance + listener recreate", not at-handshake
+ *
+ * Bun (verified on 1.3.14 + 1.4.0) has **no working SNICallback** and
+ * `server.reload({ tls })` does **not** update certs at runtime. So rpx cannot
+ * mint a cert during the TLS handshake the way Caddy's on-demand TLS does.
+ * Instead rpx:
+ *   1. Sees the first plaintext request for the host on its `:80` listener.
+ *   2. Asks `ask(host)` / checks `allowedSuffixes`; if approved, drives the
+ *      ACME http-01 flow (serving the challenge from its own `:80`).
+ *   3. Writes the PEMs into `certsDir` and rebuilds the `:443` listener with the
+ *      augmented SNI cert set (a sub-second `server.stop()` + re-`Bun.serve`).
+ * The subsequent HTTPS request then finds the freshly-issued cert.
+ *
+ * Issuance can also be triggered programmatically via the manager's
+ * `ensureCert(host)` (e.g. a tunnel server pre-warming a subdomain's cert on
+ * registration) so the cert exists before the first browser hit.
+ */
+export interface OnDemandTlsConfig {
+  /** Master switch. On-demand TLS is opt-in; default `false`. */
+  enabled?: boolean
+  /**
+   * Gate issuance for a given hostname. Return `true` to allow rpx to obtain a
+   * cert, `false` to refuse. Combined with {@link allowedSuffixes} (a host is
+   * approved if either the suffix allowlist matches OR `ask` returns true). If
+   * neither is provided, on-demand issuance refuses every host.
+   */
+  ask?: (host: string) => boolean | Promise<boolean>
+  /**
+   * Allowlist of domain suffixes that may be auto-issued without consulting
+   * `ask`. A host matches a suffix when it equals it or ends with `.<suffix>`
+   * (so `example.com` allows `example.com` and `a.example.com`).
+   */
+  allowedSuffixes?: string[]
+  /** Contact email for the ACME account (recommended by Let's Encrypt). */
+  email?: string
+  /**
+   * Use Let's Encrypt **staging** (untrusted but un-rate-limited) instead of
+   * production. Default `false` (real, trusted, rate-limited certs).
+   */
+  staging?: boolean
+  /**
+   * Directory where issued PEMs are written (`<host>.crt` / `<host>.key`) and
+   * from which existing certs are loaded. Should match the SNI `certsDir` so
+   * issued certs survive restarts. Defaults to the daemon's productionCerts
+   * `certsDir` when wired through the daemon.
+   */
+  certsDir?: string
+}
+
 export interface SharedProxyConfig {
   https: boolean | TlsOption
   cleanup: boolean | CleanupOptions
@@ -142,6 +196,11 @@ export interface SharedProxyConfig {
    * instead of the dev self-signed shared cert.
    */
   productionCerts?: ProductionTlsConfig
+  /**
+   * On-demand TLS: lazily issue a real cert for an unknown (but approved) host
+   * the first time it's needed. Opt-in — see {@link OnDemandTlsConfig}.
+   */
+  onDemandTls?: OnDemandTlsConfig
 }
 
 export type SharedProxyOptions = Partial<SharedProxyConfig>
