@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.16...v0.11.17)
+
+## 🚀 Features
+
+- add createOriginGuard for CDN-in-front origin lockdown ([97ffe1d](https://github.com/stacksjs/rpx/commit/97ffe1d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.17 ([de10c8f](https://github.com/stacksjs/rpx/commit/de10c8f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.15...v0.11.16)
 
 ## 🚀 Features
