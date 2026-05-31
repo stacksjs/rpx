@@ -20,6 +20,7 @@ import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
 import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
 import { ProcessManager } from './process-manager'
+import { createOriginGuard } from './origin-guard'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
 import { isWildcardPattern } from './host-match'
@@ -1323,10 +1324,16 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     }
 
     const routingTable = buildHostRoutes(routeEntries)
-    const sharedFetchHandler = createProxyFetchHandler(
+    const baseFetchHandler = createProxyFetchHandler(
       (host, pathname) => matchHostRoute(routingTable, host, pathname),
       verbose,
     )
+    // Origin lockdown: when a CDN fronts this gateway, reject direct hits to the
+    // fronted hosts that lack the CDN's shared-secret header (the CDN injects it).
+    const originGuard = mergedOptions.originGuard ? createOriginGuard(mergedOptions.originGuard) : null
+    const sharedFetchHandler = originGuard
+      ? (req: Request, server: ProxyServerLike) => originGuard(req) ?? baseFetchHandler(req, server)
+      : baseFetchHandler
     const sharedWsHandler = createProxyWebSocketHandler(verbose)
 
     try {

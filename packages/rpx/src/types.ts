@@ -1,4 +1,5 @@
 import type { TlsConfig, TlsOption } from '@stacksjs/tlsx'
+import type { OriginGuardOptions } from './origin-guard'
 
 export interface StartOptions {
   command: string
@@ -208,6 +209,13 @@ export interface SharedProxyConfig {
    * the first time it's needed. Opt-in — see {@link OnDemandTlsConfig}.
    */
   onDemandTls?: OnDemandTlsConfig
+  /**
+   * Origin lockdown for "CDN in front of rpx" setups. When set, the shared
+   * HTTPS handler rejects requests to the listed hosts that lack the CDN's
+   * shared-secret header — so the publicly-resolvable origin can't be used to
+   * bypass the CDN. See {@link createOriginGuard}.
+   */
+  originGuard?: OriginGuardOptions
 }
 
 export type SharedProxyOptions = Partial<SharedProxyConfig>
