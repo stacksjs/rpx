@@ -783,8 +783,8 @@ export async function isCertTrusted(
     // Different check methods per platform
     if (process.platform === 'darwin') {
       if (options?.serverName)
-        return isRootCaTrustedForSsl(certPath, options.serverName, { verbose: options.verbose })
-      return isRootCaFingerprintInKeychains(certPath, { verbose: options.verbose })
+        return isRootCaTrustedForSsl(certPath, options.serverName, { verbose: options?.verbose })
+      return isRootCaFingerprintInKeychains(certPath, { verbose: options?.verbose })
     }
     else if (process.platform === 'win32') {
       // On Windows, use PowerShell to check the certificate store

@@ -117,6 +117,9 @@ export type { GetRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './pro
 
 export { isWildcardPattern, matchesWildcard, matchHost } from './host-match'
 
+export { createOriginGuard } from './origin-guard'
+export type { OriginGuard, OriginGuardOptions } from './origin-guard'
+
 export {
   buildHostRoutes,
   matchHostList,
