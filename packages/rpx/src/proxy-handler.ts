@@ -125,10 +125,10 @@ export function stripBasePath(pathname: string, basePath?: string): string {
 
 /**
  * Resolve the upstream target (`host` + `path`) for a request against a route,
- * applying any matching path rewrite.
+ * applying any matching path rewrite. Takes the already-parsed `url` so the hot
+ * path never parses `req.url` more than once per request.
  */
-function resolveTarget(req: Request, route: ProxyRoute, verbose?: boolean): { targetHost: string, targetPath: string, search: string } {
-  const url = new URL(req.url)
+function resolveTarget(url: URL, route: ProxyRoute, verbose?: boolean): { targetHost: string, targetPath: string, search: string } {
   let targetHost = route.sourceHost ?? ''
   // Proxy backends preserve their mount prefix by default (most apps own their
   // `/api` namespace), opting in to stripping via `stripBasePathPrefix`.
@@ -178,7 +178,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
       if (!server || !route.sourceHost)
         return new Response('WebSocket upgrade not supported here', { status: 400 })
 
-      const { targetHost, targetPath, search } = resolveTarget(req, route, verbose)
+      const { targetHost, targetPath, search } = resolveTarget(url, route, verbose)
       const targetUrl = `ws://${targetHost}${targetPath}${search}`
 
       const forwardHeaders: Record<string, string> = {}
@@ -203,7 +203,17 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
     if (!route.sourceHost)
       return new Response(`No upstream configured for ${hostname}`, { status: 502 })
 
-    const { targetHost, targetPath, search } = resolveTarget(req, route, verbose)
+    // Strip `.html` and 301 to the clean URL when enabled — before any upstream
+    // work, since the redirect doesn't depend on the origin response.
+    if (route.cleanUrls && url.pathname.endsWith('.html')) {
+      const cleanPath = url.pathname.replace(/\.html$/, '')
+      return new Response(null, {
+        status: 301,
+        headers: { Location: cleanPath },
+      })
+    }
+
+    const { targetHost, targetPath, search } = resolveTarget(url, route, verbose)
     const targetUrl = `http://${targetHost}${targetPath}${search}`
 
     try {
@@ -215,27 +225,15 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
       headers.set('x-forwarded-proto', 'https')
       headers.set('x-forwarded-host', hostname)
 
-      const response = await fetch(targetUrl, {
+      // Return the upstream response directly. Bun streams the body straight
+      // through to the client and forwards status/headers verbatim, so there is
+      // no need to re-wrap it in a fresh Response (which would copy every header
+      // and allocate twice per request on the hot path).
+      return await fetch(targetUrl, {
         method: req.method,
         headers,
         body: req.body,
         redirect: 'manual',
-      })
-
-      // Strip `.html` and 301 to the clean URL when enabled.
-      if (route.cleanUrls && url.pathname.endsWith('.html')) {
-        const cleanPath = url.pathname.replace(/\.html$/, '')
-        return new Response(null, {
-          status: 301,
-          headers: { Location: cleanPath },
-        })
-      }
-
-      const responseHeaders = new Headers(response.headers)
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
       })
     }
     catch (err) {
