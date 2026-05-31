@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.17...v0.11.18)
+
+## 🚀 Features
+
+- apply originGuard in startProxies shared handler ([c25bb65](https://github.com/stacksjs/rpx/commit/c25bb65)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.18 ([f8c062f](https://github.com/stacksjs/rpx/commit/f8c062f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.16...v0.11.17)
 
 ## 🚀 Features
