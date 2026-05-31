@@ -364,6 +364,42 @@ User=root
 Restart=always
 ```
 
+## Benchmarks
+
+rpx ships a reproducible benchmark suite that pits its real request-handling hot
+path against **caddy**and**nginx**, a raw `Bun.serve` proxy (the floor for the
+fetch-based approach), and a direct-to-origin baseline. Latency is measured with
+[mitata](https://github.com/evanwashere/mitata); throughput with
+[`oha`](https://github.com/hatoo/oha) under real concurrency.
+
+```bash
+# from packages/rpx
+bun run bench                 # full suite (latency + throughput)
+bun run bench:latency         # latency only
+bun run bench:throughput      # throughput only
+bun run bench -n 100000 -c 100 --large   # tune load / forward 100 KB bodies
+
+brew install caddy nginx oha  # caddy & nginx are auto-skipped if absent
+```
+
+Representative single-machine run (Apple Silicon, plain HTTP, 50 concurrent,
+keepalive — your numbers will vary, read each proxy _relative to_ `direct` and
+`bun-raw` in the same run):
+
+| Target   | Throughput     | Latency (avg) |
+|----------|---------------:|--------------:|
+| direct   | ~162,000 req/s | ~48 µs        |
+| nginx    | ~86,000 req/s  | ~56 µs        |
+| caddy    | ~67,000 req/s  | ~89 µs        |
+| bun-raw  | ~60,000 req/s  | ~81 µs        |
+| **rpx**|**~55,000 req/s**|**~84 µs** |
+
+rpx lands on par with caddy on throughput while beating it on latency, and sits
+within ~10% of the raw-Bun ceiling — all while doing real host routing and
+adding `X-Forwarded-*` headers. nginx (C, multi-process) leads raw throughput,
+as expected. See [`bench/README.md`](./packages/rpx/bench/README.md) for
+methodology and options.
+
 ## Testing
 
 ```bash
