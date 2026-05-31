@@ -1,7 +1,25 @@
 # Changelog
+
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.14...v0.11.15)
+
+## 🚀 Features
+
+- **daemon**: wire on-demand TLS + ensureCert pre-warm ([a39f95d](https://github.com/stacksjs/rpx/commit/a39f95d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **tls**: on-demand cert manager ([c7fff97](https://github.com/stacksjs/rpx/commit/c7fff97)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **types**: on-demand TLS config ([bb37b1c](https://github.com/stacksjs/rpx/commit/bb37b1c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.15 ([6162a22](https://github.com/stacksjs/rpx/commit/6162a22)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: bump @stacksjs/tlsx to ^0.13.7 (ACME support) ([573b161](https://github.com/stacksjs/rpx/commit/573b161)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.13...v0.11.14)
 
-### 🚀 Features
+## 🚀 Features
 
 - **gateway**: wire ws proxying, static + wildcard routing, SNI certs ([53f01c1](https://github.com/stacksjs/rpx/commit/53f01c1)) _(by Chris <chrisbreuer93@gmail.com>)_
 - **tls**: build per-domain SNI cert array from real PEMs ([3e9c391](https://github.com/stacksjs/rpx/commit/3e9c391)) _(by Chris <chrisbreuer93@gmail.com>)_
