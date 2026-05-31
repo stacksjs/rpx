@@ -597,9 +597,19 @@ async function createProxyServer(
             const url = new URL(req.url)
             debugLog('request', `Bun.serve received: ${req.method} ${url.pathname}`, verbose)
 
-            // Build target URL from sourceUrl object
+            // Handle clean URLs redirect before any upstream work — the
+            // redirect doesn't depend on the origin response.
+            if (cleanUrls && url.pathname.endsWith('.html')) {
+              const cleanPath = url.pathname.replace(/\.html$/, '')
+              return new Response(null, {
+                status: 301,
+                headers: { Location: cleanPath },
+              })
+            }
+
+            // Build target URL by string concat (avoids an extra URL parse).
             const baseUrl = `http://${sourceUrl.host}`
-            const targetUrl = new URL(url.pathname + url.search, baseUrl)
+            const targetUrl = `${baseUrl}${url.pathname}${url.search}`
 
             // Forward the request
             try {
@@ -612,29 +622,14 @@ async function createProxyServer(
               headers.set('x-forwarded-proto', 'https')
               headers.set('x-forwarded-host', to)
 
-              const response = await fetch(targetUrl.toString(), {
+              // Return the upstream response directly — Bun streams the body and
+              // forwards status/headers verbatim, so re-wrapping it in a fresh
+              // Response would just copy every header and allocate twice.
+              return await fetch(targetUrl, {
                 method: req.method,
                 headers,
                 body: req.body,
                 redirect: 'manual',
-              })
-
-              // Clone response with modified headers if needed
-              const responseHeaders = new Headers(response.headers)
-
-              // Handle clean URLs redirect
-              if (cleanUrls && url.pathname.endsWith('.html')) {
-                const cleanPath = url.pathname.replace(/\.html$/, '')
-                return new Response(null, {
-                  status: 301,
-                  headers: { Location: cleanPath },
-                })
-              }
-
-              return new Response(response.body, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: responseHeaders,
               })
             }
             catch (err) {
