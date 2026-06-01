@@ -3,6 +3,34 @@ import { describe, expect, it, spyOn } from 'bun:test'
 import * as utils from '../src/utils'
 
 describe('utils', () => {
+  describe('shouldReusePort', () => {
+    const original = process.env.RPX_REUSE_PORT
+    const restore = () => {
+      if (original === undefined)
+        delete process.env.RPX_REUSE_PORT
+      else
+        process.env.RPX_REUSE_PORT = original
+    }
+
+    it('is off by default', () => {
+      delete process.env.RPX_REUSE_PORT
+      expect(utils.shouldReusePort()).toBe(false)
+      restore()
+    })
+
+    it('opts in on "1" or "true" only', () => {
+      process.env.RPX_REUSE_PORT = '1'
+      expect(utils.shouldReusePort()).toBe(true)
+      process.env.RPX_REUSE_PORT = 'true'
+      expect(utils.shouldReusePort()).toBe(true)
+      process.env.RPX_REUSE_PORT = 'yes'
+      expect(utils.shouldReusePort()).toBe(false)
+      process.env.RPX_REUSE_PORT = '0'
+      expect(utils.shouldReusePort()).toBe(false)
+      restore()
+    })
+  })
+
   describe('extractHostname', () => {
     it('extracts hostname from single proxy options', () => {
       const options: ProxyOption = {

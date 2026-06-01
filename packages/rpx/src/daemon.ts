@@ -38,7 +38,7 @@ import {
   syncDevelopmentDnsFromRegistry,
   tearDownDevelopmentDns,
 } from './dns'
-import { debugLog } from './utils'
+import { debugLog, shouldReusePort } from './utils'
 
 export interface DaemonOptions {
   verbose?: boolean
@@ -439,6 +439,9 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     return Bun.serve({
       port: httpsPort,
       hostname,
+      // Opt-in (RPX_REUSE_PORT): multi-instance :443 sharing on Linux. Off by
+      // default — see shouldReusePort(). rpx never spawns its own cluster.
+      reusePort: shouldReusePort(),
       tls: tlsFor(entries) as any,
       fetch(req: Request, server: unknown) {
         return fetchHandler(req, server as ProxyServerLike)

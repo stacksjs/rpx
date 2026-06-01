@@ -26,7 +26,7 @@ import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler
 import { isWildcardPattern } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
 import { resolveStaticRoute } from './static-files'
-import { debugLog, getSudoPassword, safeStringify } from './utils'
+import { debugLog, getSudoPassword, safeStringify, shouldReusePort } from './utils'
 
 const processManager = new ProcessManager()
 const version = '0.12.0'
@@ -585,6 +585,7 @@ async function createProxyServer(
         const bunServer = Bun.serve({
           port: listenPort,
           hostname,
+          reusePort: shouldReusePort(),
           tls: {
             key: ssl.key,
             cert: ssl.cert,
@@ -1335,6 +1336,9 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       const bunServer = Bun.serve({
         port: listenPort,
         hostname: '0.0.0.0',
+        // Opt-in (RPX_REUSE_PORT): lets multiple rpx instances share :443 for
+        // multi-core scaling on Linux. Off by default — see shouldReusePort().
+        reusePort: shouldReusePort(),
         tls: {
           key: sslConfig.key,
           cert: sslConfig.cert,

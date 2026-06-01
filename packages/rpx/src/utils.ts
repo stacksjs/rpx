@@ -42,6 +42,23 @@ export function debugLog(category: string, message: string, verbose?: boolean): 
     logger.debug(`[rpx:${category}] ${message}`)
 }
 
+/**
+ * Whether the proxy's listeners should set `reusePort`. Off by default: rpx is a
+ * single-instance local-dev proxy, and one instance gains nothing from
+ * `SO_REUSEPORT` while losing the helpful "port 443 already in use" guard.
+ *
+ * Opt in with `RPX_REUSE_PORT=1` when running **multiple** rpx instances behind a
+ * process manager (systemd/pm2/k8s) on **Linux**, where the kernel load-balances
+ * accepted connections across them for multi-core scaling. It is a no-op on
+ * macOS/BSD, whose `SO_REUSEPORT` does not load-balance across processes — so
+ * rpx never spawns a worker cluster itself; scaling is left to the OS + your
+ * supervisor, which is where it belongs for a dev proxy.
+ */
+export function shouldReusePort(): boolean {
+  const v = process.env.RPX_REUSE_PORT
+  return v === '1' || v === 'true'
+}
+
 const REDACTED = '[redacted]'
 const SENSITIVE_KEYS = new Set([
   'certificate',
