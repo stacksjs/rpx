@@ -22,7 +22,7 @@ jobs:
       - name: Clone Home + build dataplane
         run: |
           git clone --depth 1 https://github.com/home-lang/home.git home
-          cd home/lang/packages/dataplane
+          cd home/packages/dataplane
           zig build -Doptimize=ReleaseFast
           echo "DP=$PWD/zig-out/bin/dataplane" >> "$GITHUB_ENV"
 
