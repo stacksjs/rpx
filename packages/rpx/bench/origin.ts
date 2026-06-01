@@ -1,46 +1,36 @@
 /**
- * Upstream origin server shared by every proxy under test. It is intentionally
- * as fast as possible (pre-built static responses, no per-request allocation)
- * so the benchmark measures proxy overhead, not backend work.
+ * Upstream origin shared by every proxy under test. Runs as a small cluster of
+ * `reusePort` worker processes so it stays well ahead of the proxies and never
+ * becomes the bottleneck (even when the proxies themselves scale across cores).
  *
- * Routes:
- *   GET /            → small JSON body (~30 B)
- *   GET /large       → ~100 KB body (payload-forwarding throughput)
- *   GET /<anything>  → small JSON body
+ * Routes (see `worker.ts`):
+ *   GET /        → small JSON body (~30 B)
+ *   GET /large   → ~100 KB body
  */
+import type { Subprocess } from 'bun'
 import type { BenchTarget } from './lib'
-import { HOST } from './lib'
+import * as path from 'node:path'
+import { HOST, killProc, waitForPort } from './lib'
 
-const SMALL_BODY = JSON.stringify({ ok: true, proxy: 'bench' })
-const LARGE_BODY = 'x'.repeat(100 * 1024)
+const WORKER = path.join(import.meta.dir, 'worker.ts')
 
 export interface Origin extends BenchTarget {
   port: number
   host: string
 }
 
-export function startOrigin(port: number): Origin {
-  const server = Bun.serve({
-    port,
-    hostname: HOST,
-    fetch(req: Request): Response {
-      const url = new URL(req.url)
-      if (url.pathname === '/large') {
-        return new Response(LARGE_BODY, {
-          headers: { 'content-type': 'text/plain', 'content-length': String(LARGE_BODY.length) },
-        })
-      }
-      return new Response(SMALL_BODY, {
-        headers: { 'content-type': 'application/json', 'content-length': String(SMALL_BODY.length) },
-      })
-    },
-  })
+export async function startOrigin(port: number, workers = 2): Promise<Origin> {
+  const procs: Subprocess[] = []
+  for (let i = 0; i < workers; i++)
+    procs.push(Bun.spawn(['bun', WORKER, 'origin', String(port)], { stdout: 'ignore', stderr: 'pipe', stdin: 'ignore' }))
+
+  await waitForPort(port)
 
   return {
     name: 'origin',
     url: `http://${HOST}:${port}`,
     port,
     host: `${HOST}:${port}`,
-    stop: () => server.stop(true),
+    stop: async () => { await Promise.all(procs.map(p => killProc(p))) },
   }
 }

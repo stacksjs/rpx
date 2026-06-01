@@ -52,6 +52,7 @@
     "compile:darwin-x64": "bun build ./bin/cli.ts --compile --minify --target=bun-darwin-x64 --outfile bin/rpx-darwin-x64",
     "compile:darwin-arm64": "bun build ./bin/cli.ts --compile --minify --target=bun-darwin-arm64 --outfile bin/rpx-darwin-arm64",
     "bench": "bun run bench/run.ts",
+    "bench:html": "bun run bench/run.ts --html",
     "bench:latency": "bun run bench/run.ts --latency",
     "bench:throughput": "bun run bench/run.ts --throughput",
     "lint": "bunx --bun pickier .",

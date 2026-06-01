@@ -6,10 +6,12 @@
  *
  * Usage:
  *   bun run bench                      # full suite (latency + throughput)
+ *   bun run bench --html               # serve a ~16 KB HTML page (core workload)
  *   bun run bench --latency            # latency only
  *   bun run bench --throughput         # throughput only
  *   bun run bench --large              # forward ~100 KB bodies instead of ~30 B
  *   bun run bench -n 50000 -c 100      # tune throughput request count / concurrency
+ *   bun run bench --cores 1            # pin every target to N cores (apples-to-apples)
  */
 import type { BenchTarget } from './lib'
 import type { ThroughputResult } from './throughput'
@@ -44,16 +46,21 @@ async function main(): Promise<void> {
   const onlyLatency = process.argv.includes('--latency')
   const onlyThroughput = process.argv.includes('--throughput')
   const large = process.argv.includes('--large')
-  const reqPath = large ? '/large' : '/'
+  const html = process.argv.includes('--html')
+  // Serving HTML is the core reverse-proxy workload, so `--html` is the headline
+  // mode; `--large` forwards a ~100 KB body; default is a tiny JSON payload.
+  const reqPath = html ? '/html' : large ? '/large' : '/'
   const requests = arg('-n', 50_000)
   const concurrency = arg('-c', 50)
   const keepalive = !process.argv.includes('--no-keepalive')
+  const coresArg = arg('--cores', 0)
+  const cores = coresArg > 0 ? coresArg : undefined
 
   const originPort = await freePort()
-  const origin = startOrigin(originPort)
+  const origin = await startOrigin(originPort)
   console.log(`origin listening on ${origin.url}`)
 
-  const targets: BenchTarget[] = await startAllTargets(origin)
+  const targets: BenchTarget[] = await startAllTargets(origin, { cores })
   console.log(`targets: ${targets.map(t => t.name).join(', ')}`)
 
   let thr: ThroughputResult[] = []

@@ -19,50 +19,42 @@ import type { BenchTarget } from './lib'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { buildHostRoutes, createProxyFetchHandler, matchHostRoute } from '../src'
 import { freePort, hasBinary, HOST, killProc, spawnProc, waitForPort } from './lib'
 
-/** rpx, exercised through its actual shared-server request handler. */
-export async function startRpx(origin: Origin): Promise<BenchTarget> {
+const WORKER = path.join(import.meta.dir, 'worker.ts')
+
+/** Per-target core counts. `cores` (if set) overrides everything for fairness. */
+export interface TargetOptions {
+  /** Apply the same worker/core count to every target (apples-to-apples). */
+  cores?: number
+}
+
+/** Spawn `n` `reusePort` worker processes for a given worker mode. */
+async function startCluster(name: string, mode: 'rpx' | 'bun', origin: Origin, n: number): Promise<BenchTarget> {
   const port = await freePort()
-  // The same routing table rpx builds for its shared :443 server. Keyed under
-  // the host oha/fetch will send (`127.0.0.1`), so `matchHostRoute` resolves it.
-  const table = buildHostRoutes([{ host: HOST, route: { sourceHost: origin.host } }])
-  const handler = createProxyFetchHandler((host, pathname) => matchHostRoute(table, host, pathname))
-
-  const server = Bun.serve({
-    port,
-    hostname: HOST,
-    fetch: (req, srv) => handler(req, srv as any),
-  })
-
+  const procs: Subprocess[] = []
+  for (let i = 0; i < n; i++)
+    procs.push(Bun.spawn(['bun', WORKER, mode, String(port), origin.host], { stdout: 'ignore', stderr: 'pipe', stdin: 'ignore' }))
   await waitForPort(port)
-  return { name: 'rpx', url: `http://${HOST}:${port}`, stop: () => server.stop(true) }
+  return {
+    name,
+    url: `http://${HOST}:${port}`,
+    stop: async () => { await Promise.all(procs.map(p => killProc(p))) },
+  }
+}
+
+/** rpx, exercised through its actual shared-server request handler. */
+export function startRpx(origin: Origin, cores = 1): Promise<BenchTarget> {
+  return startCluster('rpx', 'rpx', origin, cores)
 }
 
 /** Minimal Bun.serve + fetch proxy — the floor for the fetch-based approach. */
-export async function startBunRaw(origin: Origin): Promise<BenchTarget> {
-  const port = await freePort()
-  const base = `http://${origin.host}`
-  const server = Bun.serve({
-    port,
-    hostname: HOST,
-    fetch(req: Request) {
-      const url = new URL(req.url)
-      return fetch(`${base}${url.pathname}${url.search}`, {
-        method: req.method,
-        headers: req.headers,
-        body: req.body,
-        redirect: 'manual',
-      })
-    },
-  })
-  await waitForPort(port)
-  return { name: 'bun-raw', url: `http://${HOST}:${port}`, stop: () => server.stop(true) }
+export function startBunRaw(origin: Origin, cores = 1): Promise<BenchTarget> {
+  return startCluster('bun-raw', 'bun', origin, cores)
 }
 
-/** caddy via a generated Caddyfile (`reverse_proxy`). */
-export async function startCaddy(origin: Origin): Promise<BenchTarget | null> {
+/** caddy via a generated Caddyfile (`reverse_proxy`). `cores` caps GOMAXPROCS. */
+export async function startCaddy(origin: Origin, cores?: number): Promise<BenchTarget | null> {
   if (!hasBinary('caddy'))
     return null
   const port = await freePort()
@@ -79,7 +71,13 @@ export async function startCaddy(origin: Origin): Promise<BenchTarget | null> {
     '',
   ].join('\n'))
 
-  const proc: Subprocess = spawnProc(['caddy', 'run', '--config', cfgPath, '--adapter', 'caddyfile'])
+  const env = cores ? { ...process.env, GOMAXPROCS: String(cores) } : process.env
+  const proc: Subprocess = Bun.spawn(['caddy', 'run', '--config', cfgPath, '--adapter', 'caddyfile'], {
+    env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    stdin: 'ignore',
+  })
   await waitForPort(port)
   return {
     name: 'caddy',
@@ -92,7 +90,7 @@ export async function startCaddy(origin: Origin): Promise<BenchTarget | null> {
 }
 
 /** nginx via a generated config (`proxy_pass` with upstream keepalive). */
-export async function startNginx(origin: Origin): Promise<BenchTarget | null> {
+export async function startNginx(origin: Origin, cores?: number): Promise<BenchTarget | null> {
   if (!hasBinary('nginx'))
     return null
   const port = await freePort()
@@ -101,7 +99,7 @@ export async function startNginx(origin: Origin): Promise<BenchTarget | null> {
     fs.mkdirSync(path.join(dir, sub), { recursive: true })
   const cfgPath = path.join(dir, 'nginx.conf')
   fs.writeFileSync(cfgPath, `
-worker_processes auto;
+worker_processes ${cores ?? 'auto'};
 daemon off;
 pid ${path.join(dir, 'nginx.pid')};
 error_log ${path.join(dir, 'logs/error.log')} crit;
@@ -153,19 +151,26 @@ export function directBaseline(origin: Origin): BenchTarget {
   return { name: 'direct', url: origin.url, stop: () => {} }
 }
 
-/** Start every available target. Missing external proxies are skipped (logged). */
-export async function startAllTargets(origin: Origin): Promise<BenchTarget[]> {
+/**
+ * Start every available target. Missing external proxies are skipped (logged).
+ * When `opts.cores` is set, every target is pinned to that many cores for an
+ * apples-to-apples comparison; otherwise rpx/bun-raw run single-core and
+ * nginx/caddy use their native all-core defaults (status quo).
+ */
+export async function startAllTargets(origin: Origin, opts: TargetOptions = {}): Promise<BenchTarget[]> {
+  const { cores } = opts
+  const jsCores = cores ?? 1 // rpx/bun-raw default to single-core unless pinned
   const targets: BenchTarget[] = [directBaseline(origin)]
-  targets.push(await startRpx(origin))
-  targets.push(await startBunRaw(origin))
+  targets.push(await startRpx(origin, jsCores))
+  targets.push(await startBunRaw(origin, jsCores))
 
-  const caddy = await startCaddy(origin).catch((e) => { console.error('caddy skipped:', e.message); return null })
+  const caddy = await startCaddy(origin, cores).catch((e) => { console.error('caddy skipped:', e.message); return null })
   if (caddy)
     targets.push(caddy)
   else if (!hasBinary('caddy'))
     console.error('caddy not installed — skipping (brew install caddy)')
 
-  const nginx = await startNginx(origin).catch((e) => { console.error('nginx skipped:', e.message); return null })
+  const nginx = await startNginx(origin, cores).catch((e) => { console.error('nginx skipped:', e.message); return null })
   if (nginx)
     targets.push(nginx)
   else if (!hasBinary('nginx'))
