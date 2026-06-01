@@ -386,19 +386,79 @@ Representative single-machine run (Apple Silicon, plain HTTP, 50 concurrent,
 keepalive — your numbers will vary, read each proxy _relative to_ `direct` and
 `bun-raw` in the same run):
 
+Tiny-payload run (routing-bound — measures per-request overhead):
+
 | Target   | Throughput     | Latency (avg) |
 |----------|---------------:|--------------:|
-| direct   | ~162,000 req/s | ~48 µs        |
-| nginx    | ~86,000 req/s  | ~56 µs        |
-| caddy    | ~67,000 req/s  | ~89 µs        |
-| bun-raw  | ~60,000 req/s  | ~81 µs        |
-| **rpx**|**~55,000 req/s**|**~84 µs** |
+| direct   | ~171,000 req/s | ~24 µs        |
+| nginx    | ~96,000 req/s  | ~49 µs        |
+| bun-raw  | ~84,000 req/s  | ~54 µs        |
+| **rpx**|**~80,000 req/s**|**~59 µs** |
+| caddy    | ~59,000 req/s  | ~72 µs        |
 
-rpx lands on par with caddy on throughput while beating it on latency, and sits
-within ~10% of the raw-Bun ceiling — all while doing real host routing and
-adding `X-Forwarded-*` headers. nginx (C, multi-process) leads raw throughput,
-as expected. See [`bench/README.md`](./packages/rpx/bench/README.md) for
-methodology and options.
+At low concurrency rpx beats caddy and does real host routing + `X-Forwarded-*`
+on top; nginx (C) and a bare `Bun.serve` + `fetch` proxy lead raw throughput.
+
+HTML run (`bun run bench:html`, a ~16 KB page — the core real-world workload,
+body-bound):
+
+| Target   | Throughput    |
+|----------|--------------:|
+| direct   | ~98,000 req/s |
+| nginx    | ~77,000 req/s |
+| caddy    | ~38,000 req/s |
+| bun-raw  | ~27,000 req/s |
+| **rpx**|**~25,000 req/s**|
+
+On body-heavy responses the picture changes: nginx splices kernel→kernel
+(zero-copy), while Bun copies bodies through userspace — so **even a bare
+`Bun.serve` + `fetch` proxy (`bun-raw`) is ~3× behind nginx**. That gap is a Bun
+platform ceiling, not rpx-specific; rpx tracks right under it (~0.9× of bare
+fetch). See [`bench/FINDINGS.md`](./packages/rpx/bench/FINDINGS.md).
+
+### Forwarding transport: a bounded keepalive pool
+
+rpx forwards upstream over a **pooled raw-socket HTTP/1.1 client**
+([`src/proxy-pool.ts`](./packages/rpx/src/proxy-pool.ts)) rather than `fetch()`.
+Bun's `fetch()` churns upstream connections under load: even with a concurrency
+cap it opens and closes connections faster than the OS recycles ephemeral ports,
+they pile into `TIME_WAIT`, and throughput collapses ~15× (measured: ~11k
+`TIME_WAIT`, 45% errors at 400 concurrent). The pool caps the **total** open
+connections per host (`RPX_MAX_UPSTREAM_CONNS`, default 256) and **queues** excess
+requests, reusing a fixed set of keepalive sockets indefinitely — so there is no
+churn. The payoff is staying flat under load where a `fetch` proxy falls over:
+
+| Concurrency | `fetch`-based     | **rpx** (pool)   |
+|-------------|------------------:|-----------------:|
+| 50          | ~85,000 req/s     | ~80,000 req/s    |
+| 400         | ~4,800 req/s 💥 (45% errors) | ~34,000 req/s ✅ (0 errors) |
+
+(At 400 concurrent the pool held **10** `TIME_WAIT` sockets vs fetch's ~11,000.)
+The pool declines what it can't cleanly handle — streaming/large uploads,
+`Expect:`, protocol upgrades — falling back to `fetch()` transparently. Optional
+`RPX_UPSTREAM_TIMEOUT=<seconds>` (default off) bounds a stalled upstream → `504`,
+resetting on every byte so it never severs a live stream (SSE/HMR/long-poll).
+
+See [`bench/README.md`](./packages/rpx/bench/README.md) and
+[`bench/FINDINGS.md`](./packages/rpx/bench/FINDINGS.md) for methodology, the
+apples-to-apples `--cores N` mode, and the full investigation.
+
+### Scaling across cores (opt-in)
+
+A single rpx instance already serves ~80k small req/s on one core — far beyond
+any local workload — so it does **not** spawn a worker cluster itself. If you run
+rpx under production load on **Linux** and want it to use multiple
+cores, start several instances with `RPX_REUSE_PORT=1` under a process manager
+(systemd / pm2 / a container replica set); the kernel's `SO_REUSEPORT` balances
+accepted connections across them:
+
+```bash
+RPX_REUSE_PORT=1 rpx start   # × N instances, behind systemd/pm2/etc. (Linux)
+```
+
+It's **off by default** (so a stray second instance still fails loudly with
+"port in use" rather than silently co-binding), and it's a **no-op on macOS**,
+whose `SO_REUSEPORT` doesn't load-balance across processes.
 
 ## Testing
 
