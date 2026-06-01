@@ -16,6 +16,7 @@
 import type { ServerWebSocket } from 'bun'
 import type { ResolvedStaticRoute } from './static-files'
 import type { PathRewrite } from './types'
+import { FALLBACK, proxyViaPool, TIMEOUT } from './proxy-pool'
 import { serveStaticFile } from './static-files'
 import { debugLog, resolvePathRewrite } from './utils'
 
@@ -101,8 +102,10 @@ const HOP_BY_HOP = new Set([
 
 function extractHostname(req: Request): string {
   const hostHeader = req.headers.get('host') || ''
-  // Strip port (`stacks.localhost:443` → `stacks.localhost`).
-  return hostHeader.split(':')[0]
+  // Strip port (`stacks.localhost:443` → `stacks.localhost`) without allocating
+  // an array (`split`) on every request.
+  const colon = hostHeader.indexOf(':')
+  return colon === -1 ? hostHeader : hostHeader.slice(0, colon)
 }
 
 /**
@@ -125,25 +128,42 @@ export function stripBasePath(pathname: string, basePath?: string): string {
 
 /**
  * Resolve the upstream target (`host` + `path`) for a request against a route,
- * applying any matching path rewrite. Takes the already-parsed `url` so the hot
- * path never parses `req.url` more than once per request.
+ * applying any matching path rewrite. Takes the already-extracted `pathname` so
+ * the hot path never re-parses the request URL.
  */
-function resolveTarget(url: URL, route: ProxyRoute, verbose?: boolean): { targetHost: string, targetPath: string, search: string } {
+function resolveTarget(pathname: string, route: ProxyRoute, verbose?: boolean): { targetHost: string, targetPath: string } {
   let targetHost = route.sourceHost ?? ''
   // Proxy backends preserve their mount prefix by default (most apps own their
   // `/api` namespace), opting in to stripping via `stripBasePathPrefix`.
   // Explicit `pathRewrites` still apply on top of this.
   const stripBase = route.stripBasePathPrefix ?? false
-  let targetPath = stripBase ? stripBasePath(url.pathname, route.basePath) : url.pathname
+  let targetPath = stripBase ? stripBasePath(pathname, route.basePath) : pathname
 
   const rewriteMatch = resolvePathRewrite(targetPath, route.pathRewrites)
   if (rewriteMatch) {
     targetHost = rewriteMatch.targetHost
     targetPath = rewriteMatch.targetPath
-    debugLog('request', `Path rewrite: ${url.pathname} → ${targetHost}${targetPath}`, verbose)
+    debugLog('request', `Path rewrite: ${pathname} → ${targetHost}${targetPath}`, verbose)
   }
 
-  return { targetHost, targetPath, search: url.search }
+  return { targetHost, targetPath }
+}
+
+/**
+ * Extract the origin-form path and query from a request URL without the cost of
+ * constructing a `URL`. `req.url` is always absolute-form here
+ * (`http://host/path?q`), so we slice from the first `/` after the authority.
+ * The raw (un-decoded) path is forwarded verbatim, which is what a proxy wants.
+ */
+function splitPathQuery(rawUrl: string): { pathname: string, search: string } {
+  const schemeEnd = rawUrl.indexOf('://')
+  const pathStart = schemeEnd === -1 ? rawUrl.indexOf('/') : rawUrl.indexOf('/', schemeEnd + 3)
+  if (pathStart === -1)
+    return { pathname: '/', search: '' }
+  const q = rawUrl.indexOf('?', pathStart)
+  if (q === -1)
+    return { pathname: rawUrl.slice(pathStart), search: '' }
+  return { pathname: rawUrl.slice(pathStart, q), search: rawUrl.slice(q) }
 }
 
 /**
@@ -155,10 +175,10 @@ function resolveTarget(url: URL, route: ProxyRoute, verbose?: boolean): { target
  */
 export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): ProxyFetchHandler {
   return async (req: Request, server?: ProxyServer): Promise<Response | undefined> => {
-    const url = new URL(req.url)
+    const { pathname, search } = splitPathQuery(req.url)
     const hostname = extractHostname(req)
 
-    const route = getRoute(hostname, url.pathname)
+    const route = getRoute(hostname, pathname)
     if (!route) {
       debugLog('request', `No route found for host: ${hostname}`, verbose)
       return new Response(`No proxy configured for ${hostname}`, { status: 404 })
@@ -169,7 +189,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
     // own root for `/docs`.
     if (route.static) {
       const strip = route.stripBasePathPrefix ?? true
-      const staticPath = strip ? stripBasePath(url.pathname, route.basePath) : url.pathname
+      const staticPath = strip ? stripBasePath(pathname, route.basePath) : pathname
       return serveStaticFile(staticPath, route.static)
     }
 
@@ -178,7 +198,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
       if (!server || !route.sourceHost)
         return new Response('WebSocket upgrade not supported here', { status: 400 })
 
-      const { targetHost, targetPath, search } = resolveTarget(url, route, verbose)
+      const { targetHost, targetPath } = resolveTarget(pathname, route, verbose)
       const targetUrl = `ws://${targetHost}${targetPath}${search}`
 
       const forwardHeaders: Record<string, string> = {}
@@ -205,38 +225,64 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
 
     // Strip `.html` and 301 to the clean URL when enabled — before any upstream
     // work, since the redirect doesn't depend on the origin response.
-    if (route.cleanUrls && url.pathname.endsWith('.html')) {
-      const cleanPath = url.pathname.replace(/\.html$/, '')
+    if (route.cleanUrls && pathname.endsWith('.html')) {
+      const cleanPath = pathname.replace(/\.html$/, '')
       return new Response(null, {
         status: 301,
         headers: { Location: cleanPath },
       })
     }
 
-    const { targetHost, targetPath, search } = resolveTarget(url, route, verbose)
-    const targetUrl = `http://${targetHost}${targetPath}${search}`
+    const { targetHost, targetPath } = resolveTarget(pathname, route, verbose)
+    const originOverride = route.changeOrigin ? `http://${route.sourceHost}` : undefined
 
+    // Forward through the pooled raw-socket transport: a reused keepalive pool
+    // per upstream (like nginx's `keepalive`) that stays flat under load, where
+    // fetch()'s connection churn exhausts ephemeral ports and collapses (~15x).
+    // Forwarded headers (host, x-forwarded-*, origin) are serialized inline with
+    // the passthrough headers — no intermediate Headers copy on the hot path. The
+    // pool declines what it doesn't handle (streaming uploads, Expect, upgrades)
+    // via FALLBACK, and bodyless requests can retry through fetch() as a backstop.
+    const hasBody = req.body != null && req.method !== 'GET' && req.method !== 'HEAD'
     try {
-      const headers = new Headers(req.headers)
-      headers.set('host', targetHost)
-      if (route.changeOrigin)
-        headers.set('origin', `http://${route.sourceHost}`)
-      headers.set('x-forwarded-for', '127.0.0.1')
-      headers.set('x-forwarded-proto', 'https')
-      headers.set('x-forwarded-host', hostname)
-
-      // Return the upstream response directly. Bun streams the body straight
-      // through to the client and forwards status/headers verbatim, so there is
-      // no need to re-wrap it in a fresh Response (which would copy every header
-      // and allocate twice per request on the hot path).
-      return await fetch(targetUrl, {
+      return await proxyViaPool({
+        hostPort: targetHost,
         method: req.method,
-        headers,
+        path: `${targetPath}${search}`,
+        reqHeaders: req.headers,
+        forwardedHost: hostname,
+        originOverride,
         body: req.body,
-        redirect: 'manual',
       })
     }
     catch (err) {
+      // Upstream stalled past the configured timeout → 504 (no fetch retry — it
+      // would just stall again).
+      if (err === TIMEOUT) {
+        debugLog('request', `Upstream timeout for ${hostname}`, verbose)
+        return new Response('Gateway Timeout', { status: 504 })
+      }
+      if (err === FALLBACK || !hasBody) {
+        try {
+          const headers = new Headers(req.headers)
+          headers.set('host', targetHost)
+          headers.set('x-forwarded-for', '127.0.0.1')
+          headers.set('x-forwarded-proto', 'https')
+          headers.set('x-forwarded-host', hostname)
+          if (originOverride !== undefined)
+            headers.set('origin', originOverride)
+          return await fetch(`http://${targetHost}${targetPath}${search}`, {
+            method: req.method,
+            headers,
+            body: req.body,
+            redirect: 'manual',
+          })
+        }
+        catch (fetchErr) {
+          debugLog('request', `Proxy error for ${hostname}: ${fetchErr}`, verbose)
+          return new Response(`Proxy Error: ${fetchErr}`, { status: 502 })
+        }
+      }
       debugLog('request', `Proxy error for ${hostname}: ${err}`, verbose)
       return new Response(`Proxy Error: ${err}`, { status: 502 })
     }
