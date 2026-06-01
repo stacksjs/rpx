@@ -68,6 +68,15 @@ export interface DaemonOptions {
   onDemandTls?: OnDemandTlsConfig
   /** PID-GC interval in ms. Defaults to 5000. */
   gcIntervalMs?: number
+  /**
+   * Run as a multi-core cluster: a coordinator owns the singletons (lock, certs,
+   * DNS, hosts, :80 ACME/redirect) and spawns this many worker processes that
+   * bind :443 with `reusePort` and serve traffic. Defaults to 1 (single process).
+   * Also settable via `RPX_WORKERS`. On Linux the kernel load-balances accepted
+   * connections across workers; on macOS `SO_REUSEPORT` doesn't, so it falls back
+   * to effectively one active worker (still correct, just not parallel).
+   */
+  workers?: number
 }
 
 export interface DaemonHandle {
@@ -345,6 +354,20 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const hostname = opts.hostname ?? '0.0.0.0'
   const gcIntervalMs = opts.gcIntervalMs ?? DEFAULT_GC_INTERVAL_MS
 
+  // A spawned cluster worker (RPX_DAEMON_WORKER=1) serves :443 only and is
+  // configured entirely via RPX_WORKER_* env (set by the coordinator). Handled
+  // before the privileged-port check because a worker never self-elevates — it
+  // inherits the coordinator's privileges and gets its port from env.
+  if (process.env.RPX_DAEMON_WORKER === '1') {
+    return runDaemonWorker({
+      rpxDir: process.env.RPX_WORKER_RPXDIR ?? rpxDir,
+      registryDir: process.env.RPX_WORKER_REGISTRYDIR ?? registryDir,
+      httpsPort: Number.parseInt(process.env.RPX_WORKER_HTTPSPORT ?? '', 10) || httpsPort,
+      hostname: process.env.RPX_WORKER_HOSTNAME ?? hostname,
+      verbose: process.env.RPX_WORKER_VERBOSE === '1' || verbose,
+    })
+  }
+
   // Privileged ports need root. If we were launched unprivileged (the usual
   // `./buddy dev` case), re-exec through sudo and hand off to the elevated
   // copy — it becomes the real daemon. Tests inject high ports and so skip this.
@@ -352,6 +375,11 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const alreadyRoot = typeof process.getuid === 'function' && process.getuid() === 0
   if (process.platform !== 'win32' && needsPrivilegedPort && !alreadyRoot)
     return elevateDaemonToRoot(rpxDir, httpsPort, httpPort, verbose)
+
+  // Cluster coordinator: owns the singletons and spawns N workers that bind :443.
+  const workers = Math.max(1, opts.workers ?? (Number.parseInt(process.env.RPX_WORKERS ?? '', 10) || 1))
+  if (workers > 1)
+    return runDaemonCoordinator(opts, { rpxDir, registryDir, httpsPort, httpPort, hostname, verbose, gcIntervalMs, workers })
 
   const pidPath = await acquireDaemonLock(rpxDir)
 
@@ -582,6 +610,336 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     done,
     httpsPort: typeof httpsServer.port === 'number' ? httpsServer.port : httpsPort,
     httpPort: httpServer && typeof httpServer.port === 'number' ? httpServer.port : httpPort,
+    pidPath,
+    ensureCert: (host: string) => (onDemand ? onDemand.ensureCert(host) : Promise.resolve(false)),
+  }
+}
+
+// ───────────────────────── cluster: coordinator + workers ─────────────────────
+
+interface WorkerCtx {
+  rpxDir: string
+  registryDir: string
+  httpsPort: number
+  hostname: string
+  verbose: boolean
+}
+
+interface CoordinatorCtx extends WorkerCtx {
+  httpPort: number
+  gcIntervalMs: number
+  workers: number
+}
+
+type SniEntry = { serverName: string, cert: string, key: string }
+interface ClusterSni { sni: SniEntry[], dev: { key: string, cert: string, ca?: string } | null }
+
+/** Path of the file the coordinator publishes the live SNI set to for workers. */
+function clusterSniPath(rpxDir: string): string {
+  return path.join(rpxDir, 'cluster-sni.json')
+}
+
+/** Atomically publish the current cert material so a worker never reads a partial file. */
+async function writeClusterSni(rpxDir: string, sni: SniEntry[], dev: ClusterSni['dev']): Promise<void> {
+  const target = clusterSniPath(rpxDir)
+  const tmp = `${target}.${process.pid}.tmp`
+  await fsp.writeFile(tmp, JSON.stringify({ sni, dev } satisfies ClusterSni), 'utf8')
+  await fsp.rename(tmp, target)
+}
+
+async function readClusterSni(rpxDir: string): Promise<ClusterSni> {
+  try {
+    return JSON.parse(await fsp.readFile(clusterSniPath(rpxDir), 'utf8')) as ClusterSni
+  }
+  catch {
+    return { sni: [], dev: null }
+  }
+}
+
+/** Build the Bun.serve `tls` option from a published SNI set (or the dev fallback). */
+function clusterTlsFor(cfg: ClusterSni): unknown {
+  if (cfg.sni.length > 0)
+    return cfg.sni.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
+  if (cfg.dev)
+    return { key: cfg.dev.key, cert: cfg.dev.cert, ca: cfg.dev.ca, requestCert: false, rejectUnauthorized: false }
+  return undefined // no certs published yet; handshakes fail until the first SIGHUP reload
+}
+
+/**
+ * Command used to re-exec this process as a cluster worker. `RPX_WORKER_BIN`
+ * overrides the script path — needed when `argv[1]` isn't the rpx entrypoint
+ * (e.g. under a test runner, or an unusual deployment layout).
+ */
+function workerSpawnCommand(): string[] {
+  const exec = process.execPath
+  const binOverride = process.env.RPX_WORKER_BIN
+  if (binOverride)
+    return [exec, binOverride, 'daemon:start']
+  const interpName = path.basename(exec).toLowerCase()
+  const isInterpreter = interpName === 'bun' || interpName === 'node' || interpName.startsWith('bun-')
+  if (isInterpreter && process.argv[1])
+    return [exec, process.argv[1], 'daemon:start']
+  return [exec, 'daemon:start']
+}
+
+/**
+ * A cluster worker: binds :443 with `reusePort`, serves the proxy handler, keeps
+ * its routing table in sync with the registry, and reloads its TLS certs from
+ * the coordinator-published file on `SIGHUP`. It owns none of the singletons
+ * (lock, DNS, hosts, :80, ACME issuance) — the coordinator does.
+ */
+export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
+  const { rpxDir, registryDir, httpsPort, hostname, verbose } = ctx
+
+  let routingTable: HostRoutes<ProxyRoute> = new Map()
+  const getRoute = (host: string, pathname: string): ProxyRoute | undefined =>
+    matchHostRoute(routingTable, host, pathname)
+  const rebuild = (entries: RegistryEntry[]): void => {
+    routingTable = buildHostRoutes(entries.map(e => ({ host: e.to, path: e.path, route: entryToRoute(e) })))
+  }
+  rebuild(await readAll(registryDir, verbose))
+
+  const fetchHandler = createProxyFetchHandler(getRoute, verbose)
+  const wsHandler = createProxyWebSocketHandler(verbose)
+
+  let stopped = false
+  const serve = (cfg: ClusterSni): ReturnType<typeof Bun.serve> => Bun.serve({
+    port: httpsPort,
+    hostname,
+    reusePort: true, // workers share :443; the kernel load-balances (on Linux)
+    tls: clusterTlsFor(cfg) as any,
+    fetch(req: Request, server: unknown) {
+      return fetchHandler(req, server as ProxyServerLike)
+    },
+    websocket: wsHandler,
+    error(err: Error) {
+      debugLog('daemon', `worker https error: ${err}`, verbose)
+      return new Response(`Server Error: ${err.message}`, { status: 500 })
+    },
+  })
+
+  let httpsServer = serve(await readClusterSni(rpxDir))
+
+  // Bun can't hot-swap TLS, so reload = tear down + re-bind with the new certs
+  // (same approach as the solo daemon's rebuildTls). reusePort keeps the rebind
+  // from racing sibling workers off the port.
+  async function reloadTls(): Promise<void> {
+    if (stopped)
+      return
+    const cfg = await readClusterSni(rpxDir)
+    httpsServer.stop(false)
+    for (let attempt = 0; attempt < 20 && !stopped; attempt++) {
+      try {
+        httpsServer = serve(cfg)
+        return
+      }
+      catch {
+        await new Promise(resolve => setTimeout(resolve, 25))
+      }
+    }
+  }
+
+  const watcher = watchRegistry(entries => rebuild(entries), { dir: registryDir, verbose })
+  const onHup = (): void => { reloadTls().catch(() => {}) }
+  process.on('SIGHUP', onHup)
+
+  let resolveDone!: () => void
+  const done = new Promise<void>((r) => { resolveDone = r })
+  async function stop(): Promise<void> {
+    if (stopped)
+      return done
+    stopped = true
+    process.off('SIGHUP', onHup)
+    watcher.close()
+    httpsServer.stop(false)
+    resolveDone()
+    return done
+  }
+  const onSignal = (): void => { stop().then(() => process.exit(0)).catch(() => process.exit(0)) }
+  process.once('SIGTERM', onSignal)
+  process.once('SIGINT', onSignal)
+
+  if (verbose)
+    log.success(`rpx worker (pid ${process.pid}) serving :${httpsPort}`)
+
+  return {
+    stop,
+    done,
+    httpsPort: typeof httpsServer.port === 'number' ? httpsServer.port : httpsPort,
+    httpPort: 0,
+    pidPath: '',
+    ensureCert: () => Promise.resolve(false),
+  }
+}
+
+/**
+ * The cluster coordinator: owns the lock, certs, DNS, hosts, registry GC, and the
+ * :80 listener (ACME http-01 + HTTP→HTTPS redirect). It does NOT bind :443 —
+ * instead it spawns {@link CoordinatorCtx.workers} worker processes that do, and
+ * republishes the SNI set (+ SIGHUPs the workers) whenever an on-demand cert is
+ * issued. Workers that crash are respawned.
+ */
+async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): Promise<DaemonHandle> {
+  const { rpxDir, registryDir, httpsPort, httpPort, hostname, verbose, gcIntervalMs, workers } = ctx
+  const pidPath = await acquireDaemonLock(rpxDir)
+
+  // Bootstrap certs to disk + assemble the initial SNI set.
+  let sniTls: SniEntry[] = []
+  if (opts.productionCerts)
+    sniTls = await buildSniTlsConfig(opts.productionCerts, verbose)
+  let devSslConfig: SSLConfig | null = null
+  if (sniTls.length === 0)
+    devSslConfig = await bootstrapTls(opts, registryDir)
+  const dev: ClusterSni['dev'] = devSslConfig
+    ? { key: devSslConfig.key, cert: devSslConfig.cert, ca: devSslConfig.ca }
+    : null
+
+  let stopped = false
+  const procs: import('bun').Subprocess[] = []
+  function signalWorkers(sig: NodeJS.Signals): void {
+    for (const p of procs) {
+      try { p.kill(sig) }
+      catch { /* already gone */ }
+    }
+  }
+  /** Republish certs then tell workers to reload. */
+  async function publishSni(entries: SniEntry[]): Promise<void> {
+    await writeClusterSni(rpxDir, entries, dev)
+    signalWorkers('SIGHUP')
+  }
+
+  // On-demand TLS lives on the coordinator (it owns :80 + ACME). New certs are
+  // republished to the workers.
+  const onDemandCfg = opts.onDemandTls
+  const onDemand: OnDemandCertManager | null = onDemandCfg?.enabled
+    ? new OnDemandCertManager({
+        config: onDemandCfg,
+        certsDir: onDemandCfg.certsDir ?? opts.productionCerts?.certsDir ?? path.join(rpxDir, 'on-demand-certs'),
+        initial: sniTls,
+        verbose,
+        onCertAdded: entries => { void publishSni(entries) },
+      })
+    : null
+
+  await writeClusterSni(rpxDir, onDemand ? onDemand.sniEntries() : sniTls, dev)
+
+  // DNS + hosts + registry GC (workers handle routing themselves).
+  const initialEntries = await readAll(registryDir, verbose)
+  await reconcileStaleDevelopmentDns({ rpxDir, verbose }).catch((err) => {
+    debugLog('daemon', `DNS reconcile on start failed: ${err}`, verbose)
+  })
+  await syncDevelopmentDnsFromRegistry(initialEntries, { rpxDir, verbose, ownerPid: process.pid }).catch((err) => {
+    debugLog('daemon', `DNS setup on start failed: ${err}`, verbose)
+  })
+  await gcStaleEntries(registryDir, verbose).catch(() => {})
+  const watcher = watchRegistry(
+    (entries) => {
+      syncDevelopmentDnsFromRegistry(entries, { rpxDir, verbose, ownerPid: process.pid }).catch((err) => {
+        debugLog('daemon', `DNS sync on registry change failed: ${err}`, verbose)
+      })
+    },
+    { dir: registryDir, verbose },
+  )
+  const gcInterval = setInterval(() => {
+    gcStaleEntries(registryDir, verbose).catch(() => {})
+  }, gcIntervalMs)
+  gcInterval.unref?.()
+
+  // :80 — ACME http-01 challenges + HTTP→HTTPS redirect (kicks off on-demand).
+  let httpServer: ReturnType<typeof Bun.serve> | null = null
+  if (httpPort > 0) {
+    httpServer = Bun.serve({
+      port: httpPort,
+      hostname,
+      fetch(req: Request) {
+        const u = new URL(req.url)
+        const host = (req.headers.get('host') ?? u.hostname).split(':')[0]
+        if (onDemand && u.pathname.startsWith('/.well-known/acme-challenge/')) {
+          const keyAuth = onDemand.challengeStore.handlePath(u.pathname)
+          if (keyAuth !== undefined)
+            return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
+          return new Response('challenge not found', { status: 404 })
+        }
+        if (onDemand && !onDemand.hasCert(host))
+          onDemand.ensureCert(host).catch(() => {})
+        return new Response(null, { status: 301, headers: { Location: `https://${host}${u.pathname}${u.search}` } })
+      },
+    })
+  }
+
+  // Spawn (and keep alive) the workers.
+  function spawnWorker(): void {
+    if (stopped)
+      return
+    const env: Record<string, string> = {
+      ...process.env as Record<string, string>,
+      RPX_DAEMON_WORKER: '1',
+      RPX_WORKERS: '1', // the child must not recurse into coordinator mode
+      RPX_WORKER_RPXDIR: rpxDir,
+      RPX_WORKER_REGISTRYDIR: registryDir,
+      RPX_WORKER_HTTPSPORT: String(httpsPort),
+      RPX_WORKER_HOSTNAME: hostname,
+      RPX_WORKER_VERBOSE: verbose ? '1' : '0',
+    }
+    const proc = Bun.spawn(workerSpawnCommand(), {
+      env,
+      stdout: 'inherit',
+      stderr: 'inherit',
+      stdin: 'ignore',
+      onExit(_proc, code) {
+        if (!stopped) {
+          debugLog('daemon', `worker exited (code ${code}); respawning`, verbose)
+          spawnWorker()
+        }
+      },
+    })
+    procs.push(proc)
+  }
+  for (let i = 0; i < workers; i++)
+    spawnWorker()
+
+  if (verbose) {
+    log.success(`rpx coordinator listening on https://${hostname}:${httpsPort} via ${workers} worker(s)${httpServer ? ` (http→https on :${httpPort})` : ''}`)
+    log.info(`pid file: ${pidPath}`)
+  }
+
+  let resolveDone!: () => void
+  const done = new Promise<void>((r) => { resolveDone = r })
+  async function stop(): Promise<void> {
+    if (stopped)
+      return done
+    stopped = true
+    clearInterval(gcInterval)
+    watcher.close()
+    httpServer?.stop(false)
+    signalWorkers('SIGTERM')
+    await Promise.race([
+      Promise.all(procs.map(p => p.exited)),
+      new Promise(resolve => setTimeout(resolve, 3000)),
+    ])
+    signalWorkers('SIGKILL')
+    await tearDownDevelopmentDns({ rpxDir, verbose }).catch((err) => {
+      debugLog('daemon', `DNS teardown failed: ${err}`, verbose)
+    })
+    await releaseDaemonLock(rpxDir)
+    await fsp.unlink(clusterSniPath(rpxDir)).catch(() => {})
+    if (verbose)
+      log.info('rpx coordinator stopped')
+    resolveDone()
+    return done
+  }
+  const onSignal = (sig: NodeJS.Signals): void => {
+    debugLog('daemon', `coordinator received ${sig}, shutting down`, verbose)
+    stop().catch(() => {})
+  }
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+
+  return {
+    stop,
+    done,
+    httpsPort,
+    httpPort,
     pidPath,
     ensureCert: (host: string) => (onDemand ? onDemand.ensureCert(host) : Promise.resolve(false)),
   }

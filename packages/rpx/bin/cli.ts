@@ -194,8 +194,9 @@ cli
   .option('--http-port <port>', 'HTTP redirect port; 0 to disable (default 80)', { default: 80 })
   .option('--hostname <host>', 'Bind address (default 0.0.0.0)', { default: '0.0.0.0' })
   .option('--certs-dir <path>', 'Directory of real PEM certs for per-domain SNI (<domain>.crt/.key, _wildcard.<apex>.crt/.key)')
+  .option('--workers <n>', 'Run as a multi-core cluster of N worker processes (default 1; also RPX_WORKERS)')
   .option('--verbose', 'Enable verbose logging')
-  .action(async (opts: DaemonStartOptions) => {
+  .action(async (opts: DaemonStartOptions & { workers?: number | string }) => {
     try {
       const handle = await runDaemon({
         rpxDir: opts.rpxDir,
@@ -204,6 +205,7 @@ cli
         httpPort: typeof opts.httpPort === 'string' ? Number.parseInt(opts.httpPort, 10) : opts.httpPort,
         hostname: opts.hostname,
         productionCerts: opts.certsDir ? { certsDir: opts.certsDir } : undefined,
+        workers: opts.workers === undefined ? undefined : (typeof opts.workers === 'string' ? Number.parseInt(opts.workers, 10) : opts.workers),
         verbose: opts.verbose ?? true,
       })
       // Block until the daemon shuts down (via SIGINT/SIGTERM).
