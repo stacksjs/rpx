@@ -41,3 +41,14 @@ jobs:
           kill $DP_PID $ORIGIN 2>/dev/null || true
           echo "===== io_uring trace ====="
           cat uring.trace
+
+      - name: Install nginx + oha (for the sweep)
+        run: |
+          sudo apt-get update && sudo apt-get install -y nginx jq
+          curl -fsSL https://github.com/hatoo/oha/releases/download/v1.4.0/oha-linux-amd64 -o oha
+          chmod +x oha && sudo mv oha /usr/local/bin/oha
+          oha --version
+
+      - name: Full sweep (poll + io_uring vs nginx)
+        working-directory: home/packages/dataplane
+        run: bash bench/run.sh | tee -a "$GITHUB_STEP_SUMMARY"
