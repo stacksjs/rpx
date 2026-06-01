@@ -53,6 +53,39 @@ export function startBunRaw(origin: Origin, cores = 1): Promise<BenchTarget> {
   return startCluster('bun-raw', 'bun', origin, cores)
 }
 
+/**
+ * The native Zig dataplane prototype (`dataplane/`) — a splice/copy TCP proxy.
+ * Built on demand; skipped if `zig` is absent or the build fails (e.g. macOS
+ * SDK 26 + Zig 0.15 can't link libSystem — run this target on Linux). Spawns
+ * `cores` copies with `reusePort`, like the other JS targets.
+ */
+export async function startZig(origin: Origin, cores = 1): Promise<BenchTarget | null> {
+  if (!hasBinary('zig'))
+    return null
+  const src = path.join(import.meta.dir, '..', 'dataplane', 'src', 'main.zig')
+  if (!fs.existsSync(src))
+    return null
+  const bin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rpx-dp-')), 'rpx-dataplane')
+  const build = Bun.spawnSync(['zig', 'build-exe', src, '-O', 'ReleaseFast', `-femit-bin=${bin}`], { stderr: 'pipe' })
+  if (build.exitCode !== 0) {
+    const first = (build.stderr ? build.stderr.toString() : '').split('\n').find(Boolean) ?? 'build failed'
+    throw new Error(`zig dataplane build failed (${first}) — build/run on Linux`)
+  }
+  const port = await freePort()
+  const idx = origin.host.lastIndexOf(':')
+  const upHost = origin.host.slice(0, idx)
+  const upPort = origin.host.slice(idx + 1)
+  const procs: Subprocess[] = []
+  for (let i = 0; i < cores; i++)
+    procs.push(Bun.spawn([bin, String(port), upHost, upPort], { stdout: 'ignore', stderr: 'pipe', stdin: 'ignore' }))
+  await waitForPort(port)
+  return {
+    name: 'zig',
+    url: `http://${HOST}:${port}`,
+    stop: async () => { await Promise.all(procs.map(p => killProc(p))) },
+  }
+}
+
 /** caddy via a generated Caddyfile (`reverse_proxy`). `cores` caps GOMAXPROCS. */
 export async function startCaddy(origin: Origin, cores?: number): Promise<BenchTarget | null> {
   if (!hasBinary('caddy'))
@@ -163,6 +196,10 @@ export async function startAllTargets(origin: Origin, opts: TargetOptions = {}):
   const targets: BenchTarget[] = [directBaseline(origin)]
   targets.push(await startRpx(origin, jsCores))
   targets.push(await startBunRaw(origin, jsCores))
+
+  const zig = await startZig(origin, jsCores).catch((e) => { console.error('zig skipped:', e.message); return null })
+  if (zig)
+    targets.push(zig)
 
   const caddy = await startCaddy(origin, cores).catch((e) => { console.error('caddy skipped:', e.message); return null })
   if (caddy)
