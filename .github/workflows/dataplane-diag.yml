@@ -1,0 +1,43 @@
+name: Dataplane io_uring Diagnostic
+
+# Temporary diagnostic: the Home dataplane's io_uring engine serves 0 req/s and
+# Home's own Actions minutes are exhausted, so we borrow rpx's runner to capture a
+# kernel-level trace. Clones the (public) home-lang/home repo, builds the dataplane
+# with the pinned Zig 0.17-dev, runs the uring engine with `debug` tracing against a
+# tiny origin, and dumps the trace. Remove once io_uring is fixed.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.17.0-dev.263+0add2dfc4'
+
+      - name: Clone Home + build dataplane
+        run: |
+          git clone --depth 1 https://github.com/home-lang/home.git home
+          cd home/lang/packages/dataplane
+          zig build -Doptimize=ReleaseFast
+          echo "DP=$PWD/zig-out/bin/dataplane" >> "$GITHUB_ENV"
+
+      - name: Trace io_uring engine
+        run: |
+          uname -r
+          bun -e 'Bun.serve({port:8591,hostname:"127.0.0.1",fetch(){return new Response("hello from origin\n")}})' &
+          ORIGIN=$!
+          sleep 1
+          "$DP" 8590 127.0.0.1 8591 uring debug 2>uring.trace &
+          DP_PID=$!
+          sleep 1
+          echo "--- curl 1 ---"; curl -sS --max-time 5 http://127.0.0.1:8590/ || echo "CURL FAILED"
+          echo "--- curl 2 ---"; curl -sS --max-time 5 http://127.0.0.1:8590/ || echo "CURL FAILED"
+          sleep 1
+          kill $DP_PID $ORIGIN 2>/dev/null || true
+          echo "===== io_uring trace ====="
+          cat uring.trace
