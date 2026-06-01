@@ -446,19 +446,28 @@ apples-to-apples `--cores N` mode, and the full investigation.
 ### Scaling across cores (opt-in)
 
 A single rpx instance already serves ~80k small req/s on one core — far beyond
-any local workload — so it does **not** spawn a worker cluster itself. If you run
-rpx under production load on **Linux** and want it to use multiple
-cores, start several instances with `RPX_REUSE_PORT=1` under a process manager
-(systemd / pm2 / a container replica set); the kernel's `SO_REUSEPORT` balances
-accepted connections across them:
+any local workload — so single-process is the default. For production load on
+**Linux**, the daemon can run as a**multi-core cluster**:
 
 ```bash
-RPX_REUSE_PORT=1 rpx start   # × N instances, behind systemd/pm2/etc. (Linux)
+rpx daemon:start --workers 4     # or RPX_WORKERS=4
 ```
 
-It's **off by default** (so a stray second instance still fails loudly with
-"port in use" rather than silently co-binding), and it's a **no-op on macOS**,
-whose `SO_REUSEPORT` doesn't load-balance across processes.
+A **coordinator** process owns the singletons — the lock, certs, on-demand ACME
+issuance, DNS, `/etc/hosts`, and the `:80` listener — and spawns N **worker**
+processes that bind `:443` with `reusePort` and serve traffic. The kernel
+load-balances accepted connections across the workers; when the coordinator
+issues a new on-demand cert it republishes the SNI set and `SIGHUP`s the workers
+to reload. Crashed workers are respawned; `SIGTERM` drains them all.
+
+> On **macOS**, `SO_REUSEPORT` doesn't load-balance across processes, so the
+> cluster falls back to effectively one active worker (correct, just not
+> parallel) — clustering is a Linux production feature.
+
+For a hand-rolled setup (or non-daemon `rpx start`), `RPX_REUSE_PORT=1` lets you
+run several independent instances behind your own supervisor (systemd / pm2 / a
+container replica set) sharing `:443`. It's **off by default** so a stray second
+instance still fails loudly with "port in use" rather than silently co-binding.
 
 ## Testing
 
