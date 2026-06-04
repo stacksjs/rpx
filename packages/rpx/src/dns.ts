@@ -279,6 +279,57 @@ export function isDnsServerRunning(): boolean {
   return dnsServer !== null
 }
 
+/** True when something is answering A queries for `host` on the rpx dev DNS port. */
+export async function isRpxDevelopmentDnsAnswering(host: string, timeoutMs = 500): Promise<boolean> {
+  const domain = host.trim().toLowerCase().replace(/\.$/, '')
+  if (!domain)
+    return false
+
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket('udp4')
+    const timer = setTimeout(() => {
+      socket.close()
+      resolve(false)
+    }, timeoutMs)
+
+    socket.on('message', (msg) => {
+      clearTimeout(timer)
+      socket.close()
+      try {
+        const header = parseHeader(msg)
+        resolve(header.ancount > 0)
+      }
+      catch {
+        resolve(false)
+      }
+    })
+
+    socket.on('error', () => {
+      clearTimeout(timer)
+      socket.close()
+      resolve(false)
+    })
+
+    const query = buildQuery(domain, 1)
+    socket.send(query, DNS_PORT, '127.0.0.1', (err) => {
+      if (err) {
+        clearTimeout(timer)
+        socket.close()
+        resolve(false)
+      }
+    })
+  })
+}
+
+function buildQuery(name: string, type: number): Buffer {
+  const header = Buffer.alloc(12)
+  header.writeUInt16BE(1, 0)
+  header.writeUInt16BE(0x0100, 2)
+  header.writeUInt16BE(1, 4)
+  const question = Buffer.concat([encodeName(name), Buffer.from([0, type, 0, 1])])
+  return Buffer.concat([header, question])
+}
+
 // ---------------------------------------------------------------------------
 // macOS resolver files
 // ---------------------------------------------------------------------------
@@ -311,9 +362,9 @@ async function flushDnsCache(verbose?: boolean): Promise<void> {
   if (process.platform !== 'darwin')
     return
 
-  const { execSudoSync, getSudoPassword } = await import('./utils')
+  const { execSudoSync, getSudoPassword, isProcessElevated } = await import('./utils')
 
-  if (!getSudoPassword()) {
+  if (!isProcessElevated() && !getSudoPassword()) {
     debugLog('dns', 'Cannot flush DNS cache without SUDO_PASSWORD', verbose)
     return
   }
@@ -353,8 +404,8 @@ async function installResolvers(basenames: string[], verbose?: boolean): Promise
   if (process.platform !== 'darwin')
     return true
 
-  const { getSudoPassword } = await import('./utils')
-  if (!getSudoPassword()) {
+  const { getSudoPassword, isProcessElevated } = await import('./utils')
+  if (!isProcessElevated() && !getSudoPassword()) {
     debugLog('dns', 'SUDO_PASSWORD not set, cannot create resolver files', verbose)
     return false
   }
@@ -375,8 +426,8 @@ async function uninstallResolvers(basenames: string[], verbose?: boolean): Promi
   if (process.platform !== 'darwin')
     return
 
-  const { getSudoPassword } = await import('./utils')
-  if (!getSudoPassword())
+  const { getSudoPassword, isProcessElevated } = await import('./utils')
+  if (!isProcessElevated() && !getSudoPassword())
     return
 
   try {
@@ -415,7 +466,15 @@ export async function setupDevelopmentDns(opts: DevelopmentDnsOptions): Promise<
     return false
 
   const basenames = resolverBasenamesForDomains(domains)
-  const started = await startDnsServer(domains, opts.verbose)
+  let started = await startDnsServer(domains, opts.verbose)
+  if (!started) {
+    const probeHost = domains[0]
+    if (probeHost && await isRpxDevelopmentDnsAnswering(probeHost))
+      started = true
+    else
+      debugLog('dns', 'Dev DNS server not available on 127.0.0.1:15353', opts.verbose)
+  }
+
   if (!started)
     return false
 
