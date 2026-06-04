@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import * as process from 'node:process'
 import { promisify } from 'node:util'
-import { debugLog, getSudoPassword } from './utils'
+import { debugLog, getSudoPassword, isProcessElevated } from './utils'
 
 const execAsync = promisify(exec)
 
@@ -28,6 +28,11 @@ let sudoPrivilegesAcquired = false
 async function execSudo(command: string): Promise<string> {
   if (process.platform === 'win32')
     throw new Error('Administrator privileges required on Windows')
+
+  if (isProcessElevated()) {
+    const { stdout } = await execAsync(command)
+    return stdout
+  }
 
   const sudoPassword = getSudoPassword()
   const escaped = command.replace(/'/g, `'\\''`)

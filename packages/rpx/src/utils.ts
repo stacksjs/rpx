@@ -14,10 +14,26 @@ export function getSudoPassword(): string | undefined {
   return process.env.SUDO_PASSWORD
 }
 
+/** True when the process can write system paths without `sudo` (e.g. rpx daemon started via sudo). */
+export function isProcessElevated(): boolean {
+  if (process.platform === 'win32')
+    return false
+  try {
+    return typeof process.getuid === 'function' && process.getuid() === 0
+  }
+  catch {
+    return false
+  }
+}
+
 /**
  * Execute a command with sudo, using SUDO_PASSWORD if available
  */
 export function execSudoSync(command: string): string {
+  if (isProcessElevated()) {
+    return execSync(command, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] })
+  }
+
   const sudoPassword = getSudoPassword()
   const escaped = command.replace(/'/g, `'\\''`)
 
