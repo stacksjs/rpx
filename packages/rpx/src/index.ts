@@ -11,9 +11,12 @@ export {
 } from './hosts'
 
 export {
+  SHARED_DEV_HOST_CERT_PATH,
+  buildRegistryTlsProxyOptions,
   checkExistingCertificates,
   cleanupCertificates,
   clearSslConfigCache,
+  devSslToSniEntries,
   forceTrustCertificate,
   generateCertificate,
   getRootCAPaths,

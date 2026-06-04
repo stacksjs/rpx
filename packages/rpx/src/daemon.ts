@@ -24,7 +24,15 @@ import { homedir } from 'node:os'
 import * as path from 'node:path'
 import * as process from 'node:process'
 import { log } from './logger'
-import { checkExistingCertificates, generateCertificate } from './https'
+import {
+  buildRegistryTlsProxyOptions,
+  certIncludesSanHostnames,
+  checkExistingCertificates,
+  clearSslConfigCache,
+  devSslToSniEntries,
+  generateCertificate,
+  SHARED_DEV_HOST_CERT_PATH,
+} from './https'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
@@ -216,33 +224,24 @@ function pickPrimaryRegistryHost(hosts: string[]): string {
 
 async function bootstrapTls(opts: DaemonOptions, registryDir: string): Promise<SSLConfig> {
   const entries = await readAll(registryDir, opts.verbose)
-  const registryHosts = [...new Set(entries.map(e => e.to))]
+  const registryHosts = [...new Set(entries.map(e => e.to).filter(Boolean))]
   const primary = pickPrimaryRegistryHost(registryHosts)
   const hostnames = [...new Set([primary, ...registryHosts, 'rpx.localhost'])]
 
-  const sslDir = path.join(homedir(), '.stacks', 'ssl')
-  const sharedCert = path.join(sslDir, 'rpx.localhost.crt')
-
-  const proxyOpts: ProxyOptions = {
-    https: typeof opts.https === 'object'
-      ? { ...opts.https, certPath: sharedCert, keyPath: path.join(sslDir, 'rpx.localhost.key'), commonName: primary }
-      : {
-          certPath: sharedCert,
-          keyPath: path.join(sslDir, 'rpx.localhost.key'),
-          caCertPath: path.join(sslDir, 'rpx.localhost.ca.crt'),
-          commonName: primary,
-        },
-    verbose: opts.verbose,
-    regenerateUntrustedCerts: true,
-    ...(hostnames.length > 1
-      ? { proxies: hostnames.map(to => ({ from: 'localhost:1', to })) }
-      : { to: primary, from: 'localhost:1' }),
-  }
+  const proxyOpts = buildRegistryTlsProxyOptions(registryHosts, primary, opts.verbose)
+  if (typeof opts.https === 'object' && typeof proxyOpts.https === 'object')
+    proxyOpts.https = { ...proxyOpts.https, ...opts.https }
 
   let sslConfig = await checkExistingCertificates(proxyOpts)
+  if (sslConfig && !certIncludesSanHostnames(SHARED_DEV_HOST_CERT_PATH, hostnames)) {
+    debugLog('daemon', `shared cert missing SANs for registry host(s), regenerating (${hostnames.join(', ')})`, opts.verbose)
+    clearSslConfigCache()
+    sslConfig = null
+  }
+
   if (!sslConfig) {
-    debugLog('daemon', 'no usable cert on disk, generating one', opts.verbose)
-    await generateCertificate(proxyOpts)
+    debugLog('daemon', 'no usable cert on disk, generating one via tlsx', opts.verbose)
+    await generateCertificate({ ...proxyOpts, forceRegenerate: true } as ProxyOptions & { forceRegenerate?: boolean })
     sslConfig = await checkExistingCertificates(proxyOpts)
   }
   if (!sslConfig)
@@ -482,7 +481,20 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     })
   }
 
-  let httpsServer = serveHttps(onDemand ? onDemand.sniEntries() : sniTls)
+  const registryHostsForTls = (entries: RegistryEntry[]) =>
+    [...new Set(entries.map(e => e.to).filter(Boolean))]
+
+  const devTlsEntries = (entries: RegistryEntry[]) => {
+    if (!devSslConfig)
+      return sniTls
+    return devSslToSniEntries([...registryHostsForTls(entries), 'rpx.localhost'], devSslConfig)
+  }
+
+  let httpsServer = serveHttps(
+    onDemand
+      ? onDemand.sniEntries()
+      : (sniTls.length > 0 ? sniTls : devTlsEntries(initialEntries)),
+  )
 
   /**
    * Bun has no working SNICallback and `server.reload({ tls })` does not update
@@ -551,9 +563,23 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     log.info(`registry: ${registryDir}`)
   }
 
+  async function syncDevTlsWithRegistry(entries: RegistryEntry[]): Promise<void> {
+    if (stopped || sniTls.length > 0 || onDemand || !devSslConfig)
+      return
+    try {
+      const refreshed = await bootstrapTls(opts, registryDir)
+      devSslConfig = refreshed
+      await rebuildTls(devTlsEntries(entries))
+    }
+    catch (err) {
+      debugLog('daemon', `TLS sync on registry change failed: ${err}`, verbose)
+    }
+  }
+
   const watcher = watchRegistry(
     (entries) => {
       rebuild(entries)
+      void syncDevTlsWithRegistry(entries)
       syncDevelopmentDnsFromRegistry(entries, { rpxDir, verbose, ownerPid: process.pid }).catch((err) => {
         debugLog('daemon', `DNS sync on registry change failed: ${err}`, verbose)
       })

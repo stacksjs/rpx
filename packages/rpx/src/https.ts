@@ -1,4 +1,5 @@
 import type { ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig, SSLConfig, TlsConfig } from './types'
+import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import * as os from 'node:os'
@@ -6,7 +7,6 @@ import { homedir } from 'node:os'
 import * as path from 'node:path'
 import { join } from 'node:path'
 import * as process from 'node:process'
-import { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate as generateCert } from '@stacksjs/tlsx'
 import { log } from './logger'
 import { config } from './config'
 import {
@@ -42,7 +42,62 @@ export {
   verifyHttpsChain,
 } from './cert-inspect'
 
+/** Prefer the local Tools checkout when present (same pattern as buddy → Tools/rpx). */
+const TOOLS_TLSX_SRC = join(homedir(), 'Code/Tools/tlsx/packages/tlsx/src/index.ts')
+
+type TlsxModule = typeof import('@stacksjs/tlsx')
+let tlsxModule: TlsxModule | undefined
+
+async function loadTlsx(): Promise<TlsxModule> {
+  if (tlsxModule)
+    return tlsxModule
+  if (existsSync(TOOLS_TLSX_SRC))
+    tlsxModule = await import(TOOLS_TLSX_SRC) as TlsxModule
+  else
+    tlsxModule = await import('@stacksjs/tlsx')
+  return tlsxModule
+}
+
 let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
+
+/** Shared dev host cert path used by the rpx daemon and `./buddy dev`. */
+export const SHARED_DEV_HOST_CERT_PATH = join(homedir(), '.stacks', 'ssl', 'rpx.localhost.crt')
+
+/**
+ * Bun needs one `tls[]` entry per SNI name even when a single PEM covers every SAN.
+ * Without this, :443 serves the default cert (wrong CN → ERR_CERT_COMMON_NAME_INVALID).
+ */
+export function devSslToSniEntries(
+  hosts: string[],
+  ssl: SSLConfig,
+): Array<{ serverName: string, cert: string, key: string }> {
+  return [...new Set(hosts.filter(Boolean))].map(serverName => ({
+    serverName,
+    cert: ssl.cert,
+    key: ssl.key,
+  }))
+}
+
+/** ProxyOptions for the shared multi-app dev certificate (all registry hosts as SANs). */
+export function buildRegistryTlsProxyOptions(
+  registryHosts: string[],
+  primary: string,
+  verbose?: boolean,
+): ProxyOptions {
+  const sslDir = join(homedir(), '.stacks', 'ssl')
+  const hostnames = [...new Set([primary, ...registryHosts, 'rpx.localhost'])]
+  return {
+    https: {
+      certPath: SHARED_DEV_HOST_CERT_PATH,
+      keyPath: join(sslDir, 'rpx.localhost.key'),
+      caCertPath: join(sslDir, 'rpx.localhost.ca.crt'),
+      commonName: primary,
+    },
+    verbose,
+    regenerateUntrustedCerts: true,
+    proxies: hostnames.map(to => ({ from: 'localhost:1', to })),
+  }
+}
 
 // Canonical filenames for the shared Root CA. The CA is a singleton across all
 // rpx-managed domains so that browsers only need to trust it once. Host certs
@@ -349,6 +404,8 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
     return
   }
   clearSslConfigCache()
+
+  const { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate: generateCert } = await loadTlsx()
 
   // Get all unique domains from the configuration
   const domains: string[] = isMultiProxyOptions(options)
