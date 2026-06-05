@@ -1,5 +1,4 @@
 import type { ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig, SSLConfig, TlsConfig } from './types'
-import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import * as os from 'node:os'
@@ -7,6 +6,11 @@ import { homedir } from 'node:os'
 import * as path from 'node:path'
 import { join } from 'node:path'
 import * as process from 'node:process'
+import {
+  addCertToSystemTrustStoreAndSaveCert,
+  createRootCA,
+  generateCertificate as generateCert,
+} from '@stacksjs/tlsx'
 import { log } from './logger'
 import { config } from './config'
 import {
@@ -41,22 +45,6 @@ export {
   readCertSha256Fingerprint,
   verifyHttpsChain,
 } from './cert-inspect'
-
-/** Prefer the local Tools checkout when present (same pattern as buddy → Tools/rpx). */
-const TOOLS_TLSX_SRC = join(homedir(), 'Code/Tools/tlsx/packages/tlsx/src/index.ts')
-
-type TlsxModule = typeof import('@stacksjs/tlsx')
-let tlsxModule: TlsxModule | undefined
-
-async function loadTlsx(): Promise<TlsxModule> {
-  if (tlsxModule)
-    return tlsxModule
-  if (existsSync(TOOLS_TLSX_SRC))
-    tlsxModule = await import(TOOLS_TLSX_SRC) as TlsxModule
-  else
-    tlsxModule = await import('@stacksjs/tlsx')
-  return tlsxModule
-}
 
 let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
 
@@ -404,8 +392,6 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
     return
   }
   clearSslConfigCache()
-
-  const { addCertToSystemTrustStoreAndSaveCert, createRootCA, generateCertificate: generateCert } = await loadTlsx()
 
   // Get all unique domains from the configuration
   const domains: string[] = isMultiProxyOptions(options)
