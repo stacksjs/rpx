@@ -5,10 +5,10 @@
     "": {
       "name": "@stacksjs/rpx",
       "devDependencies": {
-        "@stacksjs/tlsx": "^0.13.7",
+        "@stacksjs/tlsx": "^0.13.8",
         "better-dx": "^0.2.15",
         "typescript": "^5.9.3",
-        "vite": "^8.0.1",
+        "vite": "^8.0.16",
       },
     },
     "packages/bun-plugin": {
@@ -27,10 +27,10 @@
       },
       "dependencies": {
         "@stacksjs/clapp": "^0.2.10",
-        "@stacksjs/tlsx": "^0.13.7",
+        "@stacksjs/tlsx": "^0.13.8",
       },
       "devDependencies": {
-        "bunfig": "^0.15.6",
+        "bunfig": "^0.15.14",
         "mitata": "^1.0.34",
         "typescript": "^5.9.3",
       },
@@ -40,7 +40,7 @@
       "version": "0.11.18",
       "dependencies": {
         "@stacksjs/rpx": "workspace:*",
-        "@stacksjs/tlsx": "^0.13.6",
+        "@stacksjs/tlsx": "^0.13.8",
       },
     },
   },
