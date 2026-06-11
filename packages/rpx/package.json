@@ -76,7 +76,7 @@
     "@stacksjs/tlsx": "^0.13.7"
   },
   "devDependencies": {
-    "bunfig": "^0.15.6",
+    "bunfig": "^0.15.14",
     "mitata": "^1.0.34",
     "typescript": "^5.9.3"
   },
