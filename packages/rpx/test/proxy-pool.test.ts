@@ -1,17 +1,39 @@
-import type { Server } from 'bun'
+import type { Socket, TCPSocketListener } from 'bun'
+import { connect } from 'bun'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { FALLBACK, proxyViaPool } from '../src/proxy-pool'
 
-let origin: Server
+let origin: ReturnType<typeof Bun.serve>
+/** Counting TCP passthrough sitting in front of `origin`. */
+let front: TCPSocketListener<FrontData>
 let hostPort: string
 let totalConns = 0
+
+/**
+ * Per-front-connection relay state. Each direction has its own out-queue so the
+ * passthrough honors socket backpressure (Bun's `write` can be partial); the
+ * `drain` handlers resume flushing. Without this, a large response (500 KB) is
+ * silently truncated and the proxied request hangs.
+ */
+interface FrontData { upstream: Socket | null, toClient: Uint8Array[], toUpstream: Uint8Array[] }
+
+/** Write as much of `queue` as the socket accepts, re-queuing any partial remainder. */
+function flush<D>(sock: Socket<D>, queue: Uint8Array[]): void {
+  while (queue.length > 0) {
+    const chunk = queue[0]
+    const n = sock.write(chunk)
+    if (n < chunk.length) {
+      queue[0] = chunk.subarray(n) // socket buffer full; `drain` resumes the rest
+      return
+    }
+    queue.shift()
+  }
+}
 
 beforeAll(() => {
   origin = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
-    // Track upstream socket churn so we can assert connection reuse.
-    open() { totalConns++ },
     fetch(req) {
       const u = new URL(req.url)
       switch (u.pathname) {
@@ -39,14 +61,58 @@ beforeAll(() => {
       }
     },
   })
-  hostPort = `127.0.0.1:${origin.port}`
+
+  // Bun.serve exposes no per-connection hook for HTTP, so count upstream TCP
+  // connections at the socket layer: a tiny passthrough increments `totalConns`
+  // on each new inbound connection and pipes bytes to the real origin. The pool
+  // dials this front, so the counter measures exactly how many upstream
+  // connections the pool opened — letting the reuse test assert real pooling.
+  front = Bun.listen<FrontData>({
+    hostname: '127.0.0.1',
+    port: 0,
+    socket: {
+      open(client) {
+        totalConns++
+        client.data = { upstream: null, toClient: [], toUpstream: [] }
+        // Close over `client` so the upstream socket's data type stays plain —
+        // no mutual generic between the two sockets.
+        connect({
+          hostname: '127.0.0.1',
+          port: origin.port!, // always a TCP port in this test
+          socket: {
+            open(up) {
+              client.data.upstream = up
+              flush(up, client.data.toUpstream)
+            },
+            data: (_up, chunk) => {
+              client.data.toClient.push(new Uint8Array(chunk)) // copy: Bun reuses the read buffer
+              flush(client, client.data.toClient)
+            },
+            drain: (up) => { flush(up, client.data.toUpstream) },
+            close: () => { client.end() },
+            error: () => { client.end() },
+          },
+        })
+      },
+      data(client, chunk) {
+        client.data.toUpstream.push(new Uint8Array(chunk)) // copy: Bun reuses the read buffer
+        if (client.data.upstream)
+          flush(client.data.upstream, client.data.toUpstream)
+      },
+      drain(client) { flush(client, client.data.toClient) },
+      close(client) { client.data.upstream?.end() },
+      error(client) { client.data.upstream?.end() },
+    },
+  })
+  hostPort = `127.0.0.1:${front.port}`
 })
 
 afterAll(() => {
+  front.stop(true)
   origin.stop(true)
 })
 
-function call(method: string, path: string, opts: { body?: any, headers?: Record<string, string>, originOverride?: string } = {}) {
+function call(method: string, path: string, opts: { body?: ReadableStream<Uint8Array> | null, headers?: Record<string, string>, originOverride?: string } = {}) {
   const reqHeaders = new Headers()
   for (const [k, v] of Object.entries(opts.headers ?? {}))
     reqHeaders.set(k, v)

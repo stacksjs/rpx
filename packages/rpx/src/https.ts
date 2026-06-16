@@ -49,7 +49,7 @@ export {
 let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
 
 /** Shared dev host cert path used by the rpx daemon and `./buddy dev`. */
-export const SHARED_DEV_HOST_CERT_PATH = join(homedir(), '.stacks', 'ssl', 'rpx.localhost.crt')
+export const SHARED_DEV_HOST_CERT_PATH: string = join(homedir(), '.stacks', 'ssl', 'rpx.localhost.crt')
 
 /**
  * Bun needs one `tls[]` entry per SNI name even when a single PEM covers every SAN.

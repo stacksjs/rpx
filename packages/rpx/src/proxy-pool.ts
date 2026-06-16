@@ -17,13 +17,13 @@
 import { connect } from 'bun'
 
 /** Sentinel thrown when the pooled path declines a request; caller uses fetch(). */
-export const FALLBACK = Symbol('rpx.pool.fallback')
+export const FALLBACK: unique symbol = Symbol('rpx.pool.fallback')
 
 /** Marker for "a reused socket closed before/at the start of the response" — retryable. */
 const STALE = Symbol('rpx.pool.stale')
 
 /** Thrown when the upstream stalls past the configured timeout; caller maps to 504. */
-export const TIMEOUT = Symbol('rpx.pool.timeout')
+export const TIMEOUT: unique symbol = Symbol('rpx.pool.timeout')
 
 /**
  * Upstream inactivity timeout in seconds, from `RPX_UPSTREAM_TIMEOUT`. `0`

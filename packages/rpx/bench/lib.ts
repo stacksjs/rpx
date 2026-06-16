@@ -38,7 +38,7 @@ export async function freePort(): Promise<number> {
 }
 
 /** Resolve once a TCP connect to host:port succeeds, or reject after `timeoutMs`. */
-export async function waitForPort(port: number, host = HOST, timeoutMs = 10_000): Promise<void> {
+export async function waitForPort(port: number, host: string = HOST, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const ok = await new Promise<boolean>((resolve) => {

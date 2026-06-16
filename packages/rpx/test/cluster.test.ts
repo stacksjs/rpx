@@ -5,7 +5,6 @@
  * generation) and a real upstream, then verify both the worker serve path
  * (in-process) and the coordinator actually spawning workers that serve.
  */
-import type { Server } from 'bun'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
@@ -16,7 +15,7 @@ import { writeEntry } from '../src/registry'
 let rpxDir: string
 let registryDir: string
 let certsDir: string
-let upstream: Server
+let upstream: ReturnType<typeof Bun.serve>
 let cert: string
 let key: string
 

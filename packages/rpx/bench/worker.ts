@@ -8,6 +8,7 @@
  * Usage: bun worker.ts <mode> <port> [originHost]
  *   mode = origin | rpx | bun
  */
+import type { ProxyServer } from '../src/proxy-handler'
 import { buildHostRoutes, createProxyFetchHandler, matchHostRoute } from '../src'
 
 const HOST = '127.0.0.1'
@@ -75,7 +76,16 @@ else if (mode === 'rpx') {
   // rpx's real production handler + routing table, one instance per core.
   const table = buildHostRoutes([{ host: HOST, route: { sourceHost: originHost } }])
   const handler = createProxyFetchHandler((host, pathname) => matchHostRoute(table, host, pathname))
-  Bun.serve({ port, hostname: HOST, reusePort: true, fetch: (req, srv) => handler(req, srv as any) })
+  Bun.serve({
+    port,
+    hostname: HOST,
+    reusePort: true,
+    // Bun's `Server` data generic isn't assignable to `ProxyServer`'s `unknown`
+    // upgrade data, so route it through `unknown` (not `any`); the handler only
+    // touches `.upgrade`. Coerce the handler's `Response | undefined` to a
+    // Response since a fetch handler without a websocket must always respond.
+    fetch: async (req, srv) => (await handler(req, srv as unknown as ProxyServer)) ?? new Response('not found', { status: 502 }),
+  })
 }
 else if (mode === 'bun') {
   const base = `http://${originHost}`
