@@ -83,7 +83,7 @@ export function VitePluginRpx(options: VitePluginRpxOptions): Plugin {
   let serverInstance: ViteDevServer | undefined
   let isShuttingDown = false
 
-  const debug = (...args: any[]) => {
+  const debug = (...args: unknown[]) => {
     if (verbose && originalConsole)
       originalConsole.log('[vite-plugin-local]', ...args)
   }

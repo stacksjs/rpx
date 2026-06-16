@@ -1,19 +1,19 @@
 export const log: {
-  info: (...args: any[]) => void
-  success: (...args: any[]) => void
-  warn: (...args: any[]) => void
-  error: (...args: any[]) => void
-  debug: (...args: any[]) => void
-  log: (...args: any[]) => void
-  start: (...args: any[]) => void
-  box: (...args: any[]) => void
+  info: (...args: unknown[]) => void
+  success: (...args: unknown[]) => void
+  warn: (...args: unknown[]) => void
+  error: (...args: unknown[]) => void
+  debug: (...args: unknown[]) => void
+  log: (...args: unknown[]) => void
+  start: (...args: unknown[]) => void
+  box: (...args: unknown[]) => void
 } = {
-  info: (...args: any[]) => console.log('[info]', ...args),
-  success: (...args: any[]) => console.log('[success]', ...args),
-  warn: (...args: any[]) => console.warn('[warn]', ...args),
-  error: (...args: any[]) => console.error('[error]', ...args),
-  debug: (...args: any[]) => console.debug('[debug]', ...args),
-  log: (...args: any[]) => console.log(...args),
-  start: (...args: any[]) => console.log('[start]', ...args),
-  box: (...args: any[]) => console.log('[box]', ...args),
+  info: (...args: unknown[]) => console.log('[info]', ...args),
+  success: (...args: unknown[]) => console.log('[success]', ...args),
+  warn: (...args: unknown[]) => console.warn('[warn]', ...args),
+  error: (...args: unknown[]) => console.error('[error]', ...args),
+  debug: (...args: unknown[]) => console.debug('[debug]', ...args),
+  log: (...args: unknown[]) => console.log(...args),
+  start: (...args: unknown[]) => console.log('[start]', ...args),
+  box: (...args: unknown[]) => console.log('[box]', ...args),
 }

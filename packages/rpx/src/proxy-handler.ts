@@ -68,9 +68,10 @@ export type ProxyFetchHandler = (req: Request, server?: ProxyServer) => Promise<
 
 /** Minimal shape of the Bun server needed for WebSocket upgrades. */
 export interface ProxyServer {
-  // Loose `any` so it structurally accepts Bun's `Server<WebSocketData>` for
-  // any data generic (the daemon/start callers parameterize differently).
-  upgrade: (req: Request, options?: { data?: any, headers?: any }) => boolean
+  // `unknown` data + standard HeadersInit so it structurally accepts Bun's
+  // `Server<WebSocketData>` for any data generic (the daemon/start callers
+  // parameterize differently) without resorting to `any`.
+  upgrade: (req: Request, options?: { data?: unknown, headers?: Bun.HeadersInit }) => boolean
 }
 
 /** Data attached to an upgraded client socket so the ws handler can dial upstream. */
@@ -303,8 +304,11 @@ export function createProxyWebSocketHandler(verbose?: boolean) {
       const { targetUrl, forwardHeaders } = ws.data
       let upstream: WebSocket
       try {
-        // Bun's WebSocket accepts a `headers` option (control-channel auth etc.).
-        upstream = new WebSocket(targetUrl, { headers: forwardHeaders } as any)
+        // Bun's WebSocket accepts a `headers` option (control-channel auth etc.)
+        // that the DOM lib's constructor type doesn't model — describe that
+        // extended constructor precisely instead of falling back to `any`.
+        type BunWebSocketCtor = new (_url: string | URL, _options?: { headers?: Record<string, string> }) => WebSocket
+        upstream = new (WebSocket as unknown as BunWebSocketCtor)(targetUrl, { headers: forwardHeaders })
       }
       catch (err) {
         debugLog('ws', `failed to open upstream ${targetUrl}: ${err}`, verbose)
@@ -318,12 +322,13 @@ export function createProxyWebSocketHandler(verbose?: boolean) {
       upstream.addEventListener('open', () => {
         st.upstreamOpen = true
         for (const frame of st.pending)
-          upstream.send(frame as any)
+          upstream.send(frame)
         st.pending = []
       })
       upstream.addEventListener('message', (ev: MessageEvent) => {
         // Forward both binary (ArrayBuffer) and text frames to the client.
-        ws.send(ev.data as any)
+        // `binaryType` is 'arraybuffer', so `ev.data` is `string | ArrayBuffer`.
+        ws.send(ev.data as string | ArrayBuffer)
       })
       upstream.addEventListener('close', (ev: CloseEvent) => {
         try { ws.close(ev.code || 1000, ev.reason || '') }
@@ -342,7 +347,7 @@ export function createProxyWebSocketHandler(verbose?: boolean) {
         return
       const frame = typeof message === 'string' ? message : new Uint8Array(message)
       if (st.upstreamOpen)
-        st.upstream.send(frame as any)
+        st.upstream.send(frame)
       else
         st.pending.push(frame)
     },

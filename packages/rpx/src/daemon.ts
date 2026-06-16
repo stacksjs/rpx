@@ -448,7 +448,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     : null
 
   /** Build the TLS option for Bun.serve from the current SNI set (or dev cert). */
-  function tlsFor(entries: Array<{ serverName: string, cert: string, key: string }>): unknown {
+  function tlsFor(entries: Array<{ serverName: string, cert: string, key: string }>): Bun.TLSOptions | Bun.TLSOptions[] {
     if (entries.length > 0)
       return entries.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
     // No real certs: fall back to the dev self-signed shared cert.
@@ -469,7 +469,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       // Opt-in (RPX_REUSE_PORT): multi-instance :443 sharing on Linux. Off by
       // default — see shouldReusePort(). rpx never spawns its own cluster.
       reusePort: shouldReusePort(),
-      tls: tlsFor(entries) as any,
+      tls: tlsFor(entries),
       fetch(req: Request, server: unknown) {
         return fetchHandler(req, server as ProxyServerLike)
       },
@@ -683,7 +683,7 @@ async function readClusterSni(rpxDir: string): Promise<ClusterSni> {
 }
 
 /** Build the Bun.serve `tls` option from a published SNI set (or the dev fallback). */
-function clusterTlsFor(cfg: ClusterSni): unknown {
+function clusterTlsFor(cfg: ClusterSni): Bun.TLSOptions | Bun.TLSOptions[] | undefined {
   if (cfg.sni.length > 0)
     return cfg.sni.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
   if (cfg.dev)
@@ -733,7 +733,7 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
     port: httpsPort,
     hostname,
     reusePort: true, // workers share :443; the kernel load-balances (on Linux)
-    tls: clusterTlsFor(cfg) as any,
+    tls: clusterTlsFor(cfg),
     fetch(req: Request, server: unknown) {
       return fetchHandler(req, server as ProxyServerLike)
     },
@@ -817,7 +817,7 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
   if (sniTls.length === 0)
     devSslConfig = await bootstrapTls(opts, registryDir)
   const dev: ClusterSni['dev'] = devSslConfig
-    ? { key: devSslConfig.key, cert: devSslConfig.cert, ca: devSslConfig.ca }
+    ? { key: devSslConfig.key, cert: devSslConfig.cert, ca: Array.isArray(devSslConfig.ca) ? devSslConfig.ca.join('\n') : devSslConfig.ca }
     : null
 
   let stopped = false

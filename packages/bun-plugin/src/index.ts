@@ -35,7 +35,7 @@ function RpxBunPlugin(options: RpxPluginOptions = {}): BunPlugin {
   let hasSudoAccess = false
   let cleanupPromise: Promise<void> | null = null
 
-  const debug = (...args: any[]) => {
+  const debug = (...args: unknown[]) => {
     if (verbose)
       console.error('[bun-plugin-rpx]', ...args)
   }

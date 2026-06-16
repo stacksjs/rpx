@@ -83,7 +83,7 @@ export function buildRegistryTlsProxyOptions(
     },
     verbose,
     regenerateUntrustedCerts: true,
-    proxies: hostnames.map(to => ({ from: 'localhost:1', to })),
+    proxies: hostnames.map(to => ({ from: 'localhost:1', to, cleanUrls: false })),
   }
 }
 
@@ -166,8 +166,8 @@ export function resolveSSLPaths(options: ProxyConfigs, defaultConfig: typeof con
       })
 
       // Filter out undefined values from arrays
-      const altNameIPs = options.https.altNameIPs?.filter((ip: any): ip is string => ip !== undefined) || baseConfig.altNameIPs
-      const altNameURIs = options.https.altNameURIs?.filter((uri: any): uri is string => uri !== undefined) || baseConfig.altNameURIs
+      const altNameIPs = options.https.altNameIPs?.filter((ip: string | undefined): ip is string => ip !== undefined) || baseConfig.altNameIPs
+      const altNameURIs = options.https.altNameURIs?.filter((uri: string | undefined): uri is string => uri !== undefined) || baseConfig.altNameURIs
 
       // Override with provided paths
       return {

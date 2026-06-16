@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import type { IncomingHttpHeaders, SecureServerOptions } from 'node:http2'
 import type { ServerOptions } from 'node:https'
-import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
+import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, ResolvedProxyOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
 import { exec, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
@@ -237,7 +237,8 @@ async function testConnection(hostname: string, port: number, verbose?: boolean,
   try {
     await tryConnect()
   }
-  catch (err: any) {
+  catch (err: unknown) {
+    const e = err as NodeJS.ErrnoException
     // Check if we've exceeded the maximum test duration
     if (Date.now() - startTime > maxTestDuration) {
       debugLog('connection', `Connection test timed out after ${maxTestDuration}ms, but continuing anyway`, verbose)
@@ -246,7 +247,7 @@ async function testConnection(hostname: string, port: number, verbose?: boolean,
     }
 
     // If we're dealing with a server that takes time to start up
-    if (err.code === 'ECONNREFUSED' && retries > 0) {
+    if (e.code === 'ECONNREFUSED' && retries > 0) {
       debugLog('connection', `Connection refused, server might be starting up. Retrying in 2 seconds... (${retries} retries left)`, verbose)
       await new Promise(resolve => setTimeout(resolve, 2000))
       return testConnection(hostname, port, verbose, retries - 1)
@@ -294,7 +295,7 @@ async function testConnection(hostname: string, port: number, verbose?: boolean,
 
     // For production environments, we might want to be more strict
     // But for typical usage, let's be permissive and just warn
-    const errorMessage = `Failed to connect to ${hostname}:${port} after ${5 - retries} attempts: ${err.message}`
+    const errorMessage = `Failed to connect to ${hostname}:${port} after ${5 - retries} attempts: ${e.message}`
     debugLog('connection', `${errorMessage}. To bypass this check set RPX_BYPASS_CONNECTION_TEST=true`, verbose)
     log.warn(errorMessage)
     log.warn(`RPX will try to continue anyway. If you're sure this is correct, you can set RPX_BYPASS_CONNECTION_TEST=true to skip this check.`)
@@ -930,7 +931,7 @@ export function startProxy(options: ProxyOption): void {
 }
 
 // Helper function to safely get verbose flag from different config types
-function getVerbose(options: any): boolean {
+function getVerbose(options: ProxyOptions): boolean {
   return options?.verbose || false
 }
 
@@ -940,7 +941,7 @@ function getVerbose(options: any): boolean {
  * `false`). Real-server deployments with real DNS should set
  * `hostsManagement: false` so rpx never touches `/etc/hosts`.
  */
-function isHostsManagementEnabled(options: any): boolean {
+function isHostsManagementEnabled(options: ProxyOptions): boolean {
   if (options?.hostsManagement === false)
     return false
   const cleanup = options?.cleanup
@@ -967,7 +968,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     cleanUrls: false,
     changeOrigin: false,
     regenerateUntrustedCerts: true,
-  } as any
+  } as ResolvedProxyOptions
 
   if (options) {
     mergedOptions = {
@@ -1003,7 +1004,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       : [{
           id: mergedOptions.id,
           from: mergedOptions.from,
-          to: mergedOptions.to,
+          to: mergedOptions.to ?? 'rpx.localhost',
           path: mergedOptions.path,
           cleanUrls: mergedOptions.cleanUrls,
           changeOrigin: mergedOptions.changeOrigin,
@@ -1026,7 +1027,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           await processManager.startProcess(proxyId, proxy.start, verbose)
 
           // Parse the URL to get hostname and port
-          const fromUrl = new URL(proxy.from.startsWith('http') ? proxy.from : `http://${proxy.from}`)
+          const fromUrl = new URL(proxy.from?.startsWith('http') ? proxy.from : `http://${proxy.from}`)
           const hostname = fromUrl.hostname || 'localhost'
           const port = Number(fromUrl.port) || 80
 
@@ -1132,7 +1133,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
   // Prepare proxy configurations
   const proxyOptions = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
-    ? mergedOptions.proxies.map((proxy: any) => ({
+    ? mergedOptions.proxies.map(proxy => ({
         ...proxy,
         https: mergedOptions.https,
         cleanup: mergedOptions.cleanup,

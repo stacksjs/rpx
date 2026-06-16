@@ -233,6 +233,17 @@ export type BaseProxyOption = Partial<BaseProxyConfig>
 export type ProxyOption = Partial<SingleProxyConfig>
 export type ProxyOptions = Partial<SingleProxyConfig> | Partial<MultiProxyConfig>
 
+/**
+ * Internal shape used by `startProxies` after merging the built-in defaults with
+ * the caller's single- or multi-proxy options. Every field is optional, and the
+ * `proxies` array elements tolerate the per-proxy `cleanUrls`/`changeOrigin`
+ * overrides the runtime reads — so the merged object can be accessed across both
+ * single and multi shapes without falling back to `any`.
+ */
+export type ResolvedProxyOptions = Partial<SingleProxyConfig> & {
+  proxies?: Array<BaseProxyConfig & { cleanUrls?: boolean, changeOrigin?: boolean, pathRewrites?: PathRewrite[] }>
+}
+
 export interface SSLConfig {
   key: string
   cert: string
