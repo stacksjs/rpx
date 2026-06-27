@@ -1,7 +1,7 @@
 import type { Socket, TCPSocketListener } from 'bun'
 import { connect } from 'bun'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { FALLBACK, proxyViaPool } from '../src/proxy-pool'
+import { FALLBACK, POOL_BUSY, proxyViaPool } from '../src/proxy-pool'
 
 let origin: ReturnType<typeof Bun.serve>
 /** Counting TCP passthrough sitting in front of `origin`. */
@@ -203,5 +203,79 @@ describe('proxyViaPool', () => {
     await expect(call('POST', '/echo', { body })).rejects.toBe(FALLBACK)
     // The pool must not consume/lock the body, so the caller can fall back to fetch().
     expect(body.locked).toBe(false)
+  })
+
+  it('rejects with POOL_BUSY when an upstream is saturated and the queue wait elapses', async () => {
+    // The exact production failure mode: a stalled upstream holds the only slot,
+    // so a second request can't acquire one. It must fail fast (→ 503) rather
+    // than parking forever (which made the listener look wedged).
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const slow = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch() { await gate; return new Response('ok') } })
+    const hp = `127.0.0.1:${slow.port}`
+    const prev = process.env.RPX_QUEUE_WAIT_MS
+    process.env.RPX_QUEUE_WAIT_MS = '50'
+    try {
+      // maxPerHost:1 → the first request occupies the only slot and blocks on the gate.
+      const first = proxyViaPool({ hostPort: hp, method: 'GET', path: '/', reqHeaders: new Headers(), forwardedHost: 'x', body: null, maxPerHost: 1 })
+      await new Promise(r => setTimeout(r, 20)) // let the dial + checkout settle
+      let busy: unknown
+      try {
+        await proxyViaPool({ hostPort: hp, method: 'GET', path: '/', reqHeaders: new Headers(), forwardedHost: 'x', body: null, maxPerHost: 1 })
+      }
+      catch (e) { busy = e }
+      expect(busy).toBe(POOL_BUSY)
+      release()
+      expect((await first).status).toBe(200)
+    }
+    finally {
+      if (prev === undefined)
+        delete process.env.RPX_QUEUE_WAIT_MS
+      else process.env.RPX_QUEUE_WAIT_MS = prev
+      slow.stop(true)
+    }
+  })
+
+  it('rejects an upstream whose header block never terminates instead of buffering unbounded', async () => {
+    // Raw TCP upstream that streams headers forever without the terminating
+    // CRLFCRLF — without a cap this grows the read buffer until OOM.
+    let written = 0
+    const target = 400 * 1024 // > MAX_HEADER_BYTES (256 KB)
+    const chunk = Buffer.from(`x-pad: ${'A'.repeat(4096)}\r\n`)
+    const pump = (sock: Socket<undefined>): void => {
+      try {
+        while (written < target) {
+          const n = sock.write(chunk)
+          if (n <= 0)
+            return // closed, or backpressure with nothing written
+          written += n
+          if (n < chunk.length)
+            return // partial write — resume on drain
+        }
+      }
+      catch { /* socket closed by the proxy after it gave up */ }
+    }
+    const server = Bun.listen<undefined>({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {},
+        data(sock) { sock.write('HTTP/1.1 200 OK\r\n'); pump(sock) },
+        drain(sock) { pump(sock) },
+      },
+    })
+    const hp = `127.0.0.1:${server.port}`
+    try {
+      let err: unknown
+      try {
+        await proxyViaPool({ hostPort: hp, method: 'GET', path: '/', reqHeaders: new Headers(), forwardedHost: 'x', body: null, maxPerHost: 1 })
+      }
+      catch (e) { err = e }
+      expect(err).toBeInstanceOf(Error)
+      expect((err as Error).message).toContain('header block too large')
+    }
+    finally {
+      server.stop(true)
+    }
   })
 })

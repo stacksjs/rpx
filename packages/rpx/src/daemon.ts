@@ -341,10 +341,69 @@ async function elevateDaemonToRoot(
  * listeners are bound and the initial routing table is populated. Use
  * `handle.done` for the lifetime promise.
  */
+let crashGuardsInstalled = false
+
+/**
+ * A reverse proxy must outlive a single bad request. A stray uncaught exception
+ * or unhandled rejection — a malformed upstream response, a registry-watcher
+ * callback bug, a `void`-ed promise — would otherwise crash the whole daemon and
+ * drop :443 for *every* host behind it. Log and keep serving; systemd still
+ * restarts a genuinely fatal exit, but one bad request no longer takes the
+ * gateway down. Idempotent so the worker/coordinator entry points can each call
+ * it without stacking duplicate handlers.
+ */
+function installDaemonCrashGuards(): void {
+  if (crashGuardsInstalled)
+    return
+  crashGuardsInstalled = true
+  process.on('uncaughtException', (err) => {
+    log.error(`rpx daemon: uncaught exception (continuing): ${(err as Error)?.stack ?? err}`)
+  })
+  process.on('unhandledRejection', (reason) => {
+    log.error(`rpx daemon: unhandled rejection (continuing): ${reason}`)
+  })
+}
+
+/**
+ * The shared `:80` handler: serve ACME http-01 challenges, kick off on-demand
+ * issuance for an approved-but-uncovered host, then 301 to HTTPS. The request
+ * target is parsed defensively — scanners constantly send malformed/relative
+ * targets, and a thrown `new URL` would reject the fetch handler and make Bun
+ * drop the connection with no response. A bad target becomes a 400 instead.
+ */
+function handleHttpRedirect(req: Request, onDemand: OnDemandCertManager | null): Response {
+  let u: URL
+  try {
+    u = new URL(req.url)
+  }
+  catch {
+    return new Response('Bad Request', { status: 400 })
+  }
+  const host = (req.headers.get('host') ?? u.hostname).split(':')[0]
+
+  if (onDemand && u.pathname.startsWith('/.well-known/acme-challenge/')) {
+    const keyAuth = onDemand.challengeStore.handlePath(u.pathname)
+    if (keyAuth !== undefined)
+      return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
+    return new Response('challenge not found', { status: 404 })
+  }
+
+  // First plaintext hit for an approved-but-uncovered host: kick off issuance so
+  // the cert exists for the subsequent HTTPS request (don't block the redirect).
+  if (onDemand && !onDemand.hasCert(host))
+    onDemand.ensureCert(host).catch(() => {})
+
+  return new Response(null, {
+    status: 301,
+    headers: { Location: `https://${host}${u.pathname}${u.search}` },
+  })
+}
+
 // `opts` IS used throughout; pickier's no-unused-vars mis-fires on this fn after
 // the on-demand serve refactor (its --fix would wrongly rename to `_opts`).
 // eslint-disable-next-line pickier/no-unused-vars
 export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle> {
+  installDaemonCrashGuards()
   const verbose = opts.verbose ?? false
   const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
   const registryDir = opts.registryDir ?? path.join(rpxDir, 'registry.d')
@@ -531,28 +590,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       port: httpPort,
       hostname,
       fetch(req: Request) {
-        const u = new URL(req.url)
-        const host = (req.headers.get('host') ?? u.hostname).split(':')[0]
-
-        // Serve ACME http-01 challenges for in-flight on-demand issuances.
-        if (onDemand && u.pathname.startsWith('/.well-known/acme-challenge/')) {
-          const keyAuth = onDemand.challengeStore.handlePath(u.pathname)
-          if (keyAuth !== undefined)
-            return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
-          return new Response('challenge not found', { status: 404 })
-        }
-
-        // First plaintext hit for an approved-but-uncovered host: kick off
-        // issuance so the cert exists for the subsequent HTTPS request. We don't
-        // block the redirect on it (the browser retries over HTTPS anyway).
-        if (onDemand && !onDemand.hasCert(host)) {
-          onDemand.ensureCert(host).catch(() => {})
-        }
-
-        return new Response(null, {
-          status: 301,
-          headers: { Location: `https://${host}${u.pathname}${u.search}` },
-        })
+        return handleHttpRedirect(req, onDemand)
+      },
+      error() {
+        return new Response('Bad Request', { status: 400 })
       },
     })
   }
@@ -715,6 +756,7 @@ function workerSpawnCommand(): string[] {
  * (lock, DNS, hosts, :80, ACME issuance) — the coordinator does.
  */
 export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
+  installDaemonCrashGuards()
   const { rpxDir, registryDir, httpsPort, hostname, verbose } = ctx
 
   let routingTable: HostRoutes<ProxyRoute> = new Map()
@@ -806,6 +848,7 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
  * issued. Workers that crash are respawned.
  */
 async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): Promise<DaemonHandle> {
+  installDaemonCrashGuards()
   const { rpxDir, registryDir, httpsPort, httpPort, hostname, verbose, gcIntervalMs, workers } = ctx
   const pidPath = await acquireDaemonLock(rpxDir)
 
@@ -878,17 +921,10 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
       port: httpPort,
       hostname,
       fetch(req: Request) {
-        const u = new URL(req.url)
-        const host = (req.headers.get('host') ?? u.hostname).split(':')[0]
-        if (onDemand && u.pathname.startsWith('/.well-known/acme-challenge/')) {
-          const keyAuth = onDemand.challengeStore.handlePath(u.pathname)
-          if (keyAuth !== undefined)
-            return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
-          return new Response('challenge not found', { status: 404 })
-        }
-        if (onDemand && !onDemand.hasCert(host))
-          onDemand.ensureCert(host).catch(() => {})
-        return new Response(null, { status: 301, headers: { Location: `https://${host}${u.pathname}${u.search}` } })
+        return handleHttpRedirect(req, onDemand)
+      },
+      error() {
+        return new Response('Bad Request', { status: 400 })
       },
     })
   }

@@ -16,7 +16,7 @@
 import type { ServerWebSocket } from 'bun'
 import type { ResolvedStaticRoute } from './static-files'
 import type { PathRewrite } from './types'
-import { FALLBACK, proxyViaPool, TIMEOUT } from './proxy-pool'
+import { FALLBACK, POOL_BUSY, proxyViaPool, TIMEOUT } from './proxy-pool'
 import { serveStaticFile } from './static-files'
 import { debugLog, resolvePathRewrite } from './utils'
 
@@ -175,7 +175,7 @@ function splitPathQuery(rawUrl: string): { pathname: string, search: string } {
  * traffic is handled by the `websocket` handler from {@link createProxyWebSocketHandler}.
  */
 export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): ProxyFetchHandler {
-  return async (req: Request, server?: ProxyServer): Promise<Response | undefined> => {
+  const inner = async (req: Request, server?: ProxyServer): Promise<Response | undefined> => {
     const { pathname, search } = splitPathQuery(req.url)
     const hostname = extractHostname(req)
 
@@ -263,6 +263,14 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
         debugLog('request', `Upstream timeout for ${hostname}`, verbose)
         return new Response('Gateway Timeout', { status: 504 })
       }
+      // Pool saturated: every connection to this upstream is busy and the wait
+      // for a free slot timed out. Fail fast and loud (503) instead of parking
+      // the request forever — a parked request with no response is what made the
+      // listener appear "wedged" in production.
+      if (err === POOL_BUSY) {
+        debugLog('request', `Upstream pool saturated for ${hostname}`, verbose)
+        return new Response('Service Unavailable', { status: 503, headers: { 'retry-after': '1' } })
+      }
       if (err === FALLBACK || !hasBody) {
         try {
           const headers = new Headers(req.headers)
@@ -286,6 +294,21 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
       }
       debugLog('request', `Proxy error for ${hostname}: ${err}`, verbose)
       return new Response(`Proxy Error: ${err}`, { status: 502 })
+    }
+  }
+
+  // A reverse proxy must never drop a connection on an unexpected throw: an
+  // async fetch handler that *rejects* makes Bun close the socket with no
+  // response (the client sees an empty reply) and log a stack trace per hit.
+  // Wrap the whole pipeline so a routing bug, a malformed request, or a static
+  // helper that throws always degrades to a 502 instead of a dropped connection.
+  return async (req: Request, server?: ProxyServer): Promise<Response | undefined> => {
+    try {
+      return await inner(req, server)
+    }
+    catch (err) {
+      debugLog('request', `Unhandled proxy handler error: ${err}`, verbose)
+      return new Response('Bad Gateway', { status: 502 })
     }
   }
 }

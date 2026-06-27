@@ -21,7 +21,29 @@
  * })
  * Bun.serve({ fetch: req => guard(req) ?? handler(req, server) })
  */
+import { timingSafeEqual } from 'node:crypto'
 import { matchesWildcard } from './host-match'
+
+/**
+ * Compare a request-supplied secret against the expected value in constant time,
+ * so the shared secret can't be recovered byte-by-byte via response timing. The
+ * length check leaks only the secret's length (standard and acceptable); the
+ * byte comparison itself is timing-safe.
+ */
+function secretMatches(provided: string | null, expected: string): boolean {
+  if (provided == null)
+    return false
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length)
+    return false
+  return timingSafeEqual(a, b)
+}
+
+/** Lowercase and strip a single trailing dot so `Host: example.com.` ≡ `example.com`. */
+function normalizeHost(host: string): string {
+  return host.toLowerCase().replace(/\.$/, '')
+}
 
 export interface OriginGuardOptions {
   /** Header the CDN injects on the origin hop (case-insensitive), e.g. `x-origin-verify`. */
@@ -51,9 +73,9 @@ const DEFAULT_EXEMPT = ['/.well-known/acme-challenge/']
 function hostnameOf(req: Request): string {
   const hostHeader = req.headers.get('host')
   if (hostHeader)
-    return hostHeader.split(':')[0].toLowerCase()
+    return normalizeHost(hostHeader.split(':')[0])
   try {
-    return new URL(req.url).hostname.toLowerCase()
+    return normalizeHost(new URL(req.url).hostname)
   }
   catch {
     return ''
@@ -65,7 +87,7 @@ export function createOriginGuard(options: OriginGuardOptions): OriginGuard {
   const exact = new Set<string>()
   const wildcards: string[] = []
   for (const h of options.hosts) {
-    const host = h.toLowerCase()
+    const host = normalizeHost(h)
     if (host.startsWith('*.'))
       wildcards.push(host)
     else
@@ -76,7 +98,7 @@ export function createOriginGuard(options: OriginGuardOptions): OriginGuard {
     ?? 'Forbidden: direct origin access is not allowed; requests must arrive via the CDN.\n'
 
   const protects = (hostname: string): boolean => {
-    const h = hostname.toLowerCase()
+    const h = normalizeHost(hostname)
     return exact.has(h) || wildcards.some(w => matchesWildcard(h, w))
   }
 
@@ -95,7 +117,7 @@ export function createOriginGuard(options: OriginGuardOptions): OriginGuard {
     if (exemptPaths.some(p => pathname.startsWith(p)))
       return undefined
 
-    if (req.headers.get(header) === options.value)
+    if (secretMatches(req.headers.get(header), options.value))
       return undefined
 
     return new Response(forbidden, { status: 403, headers: { 'content-type': 'text/plain' } })

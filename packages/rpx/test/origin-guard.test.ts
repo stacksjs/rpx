@@ -67,4 +67,22 @@ describe('createOriginGuard', () => {
     expect(guard.protects('a.apps.example.com')).toBe(true)
     expect(guard.protects('registry.pantry.dev')).toBe(false)
   })
+
+  it('treats a trailing-dot (FQDN) host as the protected host — no bypass', () => {
+    const guard = createOriginGuard(opts)
+    // `Host: stacksjs.com.` is the FQDN form of `stacksjs.com`; it must NOT slip
+    // the guard. Without the secret it is rejected just like the dotless form.
+    expect(guard(req('https://stacksjs.com/', { host: 'stacksjs.com.' }))?.status).toBe(403)
+    expect(guard(req('https://stacksjs.com/', { host: 'stacksjs.com.', 'x-origin-verify': SECRET }))).toBeUndefined()
+    expect(guard.protects('stacksjs.com.')).toBe(true)
+    // wildcard form too
+    expect(guard(req('https://a.apps.example.com/', { host: 'a.apps.example.com.' }))?.status).toBe(403)
+  })
+
+  it('rejects a wrong secret of the same length (constant-time compare path)', () => {
+    const guard = createOriginGuard(opts)
+    const sameLen = 'x'.repeat(SECRET.length)
+    expect(sameLen.length).toBe(SECRET.length)
+    expect(guard(req('https://stacksjs.com/', { host: 'stacksjs.com', 'x-origin-verify': sameLen }))?.status).toBe(403)
+  })
 })

@@ -26,6 +26,38 @@ const STALE = Symbol('rpx.pool.stale')
 export const TIMEOUT: unique symbol = Symbol('rpx.pool.timeout')
 
 /**
+ * Thrown when every connection to an upstream is busy and the wait for a free
+ * slot exceeded {@link queueWaitMs}, or the waiter queue is already at its cap.
+ * The caller maps it to a 503. This is the backstop that keeps a saturated or
+ * stalled upstream from making the *listener* appear wedged: instead of parking
+ * a request forever with no response (the production incident), rpx fails it
+ * fast and loud so the listener keeps answering every other request.
+ */
+export const POOL_BUSY: unique symbol = Symbol('rpx.pool.busy')
+
+/**
+ * Max time (ms) a request waits for a free connection slot when an upstream is
+ * at its connection cap, from `RPX_QUEUE_WAIT_MS` (default 30s). On expiry the
+ * request gets a 503 rather than hanging indefinitely. This bound is what makes
+ * a leaked/stalled slot a localized 503 instead of a global wedge.
+ */
+function queueWaitMs(): number {
+  const v = Number.parseInt(process.env.RPX_QUEUE_WAIT_MS ?? '', 10)
+  return Number.isFinite(v) && v > 0 ? v : 30_000
+}
+
+/**
+ * Hard ceiling on queued waiters per upstream, from `RPX_MAX_QUEUED` (default
+ * `maxTotal * 8`). Beyond this, requests are rejected with 503 immediately
+ * rather than appended — so a flood (or a fully wedged upstream) can't grow the
+ * waiter array without bound and exhaust memory on top of the saturation.
+ */
+function maxQueued(maxTotal: number): number {
+  const v = Number.parseInt(process.env.RPX_MAX_QUEUED ?? '', 10)
+  return Number.isFinite(v) && v > 0 ? v : maxTotal * 8
+}
+
+/**
  * Upstream inactivity timeout in seconds, from `RPX_UPSTREAM_TIMEOUT`. `0`
  * (the default) disables it — rpx commonly fronts dev servers doing SSE/HMR/
  * long-poll, where an inactivity timeout would sever legitimately-quiet streams.
@@ -57,6 +89,16 @@ const IDLE_TIMEOUT_MS = 30_000
 
 /** Initial per-connection read buffer; grows on demand for larger header blocks. */
 const INITIAL_BUF = 16384
+
+/**
+ * Hard cap on the response header block. A buggy or malicious upstream that
+ * streams bytes without ever sending the terminating `\r\n\r\n` would otherwise
+ * grow the per-connection buffer unbounded (doubling on each read) until the
+ * proxy OOMs. If the header end isn't found within this many bytes, the
+ * connection is torn down and the request fails with 502. 256 KB is far above
+ * any legitimate header block.
+ */
+const MAX_HEADER_BYTES = 256 * 1024
 
 /**
  * Bodies at least this large take the zero-copy fast path: hand the Response a
@@ -252,8 +294,14 @@ class UpstreamPool {
   private open = 0
   /** Lazily-started interval that closes connections idle past {@link IDLE_TIMEOUT_MS}. */
   private sweeper: ReturnType<typeof setInterval> | null = null
+  /** Max ms a request waits for a free slot before getting {@link POOL_BUSY}. */
+  private readonly queueWaitMs = queueWaitMs()
+  /** Hard ceiling on {@link waiters} length; beyond it, reject with {@link POOL_BUSY}. */
+  private readonly maxWaiters: number
 
-  constructor(private host: string, private port: number, private maxTotal: number) {}
+  constructor(private host: string, private port: number, private maxTotal: number) {
+    this.maxWaiters = maxQueued(maxTotal)
+  }
 
   dial(): Promise<Conn> {
     const conn = new Conn()
@@ -309,7 +357,12 @@ class UpstreamPool {
    */
   async acquireOrDial(): Promise<Conn> {
     if (this.open >= this.maxTotal) {
-      const c = await new Promise<Conn | null>(resolve => this.waiters.push(resolve))
+      // Reject immediately once the queue is full — never let it grow unbounded.
+      if (this.waiters.length >= this.maxWaiters)
+        throw POOL_BUSY
+      const c = await this.waitForSlot()
+      if (c === POOL_BUSY)
+        throw POOL_BUSY
       if (c) {
         c.pos = 0
         c.len = 0
@@ -326,6 +379,35 @@ class UpstreamPool {
       this.wakeWaiter()
       throw err
     }
+  }
+
+  /**
+   * Wait for a connection to be released to us, bounded by {@link queueWaitMs}.
+   * Resolves with a reused {@link Conn}, `null` (a slot freed up — dial a fresh
+   * one), or {@link POOL_BUSY} on timeout. On timeout the waiter is removed from
+   * the queue so a freed slot is never handed to a request that already gave up.
+   */
+  private waitForSlot(): Promise<Conn | null | typeof POOL_BUSY> {
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (v: Conn | null | typeof POOL_BUSY): void => {
+        if (settled)
+          return
+        settled = true
+        clearTimeout(timer)
+        resolve(v)
+      }
+      // The resolver stored in `waiters` clears the timer on a real wake-up.
+      const waiter = (c: Conn | null): void => finish(c)
+      const timer = setTimeout(() => {
+        const i = this.waiters.indexOf(waiter)
+        if (i !== -1)
+          this.waiters.splice(i, 1)
+        finish(POOL_BUSY)
+      }, this.queueWaitMs)
+      timer.unref?.()
+      this.waiters.push(waiter)
+    })
   }
 
   /** Hand a healthy connection to the next waiter, or return it to the idle set. */
@@ -600,6 +682,10 @@ async function waitForHead(conn: Conn): Promise<number> {
         throw STALE
       throw new Error('upstream closed mid-header')
     }
+    // Bound the header block: an upstream that streams bytes without ever
+    // sending `\r\n\r\n` would otherwise grow `buf` unbounded until OOM.
+    if (conn.len - conn.pos > MAX_HEADER_BYTES)
+      throw new Error('upstream header block too large')
     await conn.waitForData(conn.len)
     headerEnd = findHeaderEnd(conn.buf, conn.len, conn.pos)
   }
