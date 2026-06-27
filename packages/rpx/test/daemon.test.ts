@@ -125,6 +125,21 @@ describe('runDaemon end-to-end', () => {
 
     const registryDir = path.join(rpxDir, 'registry.d')
 
+    // Pre-provision a self-signed cert per SNI name instead of generating one
+    // with tlsx at startup. tlsx's root-CA generation is occasionally flaky under
+    // load (intermittent `fopen rpx-root-ca.crt` / ASN.1 errors that wedge the
+    // TLS handshake and time the test out). The client sets rejectUnauthorized:
+    // false, so a static self-signed cert is all the handshake needs.
+    const certsDir = path.join(rpxDir, 'certs')
+    await fsp.mkdir(certsDir, { recursive: true })
+    const keyPath = path.join(certsDir, 'pet-store.localhost.key')
+    const crtPath = path.join(certsDir, 'pet-store.localhost.crt')
+    Bun.spawnSync(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', crtPath, '-days', '1', '-nodes', '-subj', '/CN=localhost'])
+    // training.localhost is registered mid-test (live reroute) but its cert can
+    // exist upfront — reuse the same PEM under the second SNI name.
+    await fsp.copyFile(crtPath, path.join(certsDir, 'training.localhost.crt'))
+    await fsp.copyFile(keyPath, path.join(certsDir, 'training.localhost.key'))
+
     // Pre-write an entry before the daemon starts so the initial routing
     // table is non-empty.
     await writeEntry({
@@ -141,7 +156,7 @@ describe('runDaemon end-to-end', () => {
       httpsPort: HTTPS_PORT,
       httpPort: 0,
       hostname: '127.0.0.1',
-      https: { basePath: rpxDir },
+      productionCerts: { certsDir },
       verbose: false,
       gcIntervalMs: 60_000, // don't fire during the test
     })

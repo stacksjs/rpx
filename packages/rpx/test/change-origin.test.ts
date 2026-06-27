@@ -1,9 +1,8 @@
 import type * as http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { ProxyOption } from '../src/types'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test'
 import { createServer } from 'node:http'
-import { cleanup, startProxy } from '../src/start'
+import { createSharedProxyServer } from '../src/start'
 import { debugLog } from '../src/utils'
 
 /**
@@ -135,92 +134,75 @@ describe('changeOrigin feature integration', () => {
     })
   })
 
-  // Real test with actual server and proxy
-  describe('Real proxy with startProxy and changeOrigin', () => {
-    // Test server ports
-    const testTargetPort = 47001 // Port where our target server runs
+  // Real end-to-end test: proxy through rpx's shared request handler on an
+  // ephemeral port (no privileged ports, DNS, or sudo side effects) and assert
+  // that changeOrigin actually rewrites the upstream-facing Origin header. This
+  // exercises the same handler the single-proxy, multi-proxy, single-port and
+  // daemon paths all use.
+  describe('Real proxy through the shared handler with changeOrigin', () => {
+    let upstream: ReturnType<typeof Bun.serve>
 
-    // Store server reference for cleanup
-    let testTargetServer: http.Server | null = null
-
-    // Setup test environment
-    beforeAll(async () => {
-      // Create a target server that echoes back the request headers
-      await new Promise<void>((resolve) => {
-        testTargetServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-          // Echo back the headers we received for verification
-          res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({
-            receivedHost: req.headers.host,
-            headers: req.headers,
-            url: req.url,
-          }))
-        })
-
-        testTargetServer.listen(testTargetPort, '127.0.0.1', () => {
-          debugLog('test', `Test target server listening on port ${testTargetPort}`, true)
-          resolve()
-        })
-      })
-
-      // Configure the proxy correctly
-      // NOTE: rpx's "from" is the target server, "to" is the domain to access the proxy
-      const proxyConfig: ProxyOption = {
-        from: `127.0.0.1:${testTargetPort}`, // The target server address
-        to: 'test.rpx.localhost', // The domain to access the proxy
-        https: false, // Disable HTTPS for testing
-        cleanup: false,
-        verbose: true,
-        changeOrigin: true, // Enable changeOrigin
-      }
-
-      // Start the proxy
-      startProxy(proxyConfig)
-
-      // Wait for the proxy to initialize
-      await new Promise(resolve => setTimeout(resolve, 2000))
-    })
-
-    // Clean up the test environment
-    afterAll(async () => {
-      // Clean up proxy processes
-      await cleanup()
-
-      // Clean up the target server
-      return new Promise<void>((resolve) => {
-        if (testTargetServer) {
-          testTargetServer.close(() => {
-            debugLog('test', 'Test target server closed', true)
-            resolve()
-          })
-        }
-        else {
-          resolve()
-        }
+    beforeAll(() => {
+      // Upstream echoes back the host/origin it received so we can verify rewrites.
+      upstream = Bun.serve({
+        port: 0,
+        hostname: '127.0.0.1',
+        fetch(req: Request) {
+          return new Response(JSON.stringify({
+            receivedHost: req.headers.get('host'),
+            receivedOrigin: req.headers.get('origin'),
+          }), { headers: { 'content-type': 'application/json' } })
+        },
       })
     })
 
-    // This test makes direct requests to the target server to verify it's working
-    it('should verify the target server is up and responding', async () => {
+    afterAll(() => {
+      upstream.stop(true)
+    })
+
+    it('rewrites the Origin to the upstream when changeOrigin is true', async () => {
+      const sourceHost = `127.0.0.1:${upstream.port}`
+      const proxy = createSharedProxyServer({
+        routeEntries: [{ host: 'test.rpx.localhost', route: { sourceHost, changeOrigin: true } }],
+        listenPort: 0,
+        sslConfig: null,
+        originGuard: null,
+        verbose: false,
+      })
+      expect(proxy).not.toBeNull()
       try {
-        // Make a direct request to the target server to confirm it's working
-        const directResponse = await fetch(`http://127.0.0.1:${testTargetPort}/test-direct`, {
-          headers: {
-            Host: 'original.example.com',
-          },
+        const res = await fetch(`http://127.0.0.1:${proxy!.port}/path`, {
+          headers: { host: 'test.rpx.localhost', origin: 'https://original.example.com' },
         })
-
-        expect(directResponse.ok).toBe(true)
-
-        const data = await directResponse.json() as { receivedHost: string }
-        debugLog('test', `Direct request received host header: ${data.receivedHost}`, true)
-
-        // The target server should receive the exact host header we sent
-        expect(data.receivedHost).toBe('original.example.com')
+        const data = await res.json() as { receivedHost: string, receivedOrigin: string }
+        // rpx always forwards the upstream host; changeOrigin additionally
+        // rewrites Origin to the upstream target.
+        expect(data.receivedHost).toBe(sourceHost)
+        expect(data.receivedOrigin).toBe(`http://${sourceHost}`)
       }
-      catch (error) {
-        debugLog('test', `Error in direct target test: ${error}`, true)
-        throw error
+      finally {
+        proxy!.stop(true)
+      }
+    })
+
+    it('preserves the client Origin when changeOrigin is false', async () => {
+      const sourceHost = `127.0.0.1:${upstream.port}`
+      const proxy = createSharedProxyServer({
+        routeEntries: [{ host: 'test.rpx.localhost', route: { sourceHost, changeOrigin: false } }],
+        listenPort: 0,
+        sslConfig: null,
+        originGuard: null,
+        verbose: false,
+      })
+      try {
+        const res = await fetch(`http://127.0.0.1:${proxy!.port}/path`, {
+          headers: { host: 'test.rpx.localhost', origin: 'https://original.example.com' },
+        })
+        const data = await res.json() as { receivedOrigin: string }
+        expect(data.receivedOrigin).toBe('https://original.example.com')
+      }
+      finally {
+        proxy!.stop(true)
       }
     })
   })

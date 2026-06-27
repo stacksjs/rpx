@@ -22,12 +22,34 @@ let key: string
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // Bun-native free-port probe (node:net's Server is unreliable under the test
-// runner here). Tiny TOCTOU window, fine for tests.
+// runner here). There is a TOCTOU window between probing the port and binding
+// it — under the full suite another listener occasionally grabs it first — so
+// callers bind via `serveOnFreshPort`, which retries on a new port if the bind
+// races.
 function freePort(): number {
   const srv = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {}, open() {}, close() {} } })
   const port = srv.port
   srv.stop(true)
   return port
+}
+
+/**
+ * Bind a server on a free port, retrying on a fresh port if the bind races
+ * another listener (the freePort TOCTOU). Returns the chosen port and the
+ * server handle so the test can address it and tear it down.
+ */
+async function serveOnFreshPort<T>(start: (port: number) => Promise<T>, attempts = 6): Promise<{ port: number, handle: T }> {
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    const port = freePort()
+    try {
+      return { port, handle: await start(port) }
+    }
+    catch (err) {
+      lastErr = err
+    }
+  }
+  throw lastErr
 }
 
 beforeAll(async () => {
@@ -73,8 +95,8 @@ describe('cluster worker (in-process)', () => {
       path.join(rpxDir, 'cluster-sni.json'),
       JSON.stringify({ sni: [{ serverName: 'site.test', cert, key }], dev: null }),
     )
-    const port = await freePort()
-    const worker = await runDaemonWorker({ rpxDir, registryDir, httpsPort: port, hostname: '127.0.0.1', verbose: false })
+    const { port, handle: worker } = await serveOnFreshPort(p =>
+      runDaemonWorker({ rpxDir, registryDir, httpsPort: p, hostname: '127.0.0.1', verbose: false }))
     try {
       const res = await fetch(`https://127.0.0.1:${port}/foo`, { headers: { host: 'site.test' }, tls: { rejectUnauthorized: false } })
       expect(res.status).toBe(200)
