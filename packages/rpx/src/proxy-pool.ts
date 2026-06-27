@@ -14,7 +14,11 @@
  * protocol upgrades — throws {@link FALLBACK} so the caller can defer to the
  * proven `fetch()` path. Correctness first; the fast path is the optimization.
  */
-import { connect } from 'bun'
+// `connect` is a Bun runtime builtin. A static value-import (`from 'bun'`) trips
+// the declaration/bundle step at publish time ("Browser build cannot import Bun
+// builtin: 'bun'"), so reach it through the `Bun` global instead — identical at
+// runtime (rpx only ever runs under Bun), but invisible to the bundler.
+const { connect } = Bun
 
 /** Sentinel thrown when the pooled path declines a request; caller uses fetch(). */
 export const FALLBACK: unique symbol = Symbol('rpx.pool.fallback')
