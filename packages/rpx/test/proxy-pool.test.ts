@@ -41,6 +41,8 @@ beforeAll(() => {
           return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } })
         case '/large':
           return new Response('x'.repeat(500_000), { headers: { 'content-type': 'text/plain' } })
+        case '/huge': // exceeds the 2 MB backpressure high-water mark
+          return new Response('y'.repeat(5_000_000), { headers: { 'content-type': 'text/plain' } })
         case '/chunked': {
           const enc = new TextEncoder()
           const stream = new ReadableStream({
@@ -92,7 +94,11 @@ beforeAll(() => {
             close: () => { client.end() },
             error: () => { client.end() },
           },
-        })
+          // Under a concurrent burst, dialing the origin can transiently fail.
+          // Catch the rejected connect() promise (the socket `error` handler only
+          // covers a connection that opened): an unhandled rejection here would be
+          // attributed by the test runner to whatever test is mid-flight.
+        }).catch(() => { client.end() })
       },
       data(client, chunk) {
         client.data.toUpstream.push(new Uint8Array(chunk)) // copy: Bun reuses the read buffer
@@ -112,11 +118,11 @@ afterAll(() => {
   origin.stop(true)
 })
 
-function call(method: string, path: string, opts: { body?: ReadableStream<Uint8Array> | null, headers?: Record<string, string>, originOverride?: string } = {}) {
+function call(method: string, path: string, opts: { body?: ReadableStream<Uint8Array> | null, headers?: Record<string, string>, originOverride?: string, maxPerHost?: number } = {}) {
   const reqHeaders = new Headers()
   for (const [k, v] of Object.entries(opts.headers ?? {}))
     reqHeaders.set(k, v)
-  return proxyViaPool({ hostPort, method, path, reqHeaders, forwardedHost: 'site.test', originOverride: opts.originOverride, body: opts.body ?? null })
+  return proxyViaPool({ hostPort, method, path, reqHeaders, forwardedHost: 'site.test', originOverride: opts.originOverride, body: opts.body ?? null, maxPerHost: opts.maxPerHost })
 }
 
 describe('proxyViaPool', () => {
@@ -204,10 +210,26 @@ describe('proxyViaPool', () => {
   })
 
   it('stays correct under a concurrent burst', async () => {
-    const results = await Promise.all(
-      Array.from({ length: 200 }, async () => (await (await call('GET', '/small')).text()) === '{"ok":true}'),
+    // Bound the pool (maxPerHost) so 200 simultaneous requests reuse/queue across
+    // a fixed set of connections — the way a real proxy bounds per-upstream
+    // connections — rather than firing 200 instantaneous dials that overrun the
+    // single test listener's accept backlog. This keeps the test about
+    // correctness under concurrency, not the OS's ability to absorb a stampede.
+    //
+    // Use allSettled (not Promise.all): with Promise.all, the first rejection
+    // resolves the test while the other 199 promises are still in flight, so a
+    // late rejection surfaces as an unhandled rejection attributed to whatever
+    // test runs next. allSettled waits for every request to settle, keeping any
+    // failure contained to this test.
+    const settled = await Promise.allSettled(
+      Array.from({ length: 200 }, async () => (await (await call('GET', '/small', { maxPerHost: 32 })).text())),
     )
-    expect(results.every(Boolean)).toBe(true)
+    const bad = settled.filter(r => r.status === 'rejected' || r.value !== '{"ok":true}')
+    if (bad.length) {
+      const reasons = [...new Set(bad.map(r => r.status === 'rejected' ? String((r.reason as Error)?.message ?? r.reason) : `body=${r.value}`))]
+      throw new Error(`${bad.length}/200 burst requests failed: ${reasons.join(', ')}`)
+    }
+    expect(bad.length).toBe(0)
   })
 
   it('declines Expect: 100-continue via FALLBACK', async () => {
@@ -293,6 +315,74 @@ describe('proxyViaPool', () => {
       catch (e) { err = e }
       expect(err).toBeInstanceOf(Error)
       expect((err as Error).message).toContain('header block too large')
+    }
+    finally {
+      server.stop(true)
+    }
+  })
+
+  it('delivers a body larger than the backpressure high-water mark intact', async () => {
+    // 5 MB > BODY_HWM (2 MB): the pool must pause/resume the upstream socket and
+    // still hand back every byte in order — backpressure must not truncate.
+    const res = await call('GET', '/huge')
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body.length).toBe(5_000_000)
+    expect(body[0]).toBe('y')
+    expect(body[body.length - 1]).toBe('y')
+  })
+
+  it('reuses the connection (no leak) after a paused/large transfer completes', async () => {
+    // After a >HWM transfer that triggered pause(), the released socket must be
+    // un-paused so the next request on it still gets a response.
+    await (await call('GET', '/huge')).text()
+    const res = await call('GET', '/small')
+    expect(await res.text()).toBe('{"ok":true}')
+  })
+
+  it('refuses a response with a malformed Content-Length instead of mis-framing', async () => {
+    const server = Bun.listen<undefined>({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {},
+        data(sock) { sock.write('HTTP/1.1 200 OK\r\nContent-Length: 12abc\r\n\r\nhello') },
+      },
+    })
+    const hp = `127.0.0.1:${server.port}`
+    try {
+      let err: unknown
+      try {
+        await proxyViaPool({ hostPort: hp, method: 'GET', path: '/', reqHeaders: new Headers(), forwardedHost: 'x', body: null, maxPerHost: 1 })
+      }
+      catch (e) { err = e }
+      expect(err).toBeInstanceOf(Error)
+      expect((err as Error).message).toContain('malformed response framing')
+    }
+    finally {
+      server.stop(true)
+    }
+  })
+
+  it('errors the body stream on a malformed chunk size instead of spinning', async () => {
+    const server = Bun.listen<undefined>({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {},
+        // valid head, then a non-hex chunk size
+        data(sock) { sock.write('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nZZZ\r\nhello') },
+      },
+    })
+    const hp = `127.0.0.1:${server.port}`
+    try {
+      const res = await proxyViaPool({ hostPort: hp, method: 'GET', path: '/', reqHeaders: new Headers(), forwardedHost: 'x', body: null, maxPerHost: 1 })
+      // headers parse fine (200); the error surfaces while reading the body
+      let err: unknown
+      try { await res.text() }
+      catch (e) { err = e }
+      expect(err).toBeInstanceOf(Error)
+      expect((err as Error).message).toContain('malformed chunk size')
     }
     finally {
       server.stop(true)

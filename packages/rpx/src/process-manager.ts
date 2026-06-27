@@ -50,18 +50,19 @@ export class ProcessManager {
           debugLog('start', `Process ${id} failed to start: ${err}`, verbose)
           this.processes.delete(id)
           reject(err)
-          // Trigger cleanup on process error
-          process.emit('SIGINT')
+          // Do NOT signal the whole process down — a reverse proxy must outlive a
+          // flaky managed upstream. The rejected promise lets the caller decide;
+          // every other route keeps serving.
         }
       })
 
       childProcess.on('exit', (code) => {
         if (!this.isShuttingDown && code !== null && code !== 0) {
-          debugLog('start', `Process ${id} exited with code ${code}`, verbose)
+          debugLog('start', `Process ${id} exited with code ${code}; leaving the proxy running`, verbose)
           this.processes.delete(id)
           reject(new Error(`Process ${id} exited with code ${code}`))
-          // Trigger cleanup on non-zero exit
-          process.emit('SIGINT')
+          // No process.emit('SIGINT'): a child crashing after startup must not take
+          // the reverse proxy down with it. (Post-startup this reject() is a no-op.)
         }
       })
 

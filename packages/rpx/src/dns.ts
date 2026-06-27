@@ -71,11 +71,17 @@ function parseHeader(buffer: Buffer): DnsHeader {
   }
 }
 
-function parseName(buffer: Buffer, offset: number): { name: string, newOffset: number } {
+function parseName(buffer: Buffer, offset: number, depth = 0): { name: string, newOffset: number } {
   const labels: string[] = []
   let currentOffset = offset
+  // Bound label reads so a malformed/truncated packet can't loop forever.
+  let guard = 0
 
   while (true) {
+    // Every read is bounds-checked: a crafted/truncated packet must not over-read
+    // (RangeError) or spin. A label count this high is already pathological.
+    if (currentOffset >= buffer.length || ++guard > 128)
+      break
     const length = buffer[currentOffset]
 
     if (length === 0) {
@@ -84,14 +90,22 @@ function parseName(buffer: Buffer, offset: number): { name: string, newOffset: n
     }
 
     if ((length & 0xC0) === 0xC0) {
+      // Compression pointer. Cap the follow depth so a self-referential or cyclic
+      // pointer chain can't recurse into a stack overflow (a trivial DoS for any
+      // local process that can send a UDP packet to the dev resolver).
+      if (currentOffset + 1 >= buffer.length || depth >= 10)
+        break
       const pointer = buffer.readUInt16BE(currentOffset) & 0x3FFF
-      const { name } = parseName(buffer, pointer)
-      labels.push(name)
+      const { name } = parseName(buffer, pointer, depth + 1)
+      if (name)
+        labels.push(name)
       currentOffset += 2
       break
     }
 
     currentOffset++
+    if (currentOffset + length > buffer.length)
+      break // truncated label — stop rather than over-read
     labels.push(buffer.subarray(currentOffset, currentOffset + length).toString('ascii'))
     currentOffset += length
   }

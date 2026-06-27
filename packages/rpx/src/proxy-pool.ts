@@ -23,8 +23,28 @@ const { connect } = Bun
 /** Sentinel thrown when the pooled path declines a request; caller uses fetch(). */
 export const FALLBACK: unique symbol = Symbol('rpx.pool.fallback')
 
-/** Marker for "a reused socket closed before/at the start of the response" — retryable. */
+/** Marker for "a socket closed before/at the start of the response" — retryable. */
 const STALE = Symbol('rpx.pool.stale')
+/**
+ * Max transparent retries when a checked-out connection goes STALE (closed
+ * before any response byte). Bounds the loop so a flapping/dead upstream fails
+ * fast rather than spinning, while absorbing the routine connection churn a busy
+ * upstream produces under concurrent bursts.
+ */
+const MAX_STALE_RETRIES = 4
+
+/**
+ * RFC 7231 idempotent methods. A STALE close (socket died before any response
+ * byte) on a *freshly dialed* connection is always safe to retry — nothing was
+ * processed. On a *reused* keepalive connection, though, a non-idempotent method
+ * (POST/PATCH) might have been fully received and processed before the close, so
+ * retrying could duplicate the side effect (double charge, double submit). We
+ * therefore retry non-idempotent methods only on a fresh dial.
+ */
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS', 'TRACE'])
+function isIdempotent(method: string): boolean {
+  return IDEMPOTENT_METHODS.has(method.toUpperCase())
+}
 
 /** Thrown when the upstream stalls past the configured timeout; caller maps to 504. */
 export const TIMEOUT: unique symbol = Symbol('rpx.pool.timeout')
@@ -105,6 +125,17 @@ const INITIAL_BUF = 16384
 const MAX_HEADER_BYTES = 256 * 1024
 
 /**
+ * Backpressure water-marks for a streaming response body. When un-drained body
+ * bytes (a slow downstream client) back up past the high-water mark, the upstream
+ * socket is `pause()`d; it is `resume()`d once the reader drains below the
+ * low-water mark. Without this a fast upstream + slow client buffers the *entire*
+ * body in memory (the 1 MB cap above only bounds request *uploads*) → OOM under a
+ * handful of concurrent slow readers.
+ */
+const BODY_HWM = 2 * 1024 * 1024
+const BODY_LWM = 512 * 1024
+
+/**
  * Bodies at least this large take the zero-copy fast path: hand the Response a
  * *view* of the read buffer and give the connection a fresh (smaller) buffer,
  * rather than copying the body out. Below it, a plain slice is cheaper than
@@ -154,6 +185,13 @@ class Conn {
   bodyQueue: Uint8Array[] | null = null
   /** Body bytes still expected from the socket while {@link bodyQueue} is active. */
   bodyRemaining = 0
+  /** Bytes in {@link bodyQueue} awaiting the downstream reader (for backpressure). */
+  queuedBytes = 0
+  /** True while a response body is streaming — gates read backpressure so it never
+   *  fires during header parsing. */
+  streamingBody = false
+  /** Whether the upstream socket is currently paused for backpressure. */
+  private paused = false
   /** Resolves the in-flight reader when new bytes arrive or the socket closes. */
   private waiter: (() => void) | null = null
   /** Resolves the in-flight writer when the socket's send buffer drains. */
@@ -187,16 +225,55 @@ class Conn {
     // after this callback, so the slice (one necessary copy) keeps the bytes.
     if (this.bodyQueue) {
       const n = chunk.length <= this.bodyRemaining ? chunk.length : this.bodyRemaining
-      if (n > 0)
+      if (n > 0) {
         this.bodyQueue.push(chunk.slice(0, n))
+        this.queuedBytes += n
+      }
       this.bodyRemaining -= n
       if (n < chunk.length) // bytes past the body (pipelined/over-long) — keep for finish logic
         this.appendToBuf(chunk.subarray(n))
+      this.maybePause()
       this.wake()
       return
     }
     this.appendToBuf(chunk)
+    this.maybePause()
     this.wake()
+  }
+
+  /** Un-drained body bytes: the queue for fixed-length, the read buffer otherwise. */
+  private bufferedBodyBytes(): number {
+    return this.bodyQueue ? this.queuedBytes : this.len - this.pos
+  }
+
+  /** Pause the upstream socket when a streaming body backs up past the high-water
+   *  mark, so a slow client can't force the whole body into memory. No-op until a
+   *  body is actually streaming (never throttles header parsing). */
+  private maybePause(): void {
+    if (this.streamingBody && !this.paused && this.bufferedBodyBytes() > BODY_HWM) {
+      this.paused = true
+      ;(this.socket as { pause?: () => void } | null)?.pause?.()
+    }
+  }
+
+  /** Resume the upstream once the reader has drained below the low-water mark. */
+  resumeIfDrained(): void {
+    if (this.paused && this.bufferedBodyBytes() <= BODY_LWM) {
+      this.paused = false
+      ;(this.socket as { resume?: () => void } | null)?.resume?.()
+    }
+  }
+
+  /** Clear streaming/backpressure state and force-resume — called before a
+   *  connection is returned to the idle pool, so a reused socket is never left
+   *  paused (which would silently stall its next request). */
+  clearStreaming(): void {
+    this.streamingBody = false
+    this.queuedBytes = 0
+    if (this.paused) {
+      this.paused = false
+      ;(this.socket as { resume?: () => void } | null)?.resume?.()
+    }
   }
 
   private appendToBuf(chunk: Uint8Array): void {
@@ -421,6 +498,7 @@ class UpstreamPool {
       this.wakeWaiter()
       return
     }
+    conn.clearStreaming() // never hand a paused socket to the next request
     conn.compact()
     conn.fresh = false
     const waiter = this.waiters.shift()
@@ -507,6 +585,7 @@ interface ParsedHead {
   contentLength: number // -1 if absent
   chunked: boolean
   closeConn: boolean // upstream asked to close (or HTTP/1.0)
+  malformed: boolean // unparseable/conflicting framing — refuse rather than mis-frame
 }
 
 /** Scan for the end of the header block (\r\n\r\n). Returns the index of \r or -1. */
@@ -533,6 +612,7 @@ function parseHead(buf: Uint8Array, start: number, headerEnd: number): ParsedHea
   let chunked = false
   let closeConn = http10
   let keepAliveSeen = false
+  let malformed = false
 
   let pos = firstEol === -1 ? text.length : firstEol + 2
   while (pos < text.length) {
@@ -555,7 +635,15 @@ function parseHead(buf: Uint8Array, start: number, headerEnd: number): ParsedHea
     if (first === 99 || first === 116 || first === 107) {
       const lower = name.toLowerCase()
       if (lower === 'content-length') {
-        contentLength = Number.parseInt(value, 10)
+        // Accept only a clean, bounded, non-negative integer. A garbage value
+        // ("12abc", overflow, negative) or a second, conflicting Content-Length
+        // is a framing error — refuse it rather than mis-frame the body (and the
+        // NEXT response on this reused connection). RFC 7230 §3.3.3.
+        const n = /^\d+$/.test(value) ? Number(value) : Number.NaN
+        if (!Number.isSafeInteger(n) || (contentLength >= 0 && contentLength !== n))
+          malformed = true
+        else
+          contentLength = n
         continue
       }
       if (lower === 'transfer-encoding') {
@@ -578,8 +666,13 @@ function parseHead(buf: Uint8Array, start: number, headerEnd: number): ParsedHea
   }
   if (http10 && keepAliveSeen)
     closeConn = false
+  // A response carrying both a chunked Transfer-Encoding and a Content-Length is a
+  // smuggling/mis-frame risk; we honor chunked (checked first in readResponse) and
+  // drop the Content-Length so the two can't disagree.
+  if (chunked && contentLength >= 0)
+    contentLength = -1
 
-  return { status, headerEnd, headers, contentLength, chunked, closeConn }
+  return { status, headerEnd, headers, contentLength, chunked, closeConn, malformed }
 }
 
 /**
@@ -649,13 +742,41 @@ export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
   }
   const pool = poolFor(hostPort, reqOpts.maxPerHost ?? maxTotalConns())
 
-  // One transparent retry: a reused keepalive socket may have been closed by the
-  // upstream between requests; if it dies before we read any response, retry on a
-  // fresh connection (always safe — the body is buffered).
+  // Transparent retry on STALE. STALE means the upstream closed the socket
+  // before sending any response byte (and, for a write-time close, possibly
+  // before fully reading the request) — so the request was never answered and
+  // retrying on a fresh connection is always safe regardless of method (the body
+  // is buffered). This is not just the "reused keepalive socket closed between
+  // requests" case: under load, servers cap keepalive or drop connections during
+  // accept bursts, so a *freshly dialed* connection can also go stale before the
+  // response. Gating the retry on `!conn.fresh` dropped exactly those requests.
+  // Bound the retries so a genuinely dead upstream fails fast instead of
+  // spinning — a real outage surfaces as a connect error from `acquireOrDial`
+  // (not STALE), which propagates immediately.
   for (let attempt = 0; ; attempt++) {
+    // Tiny incremental backoff between retries so a burst that briefly overran
+    // the upstream's accept backlog (or churned ephemeral ports) staggers instead
+    // of stampeding the same failure again. Costs nothing on the common path
+    // (attempt 0).
+    if (attempt > 0)
+      await new Promise<void>((resolve) => { setTimeout(resolve, attempt) })
+
     // Reuse a pooled connection synchronously when one is available (no await on
-    // the hot path); otherwise dial a fresh one or queue for a free slot.
-    const conn = pool.acquireIdleSync() ?? await pool.acquireOrDial()
+    // the hot path); otherwise dial a fresh one or queue for a free slot. A dial
+    // failure here is a transient connect error: no request bytes were sent, so
+    // retrying is safe regardless of method. POOL_BUSY is genuine saturation —
+    // fail fast (→ 503). A truly dead upstream keeps failing the dial and is
+    // surfaced (→ 502) once the bounded retries are spent.
+    let conn: Conn
+    try {
+      conn = pool.acquireIdleSync() ?? await pool.acquireOrDial()
+    }
+    catch (err) {
+      if (err !== POOL_BUSY && attempt < MAX_STALE_RETRIES)
+        continue
+      throw err
+    }
+
     try {
       const written = conn.socket!.write(payload)
       if (written < payload.length)
@@ -663,7 +784,9 @@ export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
       return await readResponse(pool, conn, isHead)
     }
     catch (err) {
-      const retryable = !conn.fresh && attempt === 0 && err === STALE
+      // A reused (non-fresh) connection that goes STALE on a non-idempotent method
+      // must NOT be retried — the upstream may have processed it before closing.
+      const retryable = err === STALE && attempt < MAX_STALE_RETRIES && (conn.fresh || isIdempotent(method))
       pool.destroy(conn)
       if (retryable)
         continue
@@ -709,6 +832,14 @@ async function readResponse(pool: UpstreamPool, conn: Conn, isHead: boolean): Pr
     if (head.status >= 100 && head.status < 200)
       continue
     break
+  }
+
+  // Unparseable/conflicting framing (bad Content-Length, duplicate disagreeing
+  // lengths): refuse rather than guess and risk corrupting the next pooled
+  // response. Destroy the connection so it's never reused.
+  if (head.malformed) {
+    pool.destroy(conn)
+    throw new Error('upstream sent malformed response framing')
   }
 
   // Pass the [name, value][] array straight to Response as HeadersInit — no
@@ -788,6 +919,8 @@ function fixedLengthStream(pool: UpstreamPool, conn: Conn, contentLength: number
   conn.len = 0
   conn.bodyQueue = []
   conn.bodyRemaining = contentLength - buffered
+  conn.queuedBytes = 0
+  conn.streamingBody = true
 
   const finish = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
     conn.bodyQueue = null
@@ -810,7 +943,10 @@ function fixedLengthStream(pool: UpstreamPool, conn: Conn, contentLength: number
       for (;;) {
         const q = conn.bodyQueue
         if (q && q.length > 0) {
-          controller.enqueue(q.shift()!)
+          const out = q.shift()!
+          conn.queuedBytes -= out.length
+          conn.resumeIfDrained() // reader is keeping up — un-pause the upstream
+          controller.enqueue(out)
           if (conn.bodyRemaining === 0 && q.length === 0)
             finish(controller)
           return
@@ -838,12 +974,14 @@ function fixedLengthStream(pool: UpstreamPool, conn: Conn, contentLength: number
 
 /** Stream a body that runs until the upstream closes the connection (never reused). */
 function untilCloseStream(conn: Conn): ReadableStream<Uint8Array> {
+  conn.streamingBody = true // enable read backpressure for the close-delimited body
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       for (;;) {
         if (conn.len > conn.pos) {
           controller.enqueue(conn.buf.slice(conn.pos, conn.len))
           conn.pos = conn.len
+          conn.resumeIfDrained() // reader kept up — un-pause the upstream
           return
         }
         if (conn.closed) {
@@ -866,6 +1004,7 @@ function untilCloseStream(conn: Conn): ReadableStream<Uint8Array> {
  * payload (with `transfer-encoding` already stripped from the headers).
  */
 function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): ReadableStream<Uint8Array> {
+  conn.streamingBody = true // enable read backpressure for the decoded body
   let remaining = 0 // bytes left in the current chunk
   let needTrailerCrlf = false // consume the CRLF after a chunk's data
 
@@ -881,6 +1020,10 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
       }
       if (conn.closed)
         throw new Error('upstream closed mid-chunk-header')
+      // Bound the chunk-size/trailer line: an upstream that never sends CRLF here
+      // would otherwise grow `buf` unbounded (the header cap only covers the head).
+      if (conn.len - conn.pos > MAX_HEADER_BYTES)
+        throw new Error('upstream chunk header too large')
       await conn.waitForData(conn.len)
     }
   }
@@ -902,6 +1045,7 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
           controller.enqueue(conn.buf.slice(conn.pos, conn.pos + take))
           conn.pos += take
           remaining -= take
+          conn.resumeIfDrained() // reader kept up — un-pause the upstream
           if (remaining === 0)
             needTrailerCrlf = true
           return
@@ -913,6 +1057,13 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
         const sizeLine = await readLine()
         const semi = sizeLine.indexOf(';')
         const size = Number.parseInt(semi === -1 ? sizeLine : sizeLine.slice(0, semi), 16)
+        // A non-hex / negative chunk size would make `remaining` NaN and spin the
+        // pull loop forever (NaN !== 0). Reject it as a framing error.
+        if (!Number.isInteger(size) || size < 0) {
+          pool.destroy(conn)
+          controller.error(new Error('upstream sent malformed chunk size'))
+          return
+        }
         if (size === 0) {
           // Consume optional trailers up to the final blank line.
           for (;;) {
