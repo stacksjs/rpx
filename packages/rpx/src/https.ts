@@ -45,6 +45,8 @@ export {
   readCertSha256Fingerprint,
   verifyHttpsChain,
 } from './cert-inspect'
+// Local bindings for use below (cert inspection via tlsx — never openssl).
+import { readCertCommonName, readCertSha256Fingerprint } from './cert-inspect'
 
 let cachedSSLConfig: { key: string, cert: string, ca?: string } | null = null
 
@@ -832,9 +834,8 @@ export async function isCertTrusted(
     else if (process.platform === 'win32') {
       // On Windows, use PowerShell to check the certificate store
       try {
-        // Get certificate subject from file
-        const certSubject = execSync(`openssl x509 -noout -subject -in "${certPath}"`).toString().trim()
-        const subjectName = certSubject.split('=').slice(1).join('=').trim() || ''
+        // Certificate CN via tlsx (X509Certificate), not openssl.
+        const subjectName = readCertCommonName(certPath) || ''
 
         if (!subjectName) {
           debugLog('ssl', 'Could not extract certificate subject', options?.verbose)
@@ -859,29 +860,35 @@ export async function isCertTrusted(
       }
     }
     else if (process.platform === 'linux') {
-      // On Linux, check using OpenSSL against the system trust store
+      // On Linux, compare the cert's SHA-256 fingerprint against the system trust
+      // store files — fingerprints via tlsx (X509Certificate), no openssl/find/grep.
       try {
-        // This is a simplified check and may need to be adjusted per distribution
-        const certFingerprint = execSync(`openssl x509 -noout -fingerprint -sha256 -in "${certPath}"`).toString().trim()
-        const fingerprintValue = certFingerprint.split('=')[1]?.trim() || ''
+        const fingerprintValue = readCertSha256Fingerprint(certPath)
+        if (!fingerprintValue) {
+          debugLog('ssl', 'Could not extract certificate fingerprint', options?.verbose)
+          return false
+        }
 
-        // Different distros store certs in different locations
+        // Different distros store certs in different locations.
         const trustStores = [
           '/etc/ssl/certs', // Debian/Ubuntu
           '/etc/pki/tls/certs', // RedHat/CentOS
         ]
 
         for (const store of trustStores) {
+          let entries: string[]
           try {
-            const storeOutput = execSync(`find ${store} -type f -exec openssl x509 -noout -fingerprint -sha256 -in {} \\; 2>/dev/null | grep "${fingerprintValue}"`).toString()
-
-            if (storeOutput.includes(fingerprintValue)) {
+            entries = await fs.readdir(store)
+          }
+          catch {
+            continue // store dir absent on this distro
+          }
+          for (const name of entries) {
+            const fp = readCertSha256Fingerprint(path.join(store, name))
+            if (fp && fp === fingerprintValue) {
               debugLog('ssl', `Certificate fingerprint found in ${store}`, options?.verbose)
               return true
             }
-          }
-          catch {
-            // Ignore errors searching specific stores
           }
         }
 

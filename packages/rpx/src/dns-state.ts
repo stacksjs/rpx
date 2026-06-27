@@ -78,6 +78,12 @@ export function normalizeDevDomain(raw: string): string | null {
     return null
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain))
     return null
+  // Only real hostname characters. Basenames derived from this flow into
+  // sudo-elevated `/etc/resolver` shell commands, so anything that could be a
+  // shell metacharacter (quotes, `;`, `$`, spaces, …) must be rejected at the
+  // source rather than trusted from a registry entry a local process can write.
+  if (!/^[a-z0-9.-]+$/.test(domain))
+    return null
   return domain
 }
 

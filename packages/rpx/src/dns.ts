@@ -393,7 +393,15 @@ async function flushDnsCache(verbose?: boolean): Promise<void> {
   }
 }
 
+/** A resolver basename is interpolated into a root shell command — never trust one
+ *  that isn't a plain hostname (it's normalized at the source, but guard here too). */
+function assertSafeBasename(basename: string): void {
+  if (!/^[a-z0-9.-]+$/.test(basename))
+    throw new Error(`refusing unsafe resolver basename: ${JSON.stringify(basename)}`)
+}
+
 async function writeResolverFile(basename: string, verbose?: boolean): Promise<void> {
+  assertSafeBasename(basename)
   const { execSudoSync } = await import('./utils')
   const content = resolverFileContent().replace(/\n/g, '\\n')
   const cmd = `bash -c 'mkdir -p ${MACOS_RESOLVER_DIR} && printf "%b" "${content}" > ${resolverFilePath(basename)}'`
@@ -402,6 +410,7 @@ async function writeResolverFile(basename: string, verbose?: boolean): Promise<v
 }
 
 async function removeResolverFile(basename: string, verbose?: boolean): Promise<void> {
+  assertSafeBasename(basename)
   const { execSudoSync } = await import('./utils')
   execSudoSync(`rm -f ${resolverFilePath(basename)}`)
   debugLog('dns', `Removed ${resolverFilePath(basename)}`, verbose)
