@@ -1,11 +1,8 @@
 /* eslint-disable no-console */
-import type { IncomingHttpHeaders, SecureServerOptions } from 'node:http2'
-import type { ServerOptions } from 'node:https'
 import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, ResolvedProxyOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
 import { exec, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
-import * as http2 from 'node:http2'
 import * as https from 'node:https'
 import * as net from 'node:net'
 import * as os from 'node:os'
@@ -36,10 +33,6 @@ const globalPortManager = new DefaultPortManager('0.0.0.0')
 // Keep track of all running servers for cleanup
 const activeServers: Set<http.Server | https.Server> = new Set()
 
-type AnyServerType = http.Server | https.Server | http2.Http2SecureServer
-type AnyIncomingMessage = http.IncomingMessage | http2.Http2ServerRequest
-type AnyServerResponse = http.ServerResponse | http2.Http2ServerResponse
-
 let isCleaningUp = false
 let cleanupPromiseResolve: (() => void) | null = null
 let cleanupPromise: Promise<void> | null = null
@@ -68,16 +61,43 @@ export async function cleanup(options?: CleanupOptions): Promise<void> {
     // Create an array to store all cleanup promises
     const cleanupPromises: Promise<void>[] = []
 
-    // Add server closing promises
+    // Add server closing promises. `activeServers` holds a mix of Node servers
+    // (the HTTP redirect server) and Bun.serve servers (every proxy listener
+    // now routes through Bun). They expose different shutdown APIs: Node uses
+    // `.close(cb)`, Bun uses `.stop(closeActiveConnections)`. Detect and call
+    // the right one so Bun listeners are actually released — without this they
+    // leak whenever the process doesn't `exit()` (Vite-plugin mode and tests).
     const serverClosePromises = Array.from(activeServers).map(server =>
       new Promise<void>((resolve) => {
-        server.close(() => {
-          debugLog('cleanup', 'Server closed successfully', options?.verbose)
+        const s = server as unknown as {
+          stop?: (closeActiveConnections?: boolean) => void
+          close?: (cb?: () => void) => void
+        }
+        try {
+          if (typeof s.stop === 'function') {
+            s.stop(true)
+            debugLog('cleanup', 'Bun server stopped', options?.verbose)
+            resolve()
+          }
+          else if (typeof s.close === 'function') {
+            s.close(() => {
+              debugLog('cleanup', 'Server closed successfully', options?.verbose)
+              resolve()
+            })
+          }
+          else {
+            resolve()
+          }
+        }
+        catch (err) {
+          debugLog('cleanup', `Error stopping server: ${err}`, options?.verbose)
           resolve()
-        })
+        }
       }),
     )
     cleanupPromises.push(...serverClosePromises)
+    // Drop references so a subsequent cleanup() doesn't try to stop them again.
+    activeServers.clear()
 
     // hosts file cleanup if configured
     if (options?.hosts && options.domains?.length) {
@@ -426,9 +446,7 @@ export async function startServer(options: SingleProxyConfig): Promise<void> {
 async function createProxyServer(
   from: string,
   to: string,
-  fromPort: number,
   listenPort: number,
-  hostname: string,
   sourceUrl: Pick<URL, 'hostname' | 'host'>,
   ssl: SSLConfig | null,
   vitePluginUsage?: boolean,
@@ -438,272 +456,41 @@ async function createProxyServer(
 ): Promise<void> {
   debugLog('proxy', `Creating proxy server ${from} -> ${to} with cleanUrls: ${cleanUrls}`, verbose)
 
-  // Convert HTTP/2 headers to HTTP/1 compatible format
-  function normalizeHeaders(headers: IncomingHttpHeaders): http.OutgoingHttpHeaders {
-    const normalized: http.OutgoingHttpHeaders = {}
-    for (const [key, value] of Object.entries(headers)) {
-      // Skip HTTP/2 pseudo-headers
-      if (!key.startsWith(':')) {
-        normalized[key] = value
-      }
-    }
-    return normalized
-  }
+  // Route the single proxy through the same shared handler the multi-proxy and
+  // daemon paths use. This unifies HTTP forwarding (the pooled keepalive
+  // transport, path rewrites, changeOrigin) AND — crucially — gives WebSocket /
+  // `wss` proxying in single-proxy mode, which dev-server HMR over HTTPS relies
+  // on (issue #26). The previous hand-rolled `fetch()` forwarder had no
+  // `websocket` handler, so HMR upgrades were dropped.
+  const routeEntries = [{
+    host: to,
+    route: {
+      sourceHost: sourceUrl.host,
+      cleanUrls: cleanUrls || false,
+      changeOrigin: changeOrigin || false,
+      basePath: '/',
+    } as ProxyRoute,
+  }]
 
-  const requestHandler = (req: AnyIncomingMessage, res: AnyServerResponse) => {
-    debugLog('request', `Incoming request: ${req.method} ${req.url}`, verbose)
+  const server = createSharedProxyServer({ routeEntries, listenPort, sslConfig: ssl, originGuard: null, verbose: verbose ?? false })
+  if (!server)
+    throw new Error(`Failed to start proxy server for ${to} on port ${listenPort}`)
 
-    let path = req.url || '/'
-    let method = req.method || 'GET'
-
-    // For HTTP/2 requests, extract method and path from pseudo-headers
-    if (req instanceof http2.Http2ServerRequest) {
-      const headers = req.headers
-      method = (headers[':method'] as string) || method
-      path = (headers[':path'] as string) || path
-    }
-
-    // Handle clean URLs
-    if (cleanUrls) {
-      // Don't modify URLs that already have an extension
-      if (!path.match(/\.[a-z0-9]+$/i)) {
-        // If path ends with trailing slash, look for index.html
-        if (path.endsWith('/')) {
-          path = `${path}index.html`
-        }
-        // Otherwise append .html
-        else {
-          path = `${path}.html`
-        }
-      }
-    }
-
-    // Normalize request headers
-    const normalizedHeaders = normalizeHeaders(req.headers)
-
-    // Handle changeOrigin option - modify the host header to match the target
-    if (changeOrigin) {
-      normalizedHeaders.host = `${sourceUrl.hostname}:${fromPort}`
-      debugLog('request', `Changed origin: setting host header to ${normalizedHeaders.host}`, verbose)
-    }
-
-    const proxyOptions = {
-      hostname: sourceUrl.hostname,
-      port: fromPort,
-      path,
-      method,
-      headers: normalizedHeaders,
-    }
-
-    debugLog('request', `Proxy request options: ${safeStringify(proxyOptions)}`, verbose)
-
-    const proxyReq = http.request(proxyOptions, (proxyRes) => {
-      debugLog('response', `Proxy response received with status ${proxyRes.statusCode}`, verbose)
-
-      // Handle 404s for clean URLs
-      if (cleanUrls && proxyRes.statusCode === 404) {
-        // Try alternative paths for clean URLs
-        const alternativePaths = []
-
-        // If the path ends with .html, try without it
-        if (path.endsWith('.html')) {
-          alternativePaths.push(path.slice(0, -5))
-        }
-        // If path doesn't end with .html, try with it
-        else if (!path.match(/\.[a-z0-9]+$/i)) {
-          alternativePaths.push(`${path}.html`)
-        }
-        // If path doesn't end with /, try with /index.html
-        if (!path.endsWith('/')) {
-          alternativePaths.push(`${path}/index.html`)
-        }
-
-        // Try alternative paths
-        if (alternativePaths.length > 0) {
-          debugLog('cleanUrls', `Trying alternative paths: ${alternativePaths.join(', ')}`, verbose)
-
-          // Try each alternative path
-          const tryNextPath = (paths: string[]) => {
-            if (paths.length === 0) {
-              // If no alternatives work, send original 404
-              ;(res as http.ServerResponse).writeHead(proxyRes.statusCode || 404, proxyRes.headers)
-              proxyRes.pipe(res as http.ServerResponse)
-              return
-            }
-
-            const altPath = paths[0]
-            const altOptions = { ...proxyOptions, path: altPath }
-
-            const altReq = http.request(altOptions, (altRes) => {
-              if (altRes.statusCode === 200) {
-                // If we found a matching path, use it
-                debugLog('cleanUrls', `Found matching path: ${altPath}`, verbose)
-                ;(res as http.ServerResponse).writeHead(altRes.statusCode, altRes.headers)
-                altRes.pipe(res as http.ServerResponse)
-              }
-              else {
-                // Try next alternative
-                tryNextPath(paths.slice(1))
-              }
-            })
-
-            altReq.on('error', () => tryNextPath(paths.slice(1)))
-            altReq.end()
-          }
-
-          tryNextPath(alternativePaths)
-          return
-        }
-      }
-
-      // Add security headers
-      const headers = {
-        ...proxyRes.headers,
-        'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
-        'X-Content-Type-Options': 'nosniff',
-      }
-
-      ;(res as http.ServerResponse).writeHead(proxyRes.statusCode || 500, headers)
-      proxyRes.pipe(res as http.ServerResponse)
-    })
-
-    proxyReq.on('error', (err) => {
-      debugLog('request', `Proxy request failed: ${err}`, verbose)
-      log.error('Proxy request failed:', err)
-      ;(res as http.ServerResponse).writeHead(502)
-      ;(res as http.ServerResponse).end(`Proxy Error: ${err.message}`)
-    })
-
-    req.pipe(proxyReq)
-  }
-
-  debugLog('server', `Creating server with SSL config: ${!!ssl}`, verbose)
-
-  // Use Bun.serve for HTTPS as it handles TLS better than Node's https module in Bun
-  if (ssl) {
-    return new Promise<void>((resolve, reject) => {
-      try {
-        const bunServer = Bun.serve({
-          port: listenPort,
-          hostname,
-          reusePort: shouldReusePort(),
-          tls: {
-            key: ssl.key,
-            cert: ssl.cert,
-            ca: ssl.ca,
-            // Bun's TLS options - don't request client certificates
-            requestCert: false,
-            rejectUnauthorized: false,
-          },
-          async fetch(req: Request) {
-            const url = new URL(req.url)
-            debugLog('request', `Bun.serve received: ${req.method} ${url.pathname}`, verbose)
-
-            // Handle clean URLs redirect before any upstream work — the
-            // redirect doesn't depend on the origin response.
-            if (cleanUrls && url.pathname.endsWith('.html')) {
-              const cleanPath = url.pathname.replace(/\.html$/, '')
-              return new Response(null, {
-                status: 301,
-                headers: { Location: cleanPath },
-              })
-            }
-
-            // Build target URL by string concat (avoids an extra URL parse).
-            const baseUrl = `http://${sourceUrl.host}`
-            const targetUrl = `${baseUrl}${url.pathname}${url.search}`
-
-            // Forward the request
-            try {
-              const headers = new Headers(req.headers)
-              headers.set('host', sourceUrl.host)
-              if (changeOrigin) {
-                headers.set('origin', baseUrl)
-              }
-              headers.set('x-forwarded-for', '127.0.0.1')
-              headers.set('x-forwarded-proto', 'https')
-              headers.set('x-forwarded-host', to)
-
-              // Return the upstream response directly — Bun streams the body and
-              // forwards status/headers verbatim, so re-wrapping it in a fresh
-              // Response would just copy every header and allocate twice.
-              return await fetch(targetUrl, {
-                method: req.method,
-                headers,
-                body: req.body,
-                redirect: 'manual',
-              })
-            }
-            catch (err) {
-              debugLog('request', `Proxy error: ${err}`, verbose)
-              return new Response(`Proxy Error: ${err}`, { status: 502 })
-            }
-          },
-          error(err: Error) {
-            debugLog('server', `Bun.serve error: ${err}`, verbose)
-            return new Response(`Server Error: ${err.message}`, { status: 500 })
-          },
-        })
-
-        // Store reference for cleanup
-        activeServers.add(bunServer as unknown as http.Server)
-
-        logToConsole({
-          from,
-          to,
-          vitePluginUsage,
-          listenPort,
-          ssl: true,
-          cleanUrls,
-          verbose,
-        })
-
-        resolve()
-      }
-      catch (err) {
-        reject(err)
-      }
-    })
-  }
-
-  // For non-SSL, use Node's http.createServer
-  const server = http.createServer(requestHandler)
-
-  function setupServer(serverInstance: AnyServerType) {
-    // Use the module-level activeServers set
-    activeServers.add(serverInstance as http.Server | https.Server)
-
-    return new Promise<void>((resolve, reject) => {
-      serverInstance.listen(listenPort, hostname, () => {
-        debugLog('server', `Server listening on port ${listenPort}`, verbose)
-
-        logToConsole({
-          from,
-          to,
-          vitePluginUsage,
-          listenPort,
-          ssl: !!ssl,
-          cleanUrls,
-          verbose,
-        })
-
-        resolve()
-      })
-
-      serverInstance.on('error', (err) => {
-        debugLog('server', `Server error: ${err}`, verbose)
-        reject(err)
-      })
-    })
-  }
-
-  return setupServer(server)
+  logToConsole({
+    from,
+    to,
+    vitePluginUsage,
+    listenPort,
+    ssl: !!ssl,
+    cleanUrls,
+    verbose,
+  })
 }
 
 export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   debugLog('setup', `Setting up reverse proxy: ${safeStringify(options)}`, options.verbose)
 
-  const { from, to, fromPort, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
+  const { from, to, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
   const httpPort = 80
   const httpsPort = 443
   const hostname = '0.0.0.0'
@@ -795,7 +582,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       debugLog('setup', `Using standard ${targetPort === 443 ? 'HTTPS' : 'HTTP'} port ${targetPort} for ${to}`, verbose)
     }
 
-    await createProxyServer(from, to, fromPort, finalPort, hostname, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin)
+    await createProxyServer(from, to, finalPort, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin)
   }
   catch (err) {
     debugLog('setup', `Setup failed: ${err}`, verbose)

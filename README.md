@@ -175,6 +175,49 @@ export default config
 ./rpx start
 ```
 
+### Single-port mode
+
+By default rpx binds one listener per proxy (`:443`, then `:8443`, `:8444`, … as
+ports are taken). Set `singlePortMode: true` to route **every** proxy through one
+shared listener instead — requests are dispatched to the right upstream by their
+`Host` header (and path). The port is configurable via `httpPort` (default `80`)
+and `httpsPort` (default `443`):
+
+```ts
+const config: MultiProxyConfig = {
+  https: false,
+  singlePortMode: true,
+  httpPort: 8080,
+  proxies: [
+    { from: 'localhost:3000', to: 'foo.localhost' },
+    { from: 'localhost:3001', to: 'bar.localhost' },
+    { from: 'localhost:3002', to: '*.localhost' },
+  ],
+}
+```
+
+```bash
+rpx start --single-port-mode --https-port 8443
+```
+
+> When HTTPS is enabled and more than one proxy is configured, rpx already shares
+> a single `:443` listener automatically; `singlePortMode` extends that to the
+> HTTP-only and single-proxy cases and makes the port configurable.
+
+### `changeOrigin`
+
+Set `changeOrigin: true` to rewrite the `Origin` request header to the upstream
+target — mirroring [`http-proxy`](https://github.com/http-party/node-http-proxy)'s
+option. Useful when the upstream enforces CORS or same-origin checks.
+
+```ts
+const config: ProxyOptions = { from: 'localhost:5173', to: 'my-app.localhost', changeOrigin: true }
+```
+
+```bash
+rpx start --from localhost:5173 --to my-app.localhost --change-origin
+```
+
 To learn more, head over to the [documentation](https://reverse-proxy.sh/).
 
 ## Production: multi-app gateway on one server
@@ -185,11 +228,17 @@ one listener on `:443`.
 
 ### WebSocket proxying
 
-WebSocket upgrades are proxied transparently for any upstream route. A request
-with `Upgrade: websocket` is upgraded by rpx and piped to the upstream
-(`ws://<from><path>`) in both directions — including the control-channel of a
-tunnel server that accepts the upgrade on any path. No configuration needed;
-it works wherever HTTP proxying works.
+WebSocket upgrades are proxied transparently for **every** route and mode —
+single proxy, multi-proxy, single-port, and the daemon. A request with
+`Upgrade: websocket` is accepted by rpx and piped to the upstream
+(`ws://<from><path>`) in both directions, including the control-channel of a
+tunnel server that accepts the upgrade on any path. No configuration needed; it
+works wherever HTTP proxying works.
+
+This is what makes **dev-server HMR work over HTTPS**: Vite and friends open a
+`wss://` connection for hot-module reload, and rpx terminates the TLS and
+forwards it to the dev server's `ws://` endpoint. Point rpx at your dev server
+and HMR keeps working behind the custom HTTPS domain.
 
 ### Static file serving
 

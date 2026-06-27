@@ -115,9 +115,15 @@ The plugin will automatically:
 
 See the [Bun Plugin](/features/bun-plugin) documentation for more details.
 
-## HMR
+## HMR & WebSockets
 
-In order to use Hot Module Replacement (HMR) with Vite and `rpx`, you need to set these HMR options:
+`rpx` proxies WebSocket upgrades (`ws://` and, over HTTPS, `wss://`) transparently
+in every mode — single proxy, multi-proxy, single-port, and the daemon. This is
+what makes Hot Module Replacement (HMR) work behind a custom HTTPS domain: Vite's
+`wss://` reload socket is terminated by rpx and forwarded to your dev server's
+`ws://` endpoint. No extra configuration is required for the proxy itself.
+
+To point Vite's HMR client at the rpx domain, set these options:
 
 ```ts
 // vite.config.ts
@@ -132,7 +138,5 @@ export default defineConfig({
   },
 })
 ```
-
-We are soon looking to improve `rpx` to seamlessly work with Vite and other tools. Stay tuned & follow along on [GitHub](https://github.com/stacksjs/rpx/issues/26).
 
 Continue reading the documentation to learn more about the [configuration](./config.md) options.
