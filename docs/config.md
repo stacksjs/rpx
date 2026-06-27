@@ -61,9 +61,58 @@ const config: ReverseProxyOptions = {
 
    _/
   verbose: false,
+
+  /**
+
+   _ Rewrite the `Origin` request header to the upstream target.
+   _ Default: false
+   _ When true, rpx forwards `Origin: http://<from>` to your dev server
+   _ instead of the browser's original origin — mirroring the
+   _ `changeOrigin` option from `http-proxy`. Useful when the upstream
+   _ performs CORS or same-origin checks against the `Origin` header.
+   _ Note: rpx always rewrites the `Host` header to the upstream target;
+   _ `changeOrigin` additionally rewrites `Origin`.
+
+   _/
+  changeOrigin: false,
 }
 
 export default config
+```
+
+### `changeOrigin`
+
+By default rpx leaves the browser's `Origin` header intact when forwarding to your
+upstream. Some dev servers (or CORS-sensitive backends) reject requests whose
+`Origin` does not match the host they are listening on. Set `changeOrigin: true`
+to forward `Origin: http://<from>` to the upstream instead — the same behavior as
+[`http-proxy`](https://github.com/http-party/node-http-proxy)'s `changeOrigin`.
+
+```ts
+const config: ReverseProxyOptions = {
+  from: 'localhost:5173',
+  to: 'my-app.localhost',
+  changeOrigin: true,
+}
+```
+
+From the CLI:
+
+```bash
+rpx start --from localhost:5173 --to my-app.localhost --change-origin
+```
+
+In a multi-proxy config, `changeOrigin` can be set once as a shared default and
+overridden per proxy:
+
+```ts
+const config: MultiProxyConfig = {
+  changeOrigin: true, // shared default
+  proxies: [
+    { from: 'localhost:3000', to: 'api.localhost' }, // inherits changeOrigin: true
+    { from: 'localhost:3001', to: 'web.localhost', changeOrigin: false }, // override
+  ],
+}
 ```
 
 Then run:

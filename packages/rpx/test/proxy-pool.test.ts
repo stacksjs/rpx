@@ -175,6 +175,26 @@ describe('proxyViaPool', () => {
     expect(got['x-custom']).toBe('keep-me') // unrelated client headers pass through
   })
 
+  it('rewrites the origin header when originOverride is set (changeOrigin) and drops the client copy', async () => {
+    const res = await call('GET', '/dump-headers', {
+      headers: { origin: 'https://client.example' },
+      originOverride: 'http://127.0.0.1:5173',
+    })
+    const got = await res.json() as Record<string, string>
+    // changeOrigin: the upstream sees the target origin, never the client's.
+    expect(got.origin).toBe('http://127.0.0.1:5173')
+    // Host is always rewritten to the upstream regardless of changeOrigin.
+    expect(got.host).toBe(hostPort)
+  })
+
+  it('leaves the client origin untouched when originOverride is unset (changeOrigin off)', async () => {
+    const res = await call('GET', '/dump-headers', {
+      headers: { origin: 'https://client.example' },
+    })
+    const got = await res.json() as Record<string, string>
+    expect(got.origin).toBe('https://client.example')
+  })
+
   it('reuses pooled connections across sequential requests', async () => {
     const before = totalConns
     for (let i = 0; i < 30; i++)

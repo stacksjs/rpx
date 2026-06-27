@@ -131,6 +131,7 @@ interface ProxyOptions {
   }
   verbose?: boolean // Whether to log verbose output
   cleanUrls?: boolean // Whether to clean URLs (remove .html extension)
+  changeOrigin?: boolean // Rewrite the Origin header to the upstream target (default: false)
   start?: { // Command to start the proxied server
     command: string // Command to run
     cwd?: string // Working directory
@@ -150,10 +151,12 @@ interface MultiProxyOptions {
     hosts?: boolean
     certs?: boolean
   }
+  changeOrigin?: boolean // Shared default for rewriting the Origin header (default: false)
   proxies: Array<{ // Array of proxy configurations
     from: string
     to: string
     cleanUrls?: boolean
+    changeOrigin?: boolean // Per-proxy override of the shared changeOrigin default
     start?: {
       command: string
       cwd?: string

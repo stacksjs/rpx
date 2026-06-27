@@ -78,9 +78,14 @@ export default config
 ```bash
 rpx --from localhost:3000 --to my-project.localhost
 rpx --from localhost:8080 --to my-project.test --keyPath ./key.pem --certPath ./cert.pem
+rpx --from localhost:5173 --to my-project.localhost --change-origin
 rpx --help
 rpx --version
 ```
+
+Use `--change-origin` to rewrite the `Origin` header to the upstream target —
+handy when your dev server enforces CORS or same-origin checks. See
+[Configuration](/config#changeorigin) for details.
 
 ## Bun Plugin
 

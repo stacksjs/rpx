@@ -65,6 +65,38 @@ describe('createProxyFetchHandler routing', () => {
     const res = await handler(req('https://api.test/socket', { upgrade: 'websocket' }))
     expect(res?.status).toBe(400)
   })
+
+  it('rewrites the origin to the upstream when changeOrigin is set', async () => {
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch(r) {
+        return new Response(JSON.stringify({ origin: r.headers.get('origin'), host: r.headers.get('host') }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      },
+    })
+    const sourceHost = `127.0.0.1:${upstream.port}`
+    try {
+      const onRoute: ProxyRoute = { sourceHost, changeOrigin: true }
+      const onHandler = createProxyFetchHandler(() => onRoute)
+      const onRes = await onHandler(req('https://api.test/', { origin: 'https://client.example' }))
+      const onGot = await onRes?.json() as { origin: string, host: string }
+      // changeOrigin rewrites the origin header to the upstream target.
+      expect(onGot.origin).toBe(`http://${sourceHost}`)
+      expect(onGot.host).toBe(sourceHost)
+
+      // Without changeOrigin, the client's origin passes through untouched.
+      const offRoute: ProxyRoute = { sourceHost }
+      const offHandler = createProxyFetchHandler(() => offRoute)
+      const offRes = await offHandler(req('https://api.test/', { origin: 'https://client.example' }))
+      const offGot = await offRes?.json() as { origin: string }
+      expect(offGot.origin).toBe('https://client.example')
+    }
+    finally {
+      upstream.stop(true)
+    }
+  })
 })
 
 describe('stripBasePath', () => {
