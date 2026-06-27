@@ -61,6 +61,12 @@ export interface OnDemandCertManagerOptions {
 }
 
 const DEFAULT_NEGATIVE_CACHE_MS = 60_000
+/**
+ * Hard ceiling on the negative-cache map. An attacker can hit `:80` with endless
+ * distinct Host values; without a bound the failure cache would grow forever
+ * (memory DoS). At the cap we sweep expired entries, then evict oldest-first.
+ */
+const MAX_NEGATIVE_CACHE = 4096
 
 /**
  * True if `host` is covered by the `allowedSuffixes` allowlist: it equals a
@@ -171,6 +177,11 @@ export class OnDemandCertManager {
       return false
     if (this.certs.has(host))
       return true
+    // Cheap pre-filter: reject anything that isn't a plausible hostname before
+    // touching the disk or the `ask` callback, so a flood of junk Host headers on
+    // the public `:80` path can't drive per-request fs reads / ask amplification.
+    if (!isLikelyHostname(host))
+      return false
 
     const inFlight = this.inFlight.get(host)
     if (inFlight)
@@ -200,6 +211,9 @@ export class OnDemandCertManager {
 
     if (!(await this.isApproved(host))) {
       debugLog('on-demand', `refused issuance for ${host} (not approved)`, this.verbose)
+      // Cache the refusal too, so repeated junk for the same host is O(1) and
+      // doesn't re-pay the disk/ask cost every time.
+      this.cacheNegative(host)
       return false
     }
 
@@ -221,10 +235,29 @@ export class OnDemandCertManager {
       return true
     }
     catch (err) {
-      this.negativeCache.set(host, Date.now() + this.negativeCacheMs)
+      this.cacheNegative(host)
       debugLog('on-demand', `issuance for ${host} failed: ${(err as Error).message}`, this.verbose)
       return false
     }
+  }
+
+  /** Record a negative-cache entry for `host`, sweeping expired entries and
+   *  bounding the map so it can never grow without limit. */
+  private cacheNegative(host: string): void {
+    if (this.negativeCache.size >= MAX_NEGATIVE_CACHE) {
+      const now = Date.now()
+      for (const [h, until] of this.negativeCache) {
+        if (until <= now)
+          this.negativeCache.delete(h)
+      }
+      // Still full (all entries live)? Drop the oldest-inserted one.
+      if (this.negativeCache.size >= MAX_NEGATIVE_CACHE) {
+        const oldest = this.negativeCache.keys().next().value
+        if (oldest !== undefined)
+          this.negativeCache.delete(oldest)
+      }
+    }
+    this.negativeCache.set(host, Date.now() + this.negativeCacheMs)
   }
 
   /** Try to load an already-present `<host>.{crt,key}` pair from `certsDir`. */
