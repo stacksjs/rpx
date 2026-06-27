@@ -388,4 +388,41 @@ describe('proxyViaPool', () => {
       server.stop(true)
     }
   })
+
+  it('reclaims a stuck checked-out connection when RPX_CHECKOUT_IDLE_MS is set', async () => {
+    // Upstream promises 1000 body bytes but only ever sends 10, then goes silent —
+    // the response stream parks, holding the only pooled slot.
+    const server = Bun.listen<undefined>({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {},
+        data(sock) { sock.write('HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n0123456789') },
+      },
+    })
+    const hp = `127.0.0.1:${server.port}`
+    const prevIdle = process.env.RPX_CHECKOUT_IDLE_MS
+    const prevWait = process.env.RPX_QUEUE_WAIT_MS
+    process.env.RPX_CHECKOUT_IDLE_MS = '120'
+    process.env.RPX_QUEUE_WAIT_MS = '3000' // request 2 waits long enough to see the reclaim
+    try {
+      // Request 1 takes the only slot; reading its body parks (upstream stalls).
+      const res1 = await proxyViaPool({ hostPort: hp, method: 'GET', path: '/', reqHeaders: new Headers(), forwardedHost: 'x', body: null, maxPerHost: 1 })
+      const read1 = res1.text().catch(() => 'reclaimed') // rejects once the conn is reclaimed
+      // Request 2 queues for the slot; reclaiming the stuck request-1 conn frees it.
+      const res2 = await proxyViaPool({ hostPort: hp, method: 'GET', path: '/', reqHeaders: new Headers(), forwardedHost: 'x', body: null, maxPerHost: 1 })
+      expect(res2.status).toBe(200) // got a slot (no POOL_BUSY) — the reclaim worked
+      expect(await read1).toBe('reclaimed')
+      await res2.body?.cancel().catch(() => {})
+    }
+    finally {
+      if (prevIdle === undefined)
+        delete process.env.RPX_CHECKOUT_IDLE_MS
+      else process.env.RPX_CHECKOUT_IDLE_MS = prevIdle
+      if (prevWait === undefined)
+        delete process.env.RPX_QUEUE_WAIT_MS
+      else process.env.RPX_QUEUE_WAIT_MS = prevWait
+      server.stop(true)
+    }
+  })
 })

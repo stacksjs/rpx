@@ -563,25 +563,48 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
    * short async backoff. In-flight requests on the old listener drain
    * (`stop(false)`). Only ever invoked from the (async) issuance callback.
    */
+  // Single-flight rebuild state. Concurrent on-demand issuances must never run
+  // two `stop(false)`/`serveHttps()` swaps at once (they'd race the `httpsServer`
+  // reference and could leave :443 unbound or serving a stale SNI set). Instead
+  // we record the newest desired set and let one in-flight rebuild converge to it.
+  let rebuildLatest: Array<{ serverName: string, cert: string, key: string }> | null = null
+  let rebuilding = false
+
   async function rebuildTls(entries: Array<{ serverName: string, cert: string, key: string }>): Promise<void> {
     if (stopped)
       return
-    debugLog('daemon', `rebuilding :443 with ${entries.length} SNI cert(s)`, verbose)
-    httpsServer.stop(false)
-    let lastErr: unknown
-    for (let attempt = 0; attempt < 20 && !stopped; attempt++) {
-      try {
-        httpsServer = serveHttps(entries)
-        return
-      }
-      catch (err) {
-        // EADDRINUSE while the old socket releases — back off briefly, retry.
-        lastErr = err
-        await new Promise(resolve => setTimeout(resolve, 25))
+    rebuildLatest = entries // newest desired SNI set
+    if (rebuilding)
+      return // an in-flight rebuild will pick up `rebuildLatest` and converge
+    rebuilding = true
+    try {
+      while (!stopped && rebuildLatest) {
+        const target = rebuildLatest
+        rebuildLatest = null
+        debugLog('daemon', `rebuilding :443 with ${target.length} SNI cert(s)`, verbose)
+        httpsServer.stop(false)
+        let lastErr: unknown
+        let rebound = false
+        for (let attempt = 0; attempt < 20 && !stopped; attempt++) {
+          try {
+            httpsServer = serveHttps(target)
+            rebound = true
+            break
+          }
+          catch (err) {
+            // EADDRINUSE while the old socket releases — back off briefly, retry.
+            lastErr = err
+            await new Promise(resolve => setTimeout(resolve, 25))
+          }
+        }
+        if (!rebound)
+          log.error(`rpx: failed to rebuild :443 after issuing cert: ${(lastErr as Error)?.message}`)
+        // Loop: if a newer rebuild was requested mid-rebind, apply it next.
       }
     }
-    // Could not rebind: the old listener is already down. Surface the failure.
-    log.error(`rpx: failed to rebuild :443 after issuing cert: ${(lastErr as Error)?.message}`)
+    finally {
+      rebuilding = false
+    }
   }
 
   let httpServer: ReturnType<typeof Bun.serve> | null = null
@@ -795,16 +818,26 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
     if (stopped)
       return
     const cfg = await readClusterSni(rpxDir)
-    httpsServer.stop(false)
+    // reusePort lets us bind the NEW listener *before* tearing the old one down,
+    // so there is never a window with no listener on :443 (atomic swap). A SIGHUP
+    // storm across siblings can't briefly black-hole the port any more.
+    let next: ReturnType<typeof Bun.serve> | null = null
     for (let attempt = 0; attempt < 20 && !stopped; attempt++) {
       try {
-        httpsServer = serve(cfg)
-        return
+        next = serve(cfg)
+        break
       }
       catch {
         await new Promise(resolve => setTimeout(resolve, 25))
       }
     }
+    if (!next) {
+      debugLog('daemon', 'worker reloadTls: could not bind new listener; keeping current', verbose)
+      return
+    }
+    const old = httpsServer
+    httpsServer = next
+    old.stop(false) // drain the old listener now that the new one is live
   }
 
   const watcher = watchRegistry(entries => rebuild(entries), { dir: registryDir, verbose })
@@ -929,6 +962,15 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
     })
   }
 
+  // Crash-loop guard: a worker that dies on startup (bad cert, port held
+  // exclusively, OOM) must not be respawned in a tight fork loop. Count restarts
+  // in a rolling window, back off exponentially, and give up past a threshold.
+  const MAX_RESTARTS = 10
+  const RESTART_WINDOW_MS = 60_000
+  const MAX_BACKOFF_MS = 30_000
+  let restartCount = 0
+  let restartWindowStart = Date.now()
+
   // Spawn (and keep alive) the workers.
   function spawnWorker(): void {
     if (stopped)
@@ -948,11 +990,28 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
       stdout: 'inherit',
       stderr: 'inherit',
       stdin: 'ignore',
-      onExit(_proc, code) {
-        if (!stopped) {
-          debugLog('daemon', `worker exited (code ${code}); respawning`, verbose)
-          spawnWorker()
+      onExit(exited, code) {
+        if (stopped)
+          return
+        // Prune the dead handle so `procs` only ever holds live workers.
+        const idx = procs.indexOf(exited)
+        if (idx !== -1)
+          procs.splice(idx, 1)
+
+        const now = Date.now()
+        if (now - restartWindowStart > RESTART_WINDOW_MS) {
+          restartWindowStart = now
+          restartCount = 0
         }
+        restartCount++
+        if (restartCount > MAX_RESTARTS) {
+          log.error(`rpx: worker keeps exiting (code ${code}); giving up after ${MAX_RESTARTS} restarts in ${Math.round(RESTART_WINDOW_MS / 1000)}s`)
+          return
+        }
+        const backoff = Math.min(MAX_BACKOFF_MS, 100 * 2 ** Math.min(restartCount, 8))
+        debugLog('daemon', `worker exited (code ${code}); respawning in ${backoff}ms (restart ${restartCount}/${MAX_RESTARTS})`, verbose)
+        const t = setTimeout(spawnWorker, backoff)
+        t.unref?.()
       },
     })
     procs.push(proc)

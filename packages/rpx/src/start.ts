@@ -206,10 +206,14 @@ function signalHandler(signal: string) {
 // Use a unified approach to handle signals
 process.once('SIGINT', () => signalHandler('SIGINT'))
 process.once('SIGTERM', () => signalHandler('SIGTERM'))
+// A reverse proxy must outlive a single bad request: log uncaught errors /
+// rejections and keep serving rather than tearing every route down. Clean
+// shutdown still happens on SIGINT/SIGTERM above; only those exit the process.
 process.on('uncaughtException', (err) => {
-  debugLog('process', `Uncaught exception: ${err}`, true)
-  log.error('Uncaught exception:', err)
-  signalHandler('uncaughtException')
+  log.error('Uncaught exception (continuing):', err)
+})
+process.on('unhandledRejection', (reason) => {
+  log.error('Unhandled rejection (continuing):', reason)
 })
 
 /**
@@ -1021,14 +1025,12 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     })
   }
 
-  // Register cleanup handlers
+  // Register cleanup handlers. NB: no per-call uncaughtException handler — the
+  // module-level one logs-and-continues so a single stray error can't tear down
+  // every route (and stacking one per startProxies() call would re-run teardown
+  // N times on one error).
   process.on('SIGINT', cleanupHandler)
   process.on('SIGTERM', cleanupHandler)
-  process.on('uncaughtException', (err) => {
-    debugLog('process', `Uncaught exception: ${err}`, true)
-    console.error('Uncaught exception:', err)
-    cleanupHandler()
-  })
 
   // Single-port routing: collapse every proxy onto one shared listener that
   // routes by Host header (and path) instead of binding a port per proxy.
@@ -1066,8 +1068,10 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     }
 
     const server = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig, originGuard, verbose })
-    if (!server)
-      cleanupHandler()
+    if (!server) {
+      log.error(`Shared HTTPS proxy failed to bind :${httpsPort}; not exiting`)
+      return
+    }
   }
   else if (useSharedHttp) {
     debugLog('proxies', `Creating shared HTTP server for ${proxyOptions.length} domains on port ${httpPort}`, verbose)
@@ -1083,8 +1087,10 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     }
 
     const server = createSharedProxyServer({ routeEntries, listenPort: httpPort, sslConfig: null, originGuard, verbose })
-    if (!server)
-      cleanupHandler()
+    if (!server) {
+      log.error(`Shared HTTP proxy failed to bind :${httpPort}; not exiting`)
+      return
+    }
   }
   else {
     // Single proxy or no SSL — use individual servers (original behavior)
@@ -1106,9 +1112,10 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         })
       }
       catch (err) {
+        // One route failing must not tear down the others — log and continue so
+        // the healthy proxies keep serving.
         debugLog('proxies', `Failed to start proxy for ${option.to}: ${err}`, option.verbose)
-        console.error(`Failed to start proxy for ${option.to}:`, err)
-        cleanupHandler()
+        log.error(`Failed to start proxy for ${option.to}:`, err)
       }
     }
   }

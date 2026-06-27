@@ -82,6 +82,20 @@ function maxQueued(maxTotal: number): number {
 }
 
 /**
+ * Reclaim a *checked-out* connection that has seen no I/O (no upstream bytes AND
+ * no reader progress) for this many ms, from `RPX_CHECKOUT_IDLE_MS`. `0` (the
+ * default) disables it — like the upstream timeout, an always-on idle bound would
+ * sever a legitimately-quiet long-lived stream (SSE/long-poll). When set, it is a
+ * backstop against a leaked slot if a client vanishes and Bun never cancels the
+ * response stream: the periodic sweeper signals the stuck socket closed (via the
+ * normal timeout path, so the stream still owns the single pool teardown).
+ */
+function checkoutIdleMs(): number {
+  const v = Number.parseInt(process.env.RPX_CHECKOUT_IDLE_MS ?? '', 10)
+  return Number.isFinite(v) && v > 0 ? v : 0
+}
+
+/**
  * Upstream inactivity timeout in seconds, from `RPX_UPSTREAM_TIMEOUT`. `0`
  * (the default) disables it — rpx commonly fronts dev servers doing SSE/HMR/
  * long-poll, where an inactivity timeout would sever legitimately-quiet streams.
@@ -192,6 +206,9 @@ class Conn {
   streamingBody = false
   /** Whether the upstream socket is currently paused for backpressure. */
   private paused = false
+  /** Epoch ms of the last I/O on this connection while checked out — drives the
+   *  checked-out reclaim (a stuck conn whose client vanished sees no I/O). */
+  lastActivityAt = 0
   /** Resolves the in-flight reader when new bytes arrive or the socket closes. */
   private waiter: (() => void) | null = null
   /** Resolves the in-flight writer when the socket's send buffer drains. */
@@ -233,11 +250,13 @@ class Conn {
       if (n < chunk.length) // bytes past the body (pipelined/over-long) — keep for finish logic
         this.appendToBuf(chunk.subarray(n))
       this.maybePause()
+      this.lastActivityAt = Date.now()
       this.wake()
       return
     }
     this.appendToBuf(chunk)
     this.maybePause()
+    this.lastActivityAt = Date.now()
     this.wake()
   }
 
@@ -256,8 +275,10 @@ class Conn {
     }
   }
 
-  /** Resume the upstream once the reader has drained below the low-water mark. */
+  /** Resume the upstream once the reader has drained below the low-water mark.
+   *  Also marks reader progress so an actively-consumed stream is never reclaimed. */
   resumeIfDrained(): void {
+    this.lastActivityAt = Date.now()
     if (this.paused && this.bufferedBodyBytes() <= BODY_LWM) {
       this.paused = false
       ;(this.socket as { resume?: () => void } | null)?.resume?.()
@@ -379,9 +400,23 @@ class UpstreamPool {
   private readonly queueWaitMs = queueWaitMs()
   /** Hard ceiling on {@link waiters} length; beyond it, reject with {@link POOL_BUSY}. */
   private readonly maxWaiters: number
+  /** Reclaim a checked-out connection idle this long; `0` disables (see {@link checkoutIdleMs}). */
+  private readonly checkoutIdleMs = checkoutIdleMs()
+  /** Currently checked-out connections — watched by the sweeper for stuck slots. */
+  private readonly inUse = new Set<Conn>()
 
   constructor(private host: string, private port: number, private maxTotal: number) {
     this.maxWaiters = maxQueued(maxTotal)
+  }
+
+  /** Mark a connection as checked out and (when enabled) keep the sweeper alive
+   *  so a stuck checkout can be reclaimed even with no idle connections around. */
+  private trackCheckout(conn: Conn): void {
+    conn.lastActivityAt = Date.now()
+    if (this.checkoutIdleMs > 0) {
+      this.inUse.add(conn)
+      this.ensureSweeper()
+    }
   }
 
   dial(): Promise<Conn> {
@@ -425,6 +460,7 @@ class UpstreamPool {
         c.socket?.ref()
         c.pos = 0
         c.len = 0
+        this.trackCheckout(c)
         return c
       }
       this.open-- // a dead idle connection no longer counts toward the cap
@@ -447,13 +483,16 @@ class UpstreamPool {
       if (c) {
         c.pos = 0
         c.len = 0
+        this.trackCheckout(c)
         return c
       }
       // Woken with null — a slot was freed by a closed connection; dial below.
     }
     this.open++
     try {
-      return await this.dial()
+      const conn = await this.dial()
+      this.trackCheckout(conn)
+      return conn
     }
     catch (err) {
       this.open--
@@ -493,6 +532,7 @@ class UpstreamPool {
 
   /** Hand a healthy connection to the next waiter, or return it to the idle set. */
   release(conn: Conn): void {
+    this.inUse.delete(conn) // no longer checked out (may be re-tracked below if reused)
     if (conn.closed) {
       this.open--
       this.wakeWaiter()
@@ -505,6 +545,7 @@ class UpstreamPool {
     if (waiter) {
       // Reuse directly for a queued request — connection stays checked out.
       conn.socket?.ref()
+      this.trackCheckout(conn)
       waiter(conn)
       return
     }
@@ -519,6 +560,7 @@ class UpstreamPool {
 
   /** Permanently drop a connection (protocol error / unreusable framing). */
   destroy(conn: Conn): void {
+    this.inUse.delete(conn)
     conn.destroy()
     this.open--
     this.wakeWaiter()
@@ -535,14 +577,18 @@ class UpstreamPool {
   private ensureSweeper(): void {
     if (this.sweeper)
       return
-    this.sweeper = setInterval(() => this.sweep(), IDLE_TIMEOUT_MS)
+    // Sweep often enough to reclaim a stuck checkout within ~checkoutIdleMs, but
+    // never more often than the idle-keepalive cadence needs.
+    const interval = this.checkoutIdleMs > 0 ? Math.min(IDLE_TIMEOUT_MS, this.checkoutIdleMs) : IDLE_TIMEOUT_MS
+    this.sweeper = setInterval(() => this.sweep(), interval)
     // Don't let the sweeper keep the process alive.
     this.sweeper.unref?.()
   }
 
   /** Close connections idle longer than the timeout; stop sweeping when empty. */
   private sweep(): void {
-    const cutoff = Date.now() - IDLE_TIMEOUT_MS
+    const now = Date.now()
+    const cutoff = now - IDLE_TIMEOUT_MS
     if (this.idle.length) {
       const survivors: Conn[] = []
       for (const c of this.idle) {
@@ -556,7 +602,18 @@ class UpstreamPool {
       }
       this.idle = survivors
     }
-    if (this.idle.length === 0 && this.sweeper) {
+    // Reclaim a *checked-out* connection that has gone silent (no upstream bytes
+    // AND no reader progress) — a leaked slot whose client likely vanished. We
+    // only *signal* it closed (markTimedOut); the in-flight reader/handler then
+    // performs the single pool.destroy, so the open-count stays correct.
+    if (this.checkoutIdleMs > 0 && this.inUse.size) {
+      const stuck = now - this.checkoutIdleMs
+      for (const c of this.inUse) {
+        if (!c.closed && c.lastActivityAt > 0 && c.lastActivityAt <= stuck)
+          c.markTimedOut()
+      }
+    }
+    if (this.idle.length === 0 && this.inUse.size === 0 && this.sweeper) {
       clearInterval(this.sweeper)
       this.sweeper = null
     }
