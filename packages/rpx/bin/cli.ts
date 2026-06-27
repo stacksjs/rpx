@@ -47,6 +47,9 @@ interface CLIOptions {
   startCwd?: string
   startEnv?: string
   changeOrigin?: boolean
+  singlePortMode?: boolean
+  httpPort?: number
+  httpsPort?: number
   verbose?: boolean
   viaDaemon?: boolean
   id?: string
@@ -65,6 +68,9 @@ cli
   .option('--start-cwd <path>', 'Current working directory for the dev server')
   .option('--start-env <env>', 'Environment variables for the dev server')
   .option('--change-origin', 'Change the origin of the host header to the target URL')
+  .option('--single-port-mode', 'Route all proxies through one shared listener (by Host header) instead of a port per proxy')
+  .option('--http-port <port>', 'Port for the shared HTTP listener / redirect (default: 80)')
+  .option('--https-port <port>', 'Port for the shared HTTPS listener (default: 443)')
   .option('--via-daemon', 'Route through the shared rpx daemon instead of binding :443 directly')
   .option('--id <id>', 'Stable id used when registering with the daemon (auto-derived from --to)')
   .option('--verbose', 'Enable verbose logging')
@@ -73,6 +79,7 @@ cli
   .example('rpx start --from localhost:3000 --to localhost:3001')
   .example('rpx start --from localhost:5173 --to my-project.test --key-path /absolute/path/to/key --cert-path /absolute/path/to/cert')
   .example('rpx start --from localhost:5173 --to my-project.localhost --change-origin')
+  .example('rpx start --single-port-mode --https-port 8443')
   .action(async (options?: CLIOptions) => {
     if (!options?.from || !options.to) {
       return startProxies(config)
@@ -93,6 +100,9 @@ cli
       },
       verbose: options.verbose || false,
       changeOrigin: options.changeOrigin || false,
+      singlePortMode: options.singlePortMode || false,
+      httpPort: options.httpPort !== undefined ? Number(options.httpPort) : undefined,
+      httpsPort: options.httpsPort !== undefined ? Number(options.httpsPort) : undefined,
       viaDaemon: options.viaDaemon || false,
       id: options.id,
     }

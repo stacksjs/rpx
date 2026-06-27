@@ -72,6 +72,39 @@ import config from './rpx.config'
 startProxies(config)
 ```
 
+## Single-Port Mode
+
+By default, rpx binds a separate listener per proxy. When HTTPS is enabled and
+you configure more than one proxy, rpx already collapses them onto a single
+shared `:443` listener and routes each request to the right upstream by its
+`Host` header. For the HTTP-only or single-proxy cases — or when you need the
+listening port to be configurable — enable `singlePortMode`:
+
+```ts
+const config: ReverseProxyOptions = {
+  https: false,
+  singlePortMode: true, // one shared listener for every proxy
+  httpPort: 8080, // default: 80 (also the HTTP→HTTPS redirect port)
+  httpsPort: 8443, // default: 443 (the shared HTTPS listener port)
+
+  proxies: [
+    { from: 'localhost:3000', to: 'app.myproject.test' },
+    { from: 'localhost:3001', to: 'api.myproject.test' },
+    { from: 'localhost:3002', to: '*.myproject.test' },
+  ],
+}
+```
+
+All three domains above are served from one port. Requests are routed by the
+`Host` header (and path), so you no longer end up with services scattered across
+`:443`, `:8443`, `:8444`, … as you would with one listener per proxy.
+
+From the CLI:
+
+```bash
+rpx start --single-port-mode --https-port 8443
+```
+
 ## Wildcard Domains
 
 You can use wildcard domains to handle multiple subdomains with a single configuration:

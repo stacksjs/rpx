@@ -810,19 +810,23 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   }
 }
 
-export function startHttpRedirectServer(verbose?: boolean): void {
-  debugLog('redirect', 'Starting HTTP redirect server', verbose)
+export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsPort = 443): void {
+  debugLog('redirect', `Starting HTTP redirect server on port ${httpPort}`, verbose)
 
   const server = http
     .createServer((req, res) => {
-      const host = req.headers.host || ''
-      debugLog('redirect', `Redirecting request from ${host}${req.url} to HTTPS`, verbose)
+      const rawHost = req.headers.host || ''
+      // Strip any incoming port so we can append the HTTPS port when it's
+      // non-standard (e.g. redirecting `:80` → `:8443` in a custom-port setup).
+      const hostname = rawHost.includes(':') ? rawHost.slice(0, rawHost.indexOf(':')) : rawHost
+      const target = httpsPort === 443 ? hostname : `${hostname}:${httpsPort}`
+      debugLog('redirect', `Redirecting request from ${rawHost}${req.url} to https://${target}`, verbose)
       res.writeHead(301, {
-        Location: `https://${host}${req.url}`,
+        Location: `https://${target}${req.url}`,
       })
       res.end()
     })
-    .listen(80)
+    .listen(httpPort)
   activeServers.add(server)
   debugLog('redirect', 'HTTP redirect server started', verbose)
 }
@@ -1239,132 +1243,61 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     cleanupHandler()
   })
 
-  // When SSL is enabled, create a single shared HTTPS server with host-based routing
-  // This ensures all domains share port 443 and route by Host header
-  if (sslConfig && proxyOptions.length > 1) {
-    debugLog('proxies', `Creating shared HTTPS server for ${proxyOptions.length} domains`, verbose)
+  // Single-port routing: collapse every proxy onto one shared listener that
+  // routes by Host header (and path) instead of binding a port per proxy.
+  //   - HTTPS multi-proxy already shares :443 when more than one proxy exists.
+  //   - `singlePortMode` extends the shared listener to the HTTP-only and
+  //     single-proxy cases, and makes the listening port(s) configurable
+  //     (`httpsPort`/`httpPort`, defaulting to 443/80).
+  const singlePortMode = mergedOptions.singlePortMode === true
+  const httpsPort = mergedOptions.httpsPort ?? 443
+  const httpPort = mergedOptions.httpPort ?? 80
+  // Origin lockdown: when a CDN fronts this gateway, reject direct hits to the
+  // fronted hosts that lack the CDN's shared-secret header (the CDN injects it).
+  const originGuard = mergedOptions.originGuard ? createOriginGuard(mergedOptions.originGuard) : null
 
-    // Collect (host, path, route) tuples so several proxies can share one
-    // domain on different paths (e.g. `/api` → app, `/docs` → static dir,
-    // `/` → public). `buildHostRoutes` groups + longest-prefix-sorts them.
-    const routeEntries: Array<{ host: string, path?: string, route: ProxyRoute }> = []
-    const seenDomains = new Set<string>()
+  const useSharedHttps = !!sslConfig && (proxyOptions.length > 1 || singlePortMode)
+  const useSharedHttp = !sslConfig && singlePortMode && proxyOptions.length > 0
 
-    for (const option of proxyOptions) {
-      const domain = option.to || 'rpx.localhost'
-      const cleanUrls = option.cleanUrls || false
-      const routePath = option.path
+  if (useSharedHttps && sslConfig) {
+    debugLog('proxies', `Creating shared HTTPS server for ${proxyOptions.length} domains on port ${httpsPort}`, verbose)
 
-      const basePath = normalizePathPrefix(routePath)
+    const routeEntries = await collectRouteEntries(proxyOptions, hostsEnabled, verbose)
 
-      // Static-file route: serve a local directory instead of proxying.
-      if (option.static) {
-        routeEntries.push({
-          host: domain,
-          path: routePath,
-          route: { static: resolveStaticRoute(option.static, cleanUrls), cleanUrls, basePath },
-        })
-        debugLog('proxies', `Route: ${domain}${routePath ?? ''} → static ${typeof option.static === 'string' ? option.static : option.static.dir}`, verbose)
-      }
-      else {
-        const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
-        routeEntries.push({
-          host: domain,
-          path: routePath,
-          route: {
-            sourceHost: fromUrl.host,
-            cleanUrls,
-            changeOrigin: option.changeOrigin || false,
-            pathRewrites: option.pathRewrites,
-            basePath,
-          },
-        })
-        debugLog('proxies', `Route: ${domain}${routePath ?? ''} → ${fromUrl.host}`, verbose)
-      }
-
-      // Ensure hosts file entries exist for non-localhost domains. A wildcard
-      // domain (`*.example.com`) has no single hosts entry — skip it. Skipped
-      // entirely when hosts management is disabled (real-server mode). Add each
-      // domain once even when several path-routes share it.
-      if (seenDomains.has(domain)) {
-        continue
-      }
-      seenDomains.add(domain)
-      if (hostsEnabled && !isWildcardPattern(domain) && !domain.includes('localhost') && !domain.includes('127.0.0.1')) {
-        try {
-          const hostsExist = await checkHosts([domain], verbose)
-          if (!hostsExist[0]) {
-            await addHosts([domain], verbose)
-          }
-        }
-        catch {
-          debugLog('hosts', `Could not add hosts entry for ${domain}`, verbose)
-        }
-      }
-    }
-
-    // Start HTTP redirect server if port 80 is available
-    const isHttpPortBusy = await isPortInUse(80, '0.0.0.0', verbose)
+    // Start HTTP→HTTPS redirect on the configured HTTP port if it's free.
+    const isHttpPortBusy = await isPortInUse(httpPort, '0.0.0.0', verbose)
     if (!isHttpPortBusy) {
-      startHttpRedirectServer(verbose)
+      startHttpRedirectServer(verbose, httpPort, httpsPort)
     }
 
-    // Create single shared Bun.serve on port 443
-    const listenPort = 443
-    const isPortBusy = await isPortInUse(listenPort, '0.0.0.0', verbose)
-
+    const isPortBusy = await isPortInUse(httpsPort, '0.0.0.0', verbose)
     if (isPortBusy) {
-      debugLog('proxies', `Port ${listenPort} is already in use, cannot start shared proxy`, verbose)
+      debugLog('proxies', `Port ${httpsPort} is already in use, cannot start shared proxy`, verbose)
       if (verbose)
-        log.warn(`Port ${listenPort} is in use. Shared HTTPS proxy cannot start.`)
+        log.warn(`Port ${httpsPort} is in use. Shared HTTPS proxy cannot start.`)
       return
     }
 
-    const routingTable = buildHostRoutes(routeEntries)
-    const baseFetchHandler = createProxyFetchHandler(
-      (host, pathname) => matchHostRoute(routingTable, host, pathname),
-      verbose,
-    )
-    // Origin lockdown: when a CDN fronts this gateway, reject direct hits to the
-    // fronted hosts that lack the CDN's shared-secret header (the CDN injects it).
-    const originGuard = mergedOptions.originGuard ? createOriginGuard(mergedOptions.originGuard) : null
-    const sharedFetchHandler = originGuard
-      ? (req: Request, server: ProxyServerLike) => originGuard(req) ?? baseFetchHandler(req, server)
-      : baseFetchHandler
-    const sharedWsHandler = createProxyWebSocketHandler(verbose)
-
-    try {
-      const bunServer = Bun.serve({
-        port: listenPort,
-        hostname: '0.0.0.0',
-        // Opt-in (RPX_REUSE_PORT): lets multiple rpx instances share :443 for
-        // multi-core scaling on Linux. Off by default — see shouldReusePort().
-        reusePort: shouldReusePort(),
-        tls: {
-          key: sslConfig.key,
-          cert: sslConfig.cert,
-          ca: sslConfig.ca,
-          requestCert: false,
-          rejectUnauthorized: false,
-        },
-        fetch(req: Request, server: unknown) {
-          return sharedFetchHandler(req, server as ProxyServerLike)
-        },
-        websocket: sharedWsHandler,
-        error(err: Error) {
-          debugLog('server', `Shared proxy server error: ${err}`, verbose)
-          return new Response(`Server Error: ${err.message}`, { status: 500 })
-        },
-      })
-
-      activeServers.add(bunServer as unknown as http.Server)
-      debugLog('proxies', `Shared HTTPS proxy listening on port ${listenPort} for ${routingTable.size} domains`, verbose)
-    }
-    catch (err) {
-      debugLog('proxies', `Failed to start shared proxy: ${err}`, verbose)
-      console.error('Failed to start shared HTTPS proxy:', err)
+    const server = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig, originGuard, verbose })
+    if (!server)
       cleanupHandler()
+  }
+  else if (useSharedHttp) {
+    debugLog('proxies', `Creating shared HTTP server for ${proxyOptions.length} domains on port ${httpPort}`, verbose)
+
+    const routeEntries = await collectRouteEntries(proxyOptions, hostsEnabled, verbose)
+
+    const isPortBusy = await isPortInUse(httpPort, '0.0.0.0', verbose)
+    if (isPortBusy) {
+      debugLog('proxies', `Port ${httpPort} is already in use, cannot start shared proxy`, verbose)
+      if (verbose)
+        log.warn(`Port ${httpPort} is in use. Shared HTTP proxy cannot start.`)
+      return
     }
+
+    const server = createSharedProxyServer({ routeEntries, listenPort: httpPort, sslConfig: null, originGuard, verbose })
+    if (!server)
+      cleanupHandler()
   }
   else {
     // Single proxy or no SSL — use individual servers (original behavior)
@@ -1391,6 +1324,142 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         cleanupHandler()
       }
     }
+  }
+}
+
+/**
+ * Build the `(host, path, route)` entries for a shared single-port listener from
+ * the resolved per-proxy options, and ensure an `/etc/hosts` entry exists for
+ * each non-localhost domain (once per domain). Several proxies can share one
+ * domain on different paths (e.g. `/api` → app, `/docs` → static dir, `/` →
+ * public) — `buildHostRoutes` groups + longest-prefix-sorts them later. Shared
+ * by the single-port HTTPS and HTTP paths so routing is identical regardless of
+ * whether TLS is terminated.
+ */
+export async function collectRouteEntries(
+  proxyOptions: ProxyOption[],
+  hostsEnabled: boolean,
+  verbose: boolean,
+): Promise<Array<{ host: string, path?: string, route: ProxyRoute }>> {
+  const routeEntries: Array<{ host: string, path?: string, route: ProxyRoute }> = []
+  const seenDomains = new Set<string>()
+
+  for (const option of proxyOptions) {
+    const domain = option.to || 'rpx.localhost'
+    const cleanUrls = option.cleanUrls || false
+    const routePath = option.path
+    const basePath = normalizePathPrefix(routePath)
+
+    // Static-file route: serve a local directory instead of proxying.
+    if (option.static) {
+      routeEntries.push({
+        host: domain,
+        path: routePath,
+        route: { static: resolveStaticRoute(option.static, cleanUrls), cleanUrls, basePath },
+      })
+      debugLog('proxies', `Route: ${domain}${routePath ?? ''} → static ${typeof option.static === 'string' ? option.static : option.static.dir}`, verbose)
+    }
+    else {
+      const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
+      routeEntries.push({
+        host: domain,
+        path: routePath,
+        route: {
+          sourceHost: fromUrl.host,
+          cleanUrls,
+          changeOrigin: option.changeOrigin || false,
+          pathRewrites: option.pathRewrites,
+          basePath,
+        },
+      })
+      debugLog('proxies', `Route: ${domain}${routePath ?? ''} → ${fromUrl.host}`, verbose)
+    }
+
+    // Ensure hosts file entries exist for non-localhost domains. A wildcard
+    // domain (`*.example.com`) has no single hosts entry — skip it. Skipped
+    // entirely when hosts management is disabled (real-server mode). Add each
+    // domain once even when several path-routes share it.
+    if (seenDomains.has(domain)) {
+      continue
+    }
+    seenDomains.add(domain)
+    if (hostsEnabled && !isWildcardPattern(domain) && !domain.includes('localhost') && !domain.includes('127.0.0.1')) {
+      try {
+        const hostsExist = await checkHosts([domain], verbose)
+        if (!hostsExist[0]) {
+          await addHosts([domain], verbose)
+        }
+      }
+      catch {
+        debugLog('hosts', `Could not add hosts entry for ${domain}`, verbose)
+      }
+    }
+  }
+
+  return routeEntries
+}
+
+/**
+ * Create a single shared `Bun.serve` listener that routes every request by
+ * `Host` header (and path) to the right upstream. When `sslConfig` is provided
+ * the listener terminates TLS; otherwise it serves plain HTTP (single-port HTTP
+ * mode). Registers the server for cleanup and returns it, or `null` if
+ * `Bun.serve` threw (e.g. the port could not be bound).
+ */
+export function createSharedProxyServer(opts: {
+  routeEntries: Array<{ host: string, path?: string, route: ProxyRoute }>
+  listenPort: number
+  sslConfig: SSLConfig | null
+  originGuard: ReturnType<typeof createOriginGuard> | null
+  verbose: boolean
+}): ReturnType<typeof Bun.serve> | null {
+  const { routeEntries, listenPort, sslConfig, originGuard, verbose } = opts
+  const routingTable = buildHostRoutes(routeEntries)
+  const baseFetchHandler = createProxyFetchHandler(
+    (host, pathname) => matchHostRoute(routingTable, host, pathname),
+    verbose,
+  )
+  const sharedFetchHandler = originGuard
+    ? (req: Request, server: ProxyServerLike) => originGuard(req) ?? baseFetchHandler(req, server)
+    : baseFetchHandler
+  const sharedWsHandler = createProxyWebSocketHandler(verbose)
+
+  try {
+    const bunServer = Bun.serve({
+      port: listenPort,
+      hostname: '0.0.0.0',
+      // Opt-in (RPX_REUSE_PORT): lets multiple rpx instances share the port for
+      // multi-core scaling on Linux. Off by default — see shouldReusePort().
+      reusePort: shouldReusePort(),
+      ...(sslConfig
+        ? {
+            tls: {
+              key: sslConfig.key,
+              cert: sslConfig.cert,
+              ca: sslConfig.ca,
+              requestCert: false,
+              rejectUnauthorized: false,
+            },
+          }
+        : {}),
+      fetch(req: Request, server: unknown) {
+        return sharedFetchHandler(req, server as ProxyServerLike)
+      },
+      websocket: sharedWsHandler,
+      error(err: Error) {
+        debugLog('server', `Shared proxy server error: ${err}`, verbose)
+        return new Response(`Server Error: ${err.message}`, { status: 500 })
+      },
+    })
+
+    activeServers.add(bunServer as unknown as http.Server)
+    debugLog('proxies', `Shared ${sslConfig ? 'HTTPS' : 'HTTP'} proxy listening on port ${listenPort} for ${routingTable.size} domains`, verbose)
+    return bunServer
+  }
+  catch (err) {
+    debugLog('proxies', `Failed to start shared proxy: ${err}`, verbose)
+    console.error('Failed to start shared proxy:', err)
+    return null
   }
 }
 

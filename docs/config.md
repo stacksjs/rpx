@@ -115,6 +115,39 @@ const config: MultiProxyConfig = {
 }
 ```
 
+### `singlePortMode`
+
+By default rpx binds one listener per proxy (`:443`, then `:8443`, `:8444`, …
+when the port is taken). Set `singlePortMode: true` to route every proxy through
+a **single shared listener** instead — requests are dispatched to the right
+upstream by their `Host` header (and path). The listening port is configurable
+via `httpPort` (default `80`) and `httpsPort` (default `443`).
+
+```ts
+const config: MultiProxyConfig = {
+  https: false,
+  singlePortMode: true,
+  httpPort: 8080, // shared HTTP listener + redirect port
+  httpsPort: 8443, // shared HTTPS listener port
+  proxies: [
+    { from: 'localhost:3000', to: 'foo.myservice.local' },
+    { from: 'localhost:3001', to: 'bar.myservice.local' },
+    { from: 'localhost:3002', to: '*.myservice.local' },
+  ],
+}
+```
+
+From the CLI:
+
+```bash
+rpx start --single-port-mode --https-port 8443
+```
+
+> Note: when HTTPS is enabled and more than one proxy is configured, rpx already
+> shares a single `:443` listener automatically. `singlePortMode` extends that to
+> the HTTP-only and single-proxy cases and makes the port configurable. See
+> [Multiple Proxies](/features/multiple-proxies#single-port-mode) for more.
+
 Then run:
 
 ```bash

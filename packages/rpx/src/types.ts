@@ -186,6 +186,31 @@ export interface SharedProxyConfig {
   changeOrigin?: boolean // default: false - changes the origin of the host header to the target URL
   regenerateUntrustedCerts?: boolean // If true, will regenerate and re-trust certs that exist but are not trusted by the system.
   /**
+   * Route every proxy through a single shared listener instead of binding a
+   * separate port per proxy. All traffic arrives on one port (the configured
+   * {@link httpsPort} when HTTPS is enabled, otherwise {@link httpPort}) and is
+   * routed to the correct upstream by the request `Host` header (and path).
+   *
+   * Without this, rpx binds one `:443` (or `:80`) listener per proxy, falling
+   * back to `:8443`, `:8444`, … when the port is taken — so each domain ends up
+   * on a different port. Single-port mode collapses them onto one.
+   *
+   * Note: when HTTPS is enabled and more than one proxy is configured, rpx
+   * already shares a single `:443` listener; `singlePortMode` additionally
+   * enables the shared listener for the HTTP-only and single-proxy cases, and
+   * makes the listening port configurable. Default: `false`.
+   */
+  singlePortMode?: boolean
+  /**
+   * Port for the shared HTTP listener (single-port HTTP mode) and the
+   * HTTP→HTTPS redirect server. Default: `80`.
+   */
+  httpPort?: number
+  /**
+   * Port for the shared HTTPS listener. Default: `443`.
+   */
+  httpsPort?: number
+  /**
    * Route this proxy through the long-running rpx daemon instead of binding
    * its own :443. Lets multiple `rpx start` invocations coexist on shared
    * `:443` (Valet-style). Default: `false` for backward compatibility.

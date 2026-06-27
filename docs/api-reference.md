@@ -152,6 +152,9 @@ interface MultiProxyOptions {
     certs?: boolean
   }
   changeOrigin?: boolean // Shared default for rewriting the Origin header (default: false)
+  singlePortMode?: boolean // Route all proxies through one shared listener (default: false)
+  httpPort?: number // Shared HTTP listener / redirect port (default: 80)
+  httpsPort?: number // Shared HTTPS listener port (default: 443)
   proxies: Array<{ // Array of proxy configurations
     from: string
     to: string
