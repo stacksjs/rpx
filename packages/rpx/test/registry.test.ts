@@ -244,7 +244,12 @@ describe('watchRegistry', () => {
 
     await new Promise(r => setTimeout(r, 80))
     await removeEntry('drop', tmpDir)
-    await new Promise(r => setTimeout(r, 100))
+    // Poll for the watcher to reflect the deletion rather than asserting after a
+    // fixed wait: fs.watch latency + the debounce vary under load, and a too-tight
+    // fixed wait was the source of intermittent failures.
+    const deadline = Date.now() + 2000
+    while (Date.now() < deadline && JSON.stringify(seen[seen.length - 1]) !== JSON.stringify(['keep']))
+      await new Promise(r => setTimeout(r, 25))
     handle.close()
 
     expect(seen[seen.length - 1]).toEqual(['keep'])
