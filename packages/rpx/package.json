@@ -73,7 +73,7 @@
   },
   "dependencies": {
     "@stacksjs/clapp": "^0.2.10",
-    "@stacksjs/tlsx": "^0.13.7"
+    "@stacksjs/tlsx": "^0.13.9"
   },
   "devDependencies": {
     "bunfig": "^0.15.6",
