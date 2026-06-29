@@ -100,6 +100,43 @@ describe('single-port mode', () => {
     }
   })
 
+  it('accepts production SNI cert entries for a shared HTTPS listener', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rpx-sni-listener-'))
+    const keyPath = join(root, 'prod.localhost.key')
+    const crtPath = join(root, 'prod.localhost.crt')
+    Bun.spawnSync(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', crtPath, '-days', '1', '-nodes', '-subj', '/CN=prod.localhost'])
+    const [key, cert] = await Promise.all([
+      Bun.file(keyPath).text(),
+      Bun.file(crtPath).text(),
+    ])
+
+    const proxies: ProxyOption[] = [
+      { from: `127.0.0.1:${up1.port}`, to: 'prod.localhost', cleanUrls: false },
+    ]
+    const routeEntries = await collectRouteEntries(proxies, false, false)
+    const server = createSharedProxyServer({
+      routeEntries,
+      listenPort: 0,
+      sslConfig: [{ serverName: 'prod.localhost', cert, key }],
+      originGuard: null,
+      verbose: false,
+    })
+    expect(server).not.toBeNull()
+
+    try {
+      const res = await fetch(`https://127.0.0.1:${server!.port}/`, {
+        headers: { host: 'prod.localhost' },
+        tls: { rejectUnauthorized: false },
+      })
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('upstream-one')
+    }
+    finally {
+      server!.stop(true)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('serves the Stacks deployment shape and Very Good AdBlock from one listener', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rpx-stacks-layout-'))
     const publicDir = join(root, 'public')

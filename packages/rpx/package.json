@@ -27,11 +27,11 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "bun": "./src/index.ts",
-      "import": "./dist/src/index.js"
+      "bun": "./dist/index.js",
+      "import": "./dist/index.js"
     }
   },
-  "module": "./dist/src/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "rpx": "./dist/bin/cli.js",
@@ -39,8 +39,7 @@
   },
   "files": [
     "README.md",
-    "dist",
-    "src"
+    "dist"
   ],
   "scripts": {
     "build": "bun build.ts && bun build ./bin/cli.ts --compile --minify --outfile bin/rpx",

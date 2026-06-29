@@ -22,6 +22,8 @@ import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-ha
 import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
 import { isWildcardPattern } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
+import { buildSniTlsConfig } from './sni'
+import type { SniTlsEntry } from './sni'
 import { resolveStaticRoute } from './static-files'
 import { debugLog, getSudoPassword, safeStringify, shouldReusePort } from './utils'
 
@@ -32,6 +34,7 @@ const globalPortManager = new DefaultPortManager('0.0.0.0')
 
 // Keep track of all running servers for cleanup
 const activeServers: Set<http.Server | https.Server> = new Set()
+type SharedTlsConfig = SSLConfig | SniTlsEntry[]
 
 let isCleaningUp = false
 let cleanupPromiseResolve: (() => void) | null = null
@@ -908,11 +911,26 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     }
   }
 
-  // Resolve SSL configuration if HTTPS is enabled
-  if (mergedOptions.https) {
-    let existingSSLConfig = await checkExistingCertificates(mergedOptions)
+  let productionTlsConfig: SniTlsEntry[] = []
 
-    if (!existingSSLConfig) {
+  if (mergedOptions.productionCerts) {
+    productionTlsConfig = await buildSniTlsConfig(mergedOptions.productionCerts, verbose)
+    if (productionTlsConfig.length > 0) {
+      debugLog(
+        'ssl',
+        `Using ${productionTlsConfig.length} production SNI cert(s): ${productionTlsConfig.map(entry => entry.serverName).join(', ')}`,
+        verbose,
+      )
+    }
+  }
+
+  // Resolve SSL configuration if HTTPS is enabled and no production SNI set was
+  // provided. Production gateways must not fall back to dev-local certificates
+  // when real PEMs are available under `productionCerts`.
+  if (mergedOptions.https) {
+    let existingSSLConfig = productionTlsConfig.length > 0 ? null : await checkExistingCertificates(mergedOptions)
+
+    if (!existingSSLConfig && productionTlsConfig.length === 0) {
       debugLog('ssl', `No valid or trusted certificates found for ${primaryDomain}, generating new ones`, mergedOptions.verbose)
       await generateCertificate(mergedOptions)
       existingSSLConfig = await checkExistingCertificates(mergedOptions)
@@ -953,7 +971,9 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
   // Extract domains for cleanup
   const domains = proxyOptions.map((opt: ProxyOption) => opt.to || 'rpx.localhost')
-  const sslConfig = mergedOptions._cachedSSLConfig
+  const sslConfig: SharedTlsConfig | null = productionTlsConfig.length > 0
+    ? productionTlsConfig
+    : (mergedOptions._cachedSSLConfig ?? null)
 
   // Start DNS server for custom domains on macOS (any domain that's not localhost/127.0.0.1)
   const customDomains = domains.filter((d: string) =>
@@ -1107,7 +1127,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           cleanup: option.cleanup || false,
           vitePluginUsage: option.vitePluginUsage || false,
           verbose: option.verbose || false,
-          _cachedSSLConfig: sslConfig,
+          _cachedSSLConfig: mergedOptions._cachedSSLConfig,
           changeOrigin: option.changeOrigin || false,
         })
       }
@@ -1203,7 +1223,7 @@ export async function collectRouteEntries(
 export function createSharedProxyServer(opts: {
   routeEntries: Array<{ host: string, path?: string, route: ProxyRoute }>
   listenPort: number
-  sslConfig: SSLConfig | null
+  sslConfig: SharedTlsConfig | null
   originGuard: ReturnType<typeof createOriginGuard> | null
   verbose: boolean
 }): ReturnType<typeof Bun.serve> | null {
@@ -1227,13 +1247,19 @@ export function createSharedProxyServer(opts: {
       reusePort: shouldReusePort(),
       ...(sslConfig
         ? {
-            tls: {
-              key: sslConfig.key,
-              cert: sslConfig.cert,
-              ca: sslConfig.ca,
-              requestCert: false,
-              rejectUnauthorized: false,
-            },
+            tls: Array.isArray(sslConfig)
+              ? sslConfig.map(entry => ({
+                  serverName: entry.serverName,
+                  key: entry.key,
+                  cert: entry.cert,
+                }))
+              : {
+                  key: sslConfig.key,
+                  cert: sslConfig.cert,
+                  ca: sslConfig.ca,
+                  requestCert: false,
+                  rejectUnauthorized: false,
+                },
           }
         : {}),
       fetch(req: Request, server: unknown) {
