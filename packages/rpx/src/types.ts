@@ -51,6 +51,28 @@ export interface StaticRouteConfig {
   maxAge?: number
 }
 
+/**
+ * HTTP Basic auth for a single route. When set, rpx challenges every request to
+ * the route with `401`/`WWW-Authenticate` until valid credentials are supplied
+ * (proxy, static, and WebSocket transports are all gated). Credentials may be
+ * given inline, as a `users[]` list, and/or via an Apache `htpasswd` file.
+ */
+export interface BasicAuthConfig {
+  /** Realm shown in the browser's auth prompt. Default: `Restricted`. */
+  realm?: string
+  /** A single allowed username (paired with {@link password}). */
+  username?: string
+  /** Password for {@link username}. */
+  password?: string
+  /** Additional allowed credentials. */
+  users?: Array<{ username: string, password: string }>
+  /**
+   * Path to an Apache `htpasswd` file. Recognized hash schemes: bcrypt
+   * (`$2a$`/`$2b$`/`$2y$`), apr1 (`$apr1$`), SHA1 (`{SHA}`), and plaintext.
+   */
+  htpasswdFile?: string
+}
+
 export interface BaseProxyConfig {
   /**
    * Upstream `host:port` to forward to (e.g. `localhost:5173`). Optional when
@@ -58,6 +80,10 @@ export interface BaseProxyConfig {
    */
   from?: string // localhost:5173
   to: string // stacks.localhost
+  /**
+   * Optional HTTP Basic auth gate for this route. Omit for a public route.
+   */
+  auth?: BasicAuthConfig
   /**
    * Optional path prefix this route owns under the host `to` (e.g. `'/api'`).
    * Lets multiple routes share one host, each serving a different path —

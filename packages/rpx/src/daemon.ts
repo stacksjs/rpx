@@ -39,6 +39,7 @@ import type { HostRoutes } from './host-routes'
 import { buildSniTlsConfig } from './sni'
 import { OnDemandCertManager } from './on-demand'
 import { resolveStaticRoute } from './static-files'
+import { resolveAuth } from './auth'
 import { gcStaleEntries, getRegistryDir, isPidAlive, readAll, watchRegistry } from './registry'
 import type { RegistryEntry } from './registry'
 import {
@@ -191,11 +192,13 @@ export async function releaseDaemonLock(rpxDir: string = getDaemonRpxDir()): Pro
 function entryToRoute(entry: RegistryEntry): ProxyRoute {
   const cleanUrls = entry.cleanUrls ?? false
   const basePath = normalizePathPrefix(entry.path)
+  const auth = resolveAuth(entry.auth)
   if (entry.static) {
     return {
       static: resolveStaticRoute(entry.static, cleanUrls),
       cleanUrls,
       basePath,
+      auth,
     }
   }
   const from = entry.from ?? 'localhost:1'
@@ -206,6 +209,7 @@ function entryToRoute(entry: RegistryEntry): ProxyRoute {
     changeOrigin: entry.changeOrigin ?? false,
     pathRewrites: entry.pathRewrites,
     basePath,
+    auth,
   }
 }
 

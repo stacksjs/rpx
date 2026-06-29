@@ -14,8 +14,10 @@
  *   - Static file serving from a local directory (`route.static`).
  */
 import type { ServerWebSocket } from 'bun'
+import type { ResolvedAuth } from './auth'
 import type { ResolvedStaticRoute } from './static-files'
 import type { PathRewrite } from './types'
+import { enforceBasicAuth } from './auth'
 import { FALLBACK, POOL_BUSY, proxyViaPool, TIMEOUT } from './proxy-pool'
 import { serveStaticFile } from './static-files'
 import { debugLog, resolvePathRewrite } from './utils'
@@ -54,6 +56,12 @@ export interface ProxyRoute {
    * When unset, the per-transport default above applies.
    */
   stripBasePathPrefix?: boolean
+  /**
+   * Optional HTTP Basic auth gate. When set, requests to this route must carry
+   * valid credentials or receive a `401` challenge — enforced before static,
+   * WebSocket, or proxy handling so every transport is protected.
+   */
+  auth?: ResolvedAuth
 }
 
 /**
@@ -183,6 +191,16 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): 
     if (!route) {
       debugLog('request', `No route found for host: ${hostname}`, verbose)
       return new Response(`No proxy configured for ${hostname}`, { status: 404 })
+    }
+
+    // HTTP Basic auth gate — enforced before any transport so static, WebSocket,
+    // and proxied responses are all protected. ACME challenges are exempt.
+    if (route.auth) {
+      const challenge = enforceBasicAuth(req, pathname, route.auth)
+      if (challenge) {
+        debugLog('request', `401 challenge for ${hostname}${pathname}`, verbose)
+        return challenge
+      }
     }
 
     // Static file serving short-circuits everything else. Strip the route's

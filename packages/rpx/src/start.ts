@@ -20,6 +20,8 @@ import { ProcessManager } from './process-manager'
 import { createOriginGuard } from './origin-guard'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
+import { resolveAuth } from './auth'
+import type { ResolvedAuth } from './auth'
 import { isWildcardPattern } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
 import { buildSniTlsConfig } from './sni'
@@ -460,6 +462,7 @@ async function createProxyServer(
   verbose?: boolean,
   cleanUrls?: boolean,
   changeOrigin?: boolean,
+  auth?: ResolvedAuth,
 ): Promise<void> {
   debugLog('proxy', `Creating proxy server ${from} -> ${to} with cleanUrls: ${cleanUrls}`, verbose)
 
@@ -476,6 +479,7 @@ async function createProxyServer(
       cleanUrls: cleanUrls || false,
       changeOrigin: changeOrigin || false,
       basePath: '/',
+      auth,
     } as ProxyRoute,
   }]
 
@@ -589,7 +593,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       debugLog('setup', `Using standard ${targetPort === 443 ? 'HTTPS' : 'HTTP'} port ${targetPort} for ${to}`, verbose)
     }
 
-    await createProxyServer(from, to, finalPort, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin)
+    await createProxyServer(from, to, finalPort, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin, resolveAuth((options as { auth?: import('./types').BasicAuthConfig }).auth))
   }
   catch (err) {
     debugLog('setup', `Setup failed: ${err}`, verbose)
@@ -965,6 +969,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         vitePluginUsage: mergedOptions.vitePluginUsage,
         start: ('start' in mergedOptions) ? mergedOptions.start : undefined,
         changeOrigin: mergedOptions.changeOrigin,
+        auth: 'auth' in mergedOptions ? mergedOptions.auth : undefined,
         verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
       } as ProxyOption]
@@ -1164,14 +1169,16 @@ export async function collectRouteEntries(
     const routePath = option.path
     const basePath = normalizePathPrefix(routePath)
 
+    const auth = resolveAuth(option.auth)
+
     // Static-file route: serve a local directory instead of proxying.
     if (option.static) {
       routeEntries.push({
         host: domain,
         path: routePath,
-        route: { static: resolveStaticRoute(option.static, cleanUrls), cleanUrls, basePath },
+        route: { static: resolveStaticRoute(option.static, cleanUrls), cleanUrls, basePath, auth },
       })
-      debugLog('proxies', `Route: ${domain}${routePath ?? ''} → static ${typeof option.static === 'string' ? option.static : option.static.dir}`, verbose)
+      debugLog('proxies', `Route: ${domain}${routePath ?? ''} → static ${typeof option.static === 'string' ? option.static : option.static.dir}${auth ? ' (auth)' : ''}`, verbose)
     }
     else {
       const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
@@ -1184,9 +1191,10 @@ export async function collectRouteEntries(
           changeOrigin: option.changeOrigin || false,
           pathRewrites: option.pathRewrites,
           basePath,
+          auth,
         },
       })
-      debugLog('proxies', `Route: ${domain}${routePath ?? ''} → ${fromUrl.host}`, verbose)
+      debugLog('proxies', `Route: ${domain}${routePath ?? ''} → ${fromUrl.host}${auth ? ' (auth)' : ''}`, verbose)
     }
 
     // Ensure hosts file entries exist for non-localhost domains. A wildcard

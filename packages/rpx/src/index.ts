@@ -123,6 +123,9 @@ export { isWildcardPattern, matchesWildcard, matchHost } from './host-match'
 export { createOriginGuard } from './origin-guard'
 export type { OriginGuard, OriginGuardOptions } from './origin-guard'
 
+export { enforceBasicAuth, parseHtpasswd, resolveAuth } from './auth'
+export type { ResolvedAuth } from './auth'
+
 export {
   buildHostRoutes,
   matchHostList,
