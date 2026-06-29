@@ -1,10 +1,5 @@
-import type * as http from 'node:http'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test'
-import { createServer } from 'node:http'
 import { createSharedProxyServer } from '../src/start'
-import { debugLog } from '../src/utils'
 
 /**
  * Integration test suite for the changeOrigin feature
@@ -15,48 +10,34 @@ import { debugLog } from '../src/utils'
 describe('changeOrigin feature integration', () => {
   describe('Header modification with live HTTP servers', () => {
     let targetPort = 0
-    let targetServer: http.Server | null = null
+    let targetServer: ReturnType<typeof Bun.serve> | null = null
 
     // Store received headers for verification
-    let receivedHeaders: http.IncomingHttpHeaders = {}
+    let receivedHeaders: Record<string, string> = {}
 
     // Setup target server that logs received headers
-    beforeAll(async () => {
-      return new Promise<void>((resolve) => {
-        targetServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    beforeAll(() => {
+      targetServer = Bun.serve({
+        port: 0,
+        hostname: '127.0.0.1',
+        fetch(req: Request) {
           // Store headers for verification
-          receivedHeaders = req.headers
+          receivedHeaders = Object.fromEntries(req.headers.entries())
 
           // Send a response with the headers we received
-          res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({
-            receivedHost: req.headers.host,
-            allHeaders: req.headers,
-          }))
-        })
-
-        targetServer.listen(0, '127.0.0.1', () => {
-          const address = targetServer?.address() as AddressInfo | null
-          targetPort = address?.port ?? 0
-          debugLog('test', `Target server listening on port ${targetPort}`, true)
-          resolve()
-        })
+          return new Response(JSON.stringify({
+            receivedHost: req.headers.get('host'),
+            allHeaders: receivedHeaders,
+          }), { headers: { 'content-type': 'application/json' } })
+        },
       })
+      targetPort = targetServer.port ?? 0
+      expect(targetPort).toBeGreaterThan(0)
     })
 
     // Clean up server after tests
-    afterAll(async () => {
-      return new Promise<void>((resolve) => {
-        if (targetServer) {
-          targetServer.close(() => {
-            debugLog('test', 'Target server closed', true)
-            resolve()
-          })
-        }
-        else {
-          resolve()
-        }
-      })
+    afterAll(() => {
+      targetServer?.stop(true)
     })
 
     // Reset headers between tests
