@@ -1,5 +1,46 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.19...v0.11.20)
+
+## 🚀 Features
+
+- **proxy**: proxy WebSockets/wss in single-proxy mode (issue #26) ([ef6142a](https://github.com/stacksjs/rpx/commit/ef6142a)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#26](https://github.com/stacksjs/rpx/issues/26), [#26](https://github.com/stacksjs/rpx/issues/26))
+- **proxy**: add singlePortMode for one shared listener across proxies ([128c33e](https://github.com/stacksjs/rpx/commit/128c33e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **proxy**: document and test changeOrigin support ([c972d2d](https://github.com/stacksjs/rpx/commit/c972d2d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- honor production certs in rpx shared gateway ([8a5c43a](https://github.com/stacksjs/rpx/commit/8a5c43a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **proxy**: lifecycle/pool hardening — survive crashes, races, leaks ([4ad444c](https://github.com/stacksjs/rpx/commit/4ad444c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **on-demand**: bound the negative cache and pre-filter junk hosts ([c683b8d](https://github.com/stacksjs/rpx/commit/c683b8d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **proxy**: backpressure, framing/retry safety, proc-mgr + dns guards ([d8a2a31](https://github.com/stacksjs/rpx/commit/d8a2a31)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ♻️ Code Refactoring
+
+- **cert**: consume tlsx cert helpers instead of reimplementing ([c329606](https://github.com/stacksjs/rpx/commit/c329606)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cert**: use tlsx/X509Certificate instead of openssl; harden dns ([8715c91](https://github.com/stacksjs/rpx/commit/8715c91)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- **rpx**: use bun server for change-origin integration ([93a4ae0](https://github.com/stacksjs/rpx/commit/93a4ae0)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: avoid fixed change-origin port ([3f155b9](https://github.com/stacksjs/rpx/commit/3f155b9)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **rpx**: cover stacks deployment routing ([0213dad](https://github.com/stacksjs/rpx/commit/0213dad)) _(by Chris <chrisbreuer93@gmail.com>)_
+- fix cross-file process-mock pollution and a watch-timing flake ([5de0e49](https://github.com/stacksjs/rpx/commit/5de0e49)) _(by Chris <chrisbreuer93@gmail.com>)_
+- de-flake the suite (real ports, pre-provisioned certs, bind retry) ([3bfa84e](https://github.com/stacksjs/rpx/commit/3bfa84e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🤖 Continuous Integration
+
+- gate pantry commit publishing ([5cc1bf5](https://github.com/stacksjs/rpx/commit/5cc1bf5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.20 ([cd559c2](https://github.com/stacksjs/rpx/commit/cd559c2)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: bump @stacksjs/tlsx to 0.13.9 ([e6b7268](https://github.com/stacksjs/rpx/commit/e6b7268)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.17...v0.11.18)
 
 ## 🚀 Features
