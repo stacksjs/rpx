@@ -1,5 +1,6 @@
 import type * as http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test'
 import { createServer } from 'node:http'
 import { createSharedProxyServer } from '../src/start'
@@ -13,8 +14,7 @@ import { debugLog } from '../src/utils'
  */
 describe('changeOrigin feature integration', () => {
   describe('Header modification with live HTTP servers', () => {
-    // Use high port number to avoid conflicts
-    const targetPort = 49001
+    let targetPort = 0
     let targetServer: http.Server | null = null
 
     // Store received headers for verification
@@ -35,7 +35,9 @@ describe('changeOrigin feature integration', () => {
           }))
         })
 
-        targetServer.listen(targetPort, '127.0.0.1', () => {
+        targetServer.listen(0, '127.0.0.1', () => {
+          const address = targetServer?.address() as AddressInfo | null
+          targetPort = address?.port ?? 0
           debugLog('test', `Target server listening on port ${targetPort}`, true)
           resolve()
         })
