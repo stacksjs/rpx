@@ -201,6 +201,99 @@ export interface OnDemandTlsConfig {
   certsDir?: string
 }
 
+/**
+ * One backend a site exposes, mapped to a request path. rpx picks a free port,
+ * exports it to the dev command via {@link portEnv}, and proxies {@link path}
+ * (under the site host) to `localhost:<port>`.
+ *
+ * A Stacks app, for example, has three: the frontend at `/` (env `PORT`), the
+ * API at `/api` (env `PORT_API`), and the docs at `/docs` (env `PORT_DOCS`).
+ */
+export interface SiteRouteTemplate {
+  /**
+   * Path prefix this backend owns under the site host (e.g. `'/api'`). Omit (or
+   * `'/'`) for the host default that catches everything else.
+   */
+  path?: string
+  /**
+   * Env var rpx sets to the chosen port, which the dev command reads to bind
+   * (e.g. `'PORT'`, `'PORT_API'`). rpx searches for a free port near
+   * {@link defaultPort}, exports it under this name, and routes {@link path} to it.
+   */
+  portEnv: string
+  /** Port to try first before searching for a free one. */
+  defaultPort?: number
+  /**
+   * Strip {@link path} before forwarding (see {@link PathRewrite.stripPrefix}).
+   * Defaults to `false` for proxied backends (most apps own their namespace).
+   */
+  stripPrefix?: boolean
+  /**
+   * Gate "ready" on this backend's port answering. The site is considered booted
+   * once every `readyGate: true` backend accepts a connection — that's when rpx
+   * publishes the routes and starts proxying. Defaults to `true` for the host
+   * default (`'/'`) backend and `false` for the rest, so a slow docs build never
+   * holds the frontend behind the splash.
+   */
+  readyGate?: boolean
+}
+
+/**
+ * A lazily-booted project. The first request to {@link to} starts {@link command}
+ * in {@link dir}; rpx holds the request behind a "starting…" splash until the
+ * site's ready gate passes, then proxies it. After {@link idleTimeoutMs} with no
+ * traffic the process is stopped again — so a machine can "have" dozens of sites
+ * but only run the ones in active use.
+ */
+export interface SiteConfig {
+  /** Public host (or `*.suffix` wildcard) this site answers, e.g. `'myapp.localhost'`. */
+  to: string
+  /** Project directory the dev command runs in. `~` is expanded. */
+  dir: string
+  /** Dev command to spawn (e.g. `'./buddy dev'` or `'bun run dev'`). */
+  command: string
+  /** Extra env for the command, merged over `process.env` and the injected ports. */
+  env?: Record<string, string>
+  /**
+   * Backends rpx manages for this site (port injection + routing). When omitted,
+   * {@link selfRegisters} must be set — rpx then only boots the command and waits
+   * for it to register its own route for {@link to}.
+   */
+  routes?: SiteRouteTemplate[]
+  /**
+   * The command writes its own rpx registry entries (so rpx should not inject
+   * ports or publish routes — only spawn it and reap it on idle). Default `false`.
+   */
+  selfRegisters?: boolean
+  /** Idle period (ms) with no traffic before rpx stops the site. `0` disables. */
+  idleTimeoutMs?: number
+}
+
+/**
+ * On-demand sites: lazily boot a project's dev server the first time its host is
+ * visited, then proxy to it (Valet/puma-dev style). Opt-in via {@link enabled}.
+ */
+export interface OnDemandSitesConfig {
+  /** Master switch. Default `false`. */
+  enabled?: boolean
+  /** Explicit sites, matched (exact host, then wildcard) before convention discovery. */
+  sites?: SiteConfig[]
+  /**
+   * Roots scanned by convention: a request for `<name>.<tld>` resolves to
+   * `<root>/<name>` when that directory exists and looks like a dev project.
+   * `~` is expanded. Default `['~/Code']`.
+   */
+  roots?: string[]
+  /**
+   * Dev TLDs stripped to derive `<name>` from a host. Default `['localhost', 'test']`.
+   */
+  tlds?: string[]
+  /** Default idle timeout (ms) for sites that don't set their own. Default 30 min. */
+  idleTimeoutMs?: number
+  /** Max ms to wait for a site's ready gate before showing the failure page. Default 120s. */
+  startupTimeoutMs?: number
+}
+
 export interface SharedProxyConfig {
   https: boolean | TlsOption
   cleanup: boolean | CleanupOptions
