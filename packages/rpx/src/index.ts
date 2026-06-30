@@ -150,6 +150,22 @@ export type { SniTlsEntry } from './sni'
 export { isLikelyHostname, matchesAllowedSuffix, OnDemandCertManager } from './on-demand'
 export type { CertIssuer, OnDemandCertManagerOptions } from './on-demand'
 
+export {
+  createSiteResolver,
+  detectProjectPreset,
+  expandHome,
+  projectNameFromHost,
+  siteIdForHost,
+} from './site-resolver'
+export type {
+  ResolvedSite,
+  ResolverProbes,
+  SiteDetector,
+  SitePreset,
+  SiteResolver,
+  SiteResolverDeps,
+} from './site-resolver'
+
 export { deriveIdFromTarget, runViaDaemon } from './daemon-runner'
 export type { DaemonRunnerOptions, DaemonRunnerProxy } from './daemon-runner'
 
