@@ -166,6 +166,15 @@ export type {
   SiteResolverDeps,
 } from './site-resolver'
 
+export { SiteSupervisor } from './site-supervisor'
+export type {
+  SiteLauncher,
+  SiteProcessHandle,
+  SiteRequestStatus,
+  SiteSnapshot,
+  SiteSupervisorOptions,
+} from './site-supervisor'
+
 export { deriveIdFromTarget, runViaDaemon } from './daemon-runner'
 export type { DaemonRunnerOptions, DaemonRunnerProxy } from './daemon-runner'
 
