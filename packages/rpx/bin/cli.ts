@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), '..'))
 import { CLI } from '@stacksjs/clapp'
 import { config, getConfig } from '../src/config'
-import { listDiscoverableSites } from '../src/site-resolver'
+import { listDiscoverableSites, siteIdForHost } from '../src/site-resolver'
 import {
   ensureDaemonRunning,
   getDaemonPidPath,
@@ -473,6 +473,28 @@ cli
       console.log(`  ${r.live ? '●' : '○'} https://${r.host}  ${r.live ? '(live)' : '(idle)'}`)
       console.log(`      ${r.command}  ${r.dir}`)
     }
+  })
+
+cli
+  .command('logs <host>', "Show an on-demand site's boot log (e.g. rpx logs myapp.localhost)")
+  .option('--rpx-dir <path>', 'Override the rpx state dir (default ~/.stacks/rpx)')
+  .option('--lines <n>', 'Show only the last N lines (default: all)')
+  .action(async (host: string, opts: { rpxDir?: string, lines?: number | string }) => {
+    const { readFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const rpxDir = opts.rpxDir ?? getDaemonRpxDir()
+    const logPath = join(rpxDir, 'sites', `${siteIdForHost(host.split(':')[0]!)}.log`)
+    let text: string
+    try {
+      text = await readFile(logPath, 'utf8')
+    }
+    catch {
+      console.log(`no log for ${host} (it may not have been booted yet) — looked in ${logPath}`)
+      return
+    }
+    const n = opts.lines === undefined ? undefined : (typeof opts.lines === 'string' ? Number.parseInt(opts.lines, 10) : opts.lines)
+    const lines = text.split('\n')
+    process.stdout.write((n && n > 0 ? lines.slice(-n) : lines).join('\n'))
   })
 
 cli.command('version', 'Show the version of the Reverse Proxy CLI').action(() => {
