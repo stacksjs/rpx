@@ -241,7 +241,7 @@ function pickPrimaryRegistryHost(hosts: string[]): string {
   return appHost ?? hosts[0] ?? 'rpx.localhost'
 }
 
-async function bootstrapTls(opts: DaemonOptions, registryDir: string, extraHosts: string[] = []): Promise<SSLConfig> {
+async function bootstrapTls(opts: DaemonOptions, registryDir: string, extraHosts: string[] = [], force = false): Promise<SSLConfig> {
   const entries = await readAll(registryDir, opts.verbose)
   // `extraHosts` covers on-demand sites that are booting but haven't published a
   // registry route yet — so their "starting…" splash is served with a cert that
@@ -255,8 +255,12 @@ async function bootstrapTls(opts: DaemonOptions, registryDir: string, extraHosts
     proxyOpts.https = { ...proxyOpts.https, ...opts.https }
 
   let sslConfig = await checkExistingCertificates(proxyOpts)
-  if (sslConfig && !certIncludesSanHostnames(SHARED_DEV_HOST_CERT_PATH, hostnames)) {
-    debugLog('daemon', `shared cert missing SANs for registry host(s), regenerating (${hostnames.join(', ')})`, opts.verbose)
+  // `force` regenerates even when the coverage check passes — needed for on-demand
+  // hosts, because the dev cert's `*.localhost` wildcard makes the check think a
+  // new `<app>.localhost` is already covered, yet Chrome rejects `*.localhost` and
+  // demands an EXPLICIT per-host SAN. Forcing adds the host name literally.
+  if (sslConfig && (force || !certIncludesSanHostnames(SHARED_DEV_HOST_CERT_PATH, hostnames))) {
+    debugLog('daemon', `regenerating shared cert for host(s): ${hostnames.join(', ')}`, opts.verbose)
     clearSslConfigCache()
     sslConfig = null
   }
@@ -726,7 +730,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       return
     onDemandCertHosts.add(host)
     try {
-      devSslConfig = await bootstrapTls(opts, registryDir, [...onDemandCertHosts])
+      // Force regeneration so the host gets an EXPLICIT SAN (the cert's
+      // `*.localhost` wildcard would otherwise satisfy the coverage check while
+      // Chrome still rejects it).
+      devSslConfig = await bootstrapTls(opts, registryDir, [...onDemandCertHosts], true)
       const entries = await readAll(registryDir, verbose)
       await rebuildTls(devTlsEntries(entries))
     }
