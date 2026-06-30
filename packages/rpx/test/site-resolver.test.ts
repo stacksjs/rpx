@@ -5,6 +5,7 @@ import {
   createSiteResolver,
   detectProjectPreset,
   expandHome,
+  listDiscoverableSites,
   projectNameFromHost,
   siteIdForHost,
 } from '../src/site-resolver'
@@ -186,5 +187,43 @@ describe('createSiteResolver — explicit sites', () => {
     }
     const resolver = createSiteResolver(config, { ...fakeProbes(), homeDir: HOME })
     expect(resolver.resolve('x.localhost')?.idleTimeoutMs).toBe(99)
+  })
+})
+
+describe('listDiscoverableSites', () => {
+  it('enumerates discovered projects under the roots and explicit sites', () => {
+    const probes = fakeProbes({
+      dirs: ['/home/dev/Code/myapp', '/home/dev/Code/plain', '/home/dev/Code/site'],
+      files: {
+        '/home/dev/Code/myapp/buddy': '',
+        '/home/dev/Code/site/package.json': JSON.stringify({ scripts: { dev: 'vite' } }),
+        // 'plain' has neither → not a project, excluded.
+      },
+    })
+    const config: OnDemandSitesConfig = {
+      enabled: true,
+      roots: ['~/Code'],
+      tlds: ['localhost'],
+      sites: [{ to: 'explicit.localhost', dir: '/srv/x', command: 'bun run start', selfRegisters: true }],
+    }
+    const sites = listDiscoverableSites(config, {
+      ...probes,
+      homeDir: HOME,
+      readdir: dir => (dir === '/home/dev/Code' ? ['myapp', 'plain', 'site'] : []),
+    })
+    const hosts = sites.map(s => s.host).sort()
+    expect(hosts).toEqual(['explicit.localhost', 'myapp.localhost', 'site.localhost'])
+    expect(sites.find(s => s.host === 'myapp.localhost')?.command).toBe('./buddy dev')
+    expect(sites.find(s => s.host === 'explicit.localhost')?.source).toBe('config')
+  })
+
+  it('skips wildcard explicit sites (cannot enumerate)', () => {
+    const config: OnDemandSitesConfig = {
+      enabled: true,
+      roots: ['~/none'],
+      sites: [{ to: '*.preview.localhost', dir: '~/p', command: 'c', selfRegisters: true }],
+    }
+    const sites = listDiscoverableSites(config, { ...fakeProbes(), homeDir: HOME, readdir: () => [] })
+    expect(sites).toEqual([])
   })
 })

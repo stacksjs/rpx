@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import type { BaseProxyConfig, ProxyOption, StartOptions } from '../src/types'
+import type { BaseProxyConfig, OnDemandSitesConfig, ProxyOption, StartOptions } from '../src/types'
 import { dirname, join } from 'node:path'
 import * as process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 // Avoid loading a Stacks app's bunfig/preloader when invoked from a project cwd.
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), '..'))
 import { CLI } from '@stacksjs/clapp'
-import { config } from '../src/config'
+import { config, getConfig } from '../src/config'
+import { listDiscoverableSites } from '../src/site-resolver'
 import {
   ensureDaemonRunning,
   getDaemonPidPath,
@@ -193,7 +194,25 @@ interface DaemonStartOptions {
   httpPort?: number
   hostname?: string
   certsDir?: string
+  onDemand?: boolean
+  roots?: string
   verbose?: boolean
+}
+
+/**
+ * Build the on-demand sites config for the daemon. Starts from the user's
+ * `rpx.config.ts` `onDemand` block, force-enables it (the `--on-demand` flag is
+ * the opt-in), and lets `--roots a,b` override the scan roots from the CLI.
+ */
+async function resolveOnDemandSitesConfig(rootsCsv: string | undefined): Promise<OnDemandSitesConfig> {
+  const loaded = await getConfig().catch(() => null)
+  const base: OnDemandSitesConfig = { ...(loaded?.onDemand ?? {}), enabled: true }
+  if (rootsCsv) {
+    const roots = rootsCsv.split(',').map(r => r.trim()).filter(Boolean)
+    if (roots.length > 0)
+      base.roots = roots
+  }
+  return base
 }
 
 cli
@@ -205,9 +224,14 @@ cli
   .option('--hostname <host>', 'Bind address (default 0.0.0.0)', { default: '0.0.0.0' })
   .option('--certs-dir <path>', 'Directory of real PEM certs for per-domain SNI (<domain>.crt/.key, _wildcard.<apex>.crt/.key)')
   .option('--workers <n>', 'Run as a multi-core cluster of N worker processes (default 1; also RPX_WORKERS)')
+  .option('--on-demand', 'Lazily boot a project\'s dev server the first time its host is visited (reads config `onDemand`)')
+  .option('--roots <dirs>', 'Comma-separated roots scanned for on-demand sites (overrides config; default ~/Code)')
   .option('--verbose', 'Enable verbose logging')
+  .example('rpx daemon:start --on-demand')
+  .example('rpx daemon:start --on-demand --roots ~/Code,~/work')
   .action(async (opts: DaemonStartOptions & { workers?: number | string }) => {
     try {
+      const onDemandSites = opts.onDemand ? await resolveOnDemandSitesConfig(opts.roots) : undefined
       const handle = await runDaemon({
         rpxDir: opts.rpxDir,
         registryDir: opts.registryDir,
@@ -216,6 +240,7 @@ cli
         hostname: opts.hostname,
         productionCerts: opts.certsDir ? { certsDir: opts.certsDir } : undefined,
         workers: opts.workers === undefined ? undefined : (typeof opts.workers === 'string' ? Number.parseInt(opts.workers, 10) : opts.workers),
+        onDemandSites,
         verbose: opts.verbose ?? true,
       })
       // Block until the daemon shuts down (via SIGINT/SIGTERM).
@@ -409,6 +434,45 @@ cli
     }
     await reconcileDevelopmentDnsOnIdle({ rpxDir, verbose: opts.verbose })
     console.log('DNS reconcile complete')
+  })
+
+cli
+  .command('sites', 'List the on-demand sites rpx can boot (and which are currently live)')
+  .option('--roots <dirs>', 'Comma-separated roots to scan (overrides config; default ~/Code)')
+  .option('--registry-dir <path>', 'Override the registry dir (default ~/.stacks/rpx/registry.d)')
+  .option('--json', 'Emit machine-readable JSON')
+  .action(async (opts: { roots?: string, registryDir?: string, json?: boolean }) => {
+    const onDemand = await resolveOnDemandSitesConfig(opts.roots)
+    const sites = listDiscoverableSites(onDemand)
+    const entries = await readAll(opts.registryDir).catch(() => [])
+    const liveHosts = new Set(entries.map(e => e.to))
+
+    const rows = sites.map(s => ({
+      host: s.host,
+      dir: s.dir,
+      command: s.command,
+      source: s.source,
+      live: liveHosts.has(s.host),
+    }))
+
+    if (opts.json) {
+      console.log(JSON.stringify(rows, null, 2))
+      return
+    }
+
+    const roots = onDemand.roots ?? ['~/Code']
+    if (rows.length === 0) {
+      console.log('no on-demand sites found')
+      console.log(`scanned roots: ${roots.join(', ')}`)
+      console.log('start the daemon with `rpx daemon:start --on-demand` to serve them')
+      return
+    }
+
+    console.log(`on-demand sites (${rows.length}) — scanned ${roots.join(', ')}:`)
+    for (const r of rows) {
+      console.log(`  ${r.live ? '●' : '○'} https://${r.host}  ${r.live ? '(live)' : '(idle)'}`)
+      console.log(`      ${r.command}  ${r.dir}`)
+    }
   })
 
 cli.command('version', 'Show the version of the Reverse Proxy CLI').action(() => {

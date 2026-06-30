@@ -154,6 +154,7 @@ export {
   createSiteResolver,
   detectProjectPreset,
   expandHome,
+  listDiscoverableSites,
   projectNameFromHost,
   siteIdForHost,
 } from './site-resolver'

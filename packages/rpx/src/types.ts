@@ -354,6 +354,12 @@ export interface SharedProxyConfig {
    */
   onDemandTls?: OnDemandTlsConfig
   /**
+   * On-demand sites: lazily boot a project's dev server the first time its host
+   * is visited and proxy to it (Valet/puma-dev style). Read by the daemon when
+   * started with `--on-demand`. Opt-in — see {@link OnDemandSitesConfig}.
+   */
+  onDemand?: OnDemandSitesConfig
+  /**
    * Origin lockdown for "CDN in front of rpx" setups. When set, the shared
    * HTTPS handler rejects requests to the listed hosts that lack the CDN's
    * shared-secret header — so the publicly-resolvable origin can't be used to

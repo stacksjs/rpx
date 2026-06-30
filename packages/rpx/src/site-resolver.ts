@@ -18,7 +18,7 @@
  * matrix is unit-testable without a real filesystem.
  */
 import type { OnDemandSitesConfig, SiteConfig, SiteRouteTemplate } from './types'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { matchHost } from './host-match'
@@ -89,12 +89,14 @@ export interface SiteResolverDeps extends Partial<ResolverProbes> {
   detect?: SiteDetector
   /** `$HOME` for `~` expansion. Defaults to `os.homedir()`. */
   homeDir?: string
+  /** List the immediate subdirectory names of a root (for {@link listDiscoverableSites}). */
+  readdir?: (p: string) => string[]
 }
 
 const defaultProbes: ResolverProbes = {
   dirExists: (p) => {
     try {
-      return existsSync(p)
+      return statSync(p).isDirectory()
     }
     catch {
       return false
@@ -295,6 +297,57 @@ export function createSiteResolver(config: OnDemandSitesConfig, deps: SiteResolv
       return fromExplicit(host) ?? fromDiscovery(host)
     },
   }
+}
+
+/** Default `readdir`: immediate subdirectory names of `dir`, or `[]` on error. */
+function defaultReaddir(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name)
+  }
+  catch {
+    return []
+  }
+}
+
+/**
+ * Enumerate the sites rpx can currently boot — explicit non-wildcard
+ * {@link SiteConfig}s plus every project discovered by scanning the configured
+ * roots. Powers `rpx sites`. Each entry is a fully-resolved {@link ResolvedSite}
+ * (so the caller sees the dir, command, and host it would serve).
+ */
+export function listDiscoverableSites(config: OnDemandSitesConfig, deps: SiteResolverDeps = {}): ResolvedSite[] {
+  const home = deps.homeDir ?? homedir()
+  const tlds = config.tlds ?? DEFAULT_TLDS
+  const roots = (config.roots ?? DEFAULT_ROOTS).map(r => expandHome(r, home))
+  const readdir = deps.readdir ?? defaultReaddir
+  const resolver = createSiteResolver(config, deps)
+
+  const out: ResolvedSite[] = []
+  const seen = new Set<string>()
+  const add = (site: ResolvedSite | null) => {
+    if (site && !seen.has(site.host)) {
+      seen.add(site.host)
+      out.push(site)
+    }
+  }
+
+  // Explicit, concrete (non-wildcard) sites — wildcards can't be enumerated.
+  for (const site of config.sites ?? []) {
+    if (!site.to.includes('*'))
+      add(resolver.resolve(site.to))
+  }
+
+  // Convention discovery: every project directory under each root, mapped to
+  // `<name>.<primary-tld>`.
+  const primaryTld = tlds[0] ?? 'localhost'
+  for (const root of roots) {
+    for (const name of readdir(root))
+      add(resolver.resolve(`${name}.${primaryTld}`))
+  }
+
+  return out
 }
 
 /** Set each `urlEnv` var (if not already present) to the site URL. */
