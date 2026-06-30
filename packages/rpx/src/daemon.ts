@@ -241,9 +241,12 @@ function pickPrimaryRegistryHost(hosts: string[]): string {
   return appHost ?? hosts[0] ?? 'rpx.localhost'
 }
 
-async function bootstrapTls(opts: DaemonOptions, registryDir: string): Promise<SSLConfig> {
+async function bootstrapTls(opts: DaemonOptions, registryDir: string, extraHosts: string[] = []): Promise<SSLConfig> {
   const entries = await readAll(registryDir, opts.verbose)
-  const registryHosts = [...new Set(entries.map(e => e.to).filter(Boolean))]
+  // `extraHosts` covers on-demand sites that are booting but haven't published a
+  // registry route yet — so their "starting…" splash is served with a cert that
+  // already names them (no browser warning before the app even loads).
+  const registryHosts = [...new Set([...entries.map(e => e.to).filter(Boolean), ...extraHosts])]
   const primary = pickPrimaryRegistryHost(registryHosts)
   const hostnames = [...new Set([primary, ...registryHosts, 'rpx.localhost'])]
 
@@ -509,6 +512,9 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   // On-demand sites (opt-in): when a request finds no live route, resolve the
   // host to a project, boot its dev server, and hold the request behind a
   // "starting…" splash until the freshly-published route goes live.
+  // Hosts whose on-demand site is booting (but hasn't published a route yet) —
+  // included in the dev cert SAN so their splash has a valid certificate.
+  const onDemandCertHosts = new Set<string>()
   let supervisor: SiteSupervisor | null = null
   let onNoRoute: OnNoRoute | undefined
   if (opts.onDemandSites?.enabled) {
@@ -521,6 +527,8 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       // The routing table is rebuilt in place on every registry change; the
       // closure reads the current value so "is this host live yet?" stays fresh.
       isHostRoutable: host => matchHostList(routingTable, host) !== undefined,
+      // Cover a booting host in the dev cert before its route exists.
+      onSiteActivating: host => { void ensureHostInDevCert(host) },
     })
     onNoRoute = async (host) => {
       const status = await supervisor!.onRequest(host)
@@ -604,7 +612,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const devTlsEntries = (entries: RegistryEntry[]) => {
     if (!devSslConfig)
       return sniTls
-    return devSslToSniEntries([...registryHostsForTls(entries), 'rpx.localhost'], devSslConfig)
+    return devSslToSniEntries([...registryHostsForTls(entries), ...onDemandCertHosts, 'rpx.localhost'], devSslConfig)
   }
 
   let httpsServer = serveHttps(
@@ -689,12 +697,34 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     if (stopped || sniTls.length > 0 || onDemand || !devSslConfig)
       return
     try {
-      const refreshed = await bootstrapTls(opts, registryDir)
+      const refreshed = await bootstrapTls(opts, registryDir, [...onDemandCertHosts])
       devSslConfig = refreshed
       await rebuildTls(devTlsEntries(entries))
     }
     catch (err) {
       debugLog('daemon', `TLS sync on registry change failed: ${err}`, verbose)
+    }
+  }
+
+  /**
+   * Ensure the dev cert names `host` now — called when an on-demand site begins
+   * booting, so its "starting…" splash is served with a valid certificate before
+   * the site has published any route. No-op in real-SNI / on-demand-TLS modes, or
+   * when the host is already covered.
+   */
+  async function ensureHostInDevCert(host: string): Promise<void> {
+    if (stopped || sniTls.length > 0 || onDemand || !devSslConfig || !host)
+      return
+    if (onDemandCertHosts.has(host))
+      return
+    onDemandCertHosts.add(host)
+    try {
+      devSslConfig = await bootstrapTls(opts, registryDir, [...onDemandCertHosts])
+      const entries = await readAll(registryDir, verbose)
+      await rebuildTls(devTlsEntries(entries))
+    }
+    catch (err) {
+      debugLog('daemon', `dev cert refresh for ${host} failed: ${err}`, verbose)
     }
   }
 

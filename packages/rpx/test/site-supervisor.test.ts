@@ -74,6 +74,7 @@ describe('SiteSupervisor', () => {
   it('boots a site on first request and reports starting', async () => {
     await mkdir()
     const launched: string[] = []
+    const activating: string[] = []
     const proc = fakeProc(4242)
     const launcher: SiteLauncher = (spec) => {
       launched.push(spec.command)
@@ -88,6 +89,7 @@ describe('SiteSupervisor', () => {
       pickPort: async preferred => preferred,
       probePort: async () => portReady,
       isHostRoutable: () => false,
+      onSiteActivating: host => activating.push(host),
       pollIntervalMs: 5,
     })
     supervisors.push(sup)
@@ -95,6 +97,8 @@ describe('SiteSupervisor', () => {
     const first = await sup.onRequest('myapp.localhost')
     expect(first.kind).toBe('starting')
     expect(launched).toEqual(['./buddy dev'])
+    // The cert pre-warm hook fired with the booting host.
+    expect(activating).toEqual(['myapp.localhost'])
 
     // A second request while booting doesn't relaunch.
     const second = await sup.onRequest('myapp.localhost')

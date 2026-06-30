@@ -100,6 +100,12 @@ export interface SiteSupervisorOptions {
   pickPort?: (preferred: number) => Promise<number>
   /** True when the daemon's routing table already covers `host`. */
   isHostRoutable?: (host: string) => boolean
+  /**
+   * Called when a site begins booting, before its route exists — lets the daemon
+   * add the host to the dev cert SAN so even the "starting…" splash is served with
+   * a valid certificate (no browser warning before the app loads).
+   */
+  onSiteActivating?: (host: string) => void
   now?: () => number
   writeEntry?: (entry: RegistryEntry, dir?: string, verbose?: boolean) => Promise<void>
   removeEntry?: (id: string, dir?: string, verbose?: boolean) => Promise<void>
@@ -140,6 +146,7 @@ export class SiteSupervisor {
   private readonly probePort: (port: number) => Promise<boolean>
   private readonly pickPort: (preferred: number) => Promise<number>
   private readonly isHostRoutable: (host: string) => boolean
+  private readonly onSiteActivating?: (host: string) => void
   private readonly now: () => number
   private readonly writeEntry: (entry: RegistryEntry, dir?: string, verbose?: boolean) => Promise<void>
   private readonly removeEntry: (id: string, dir?: string, verbose?: boolean) => Promise<void>
@@ -161,6 +168,7 @@ export class SiteSupervisor {
     this.probePort = opts.probePort ?? defaultReadinessProbe
     this.pickPort = opts.pickPort ?? (preferred => findAvailablePort(preferred, '127.0.0.1'))
     this.isHostRoutable = opts.isHostRoutable ?? (() => false)
+    this.onSiteActivating = opts.onSiteActivating
     this.now = opts.now ?? Date.now
     this.writeEntry = opts.writeEntry ?? defaultWriteEntry
     this.removeEntry = opts.removeEntry ?? defaultRemoveEntry
@@ -208,6 +216,13 @@ export class SiteSupervisor {
 
   /** Boot a site: pick ports, spawn the command, and kick off the readiness loop. */
   private async start(site: ResolvedSite): Promise<SiteState> {
+    // Tell the daemon to cover this host in the dev cert now, so the splash that's
+    // about to be served already has a matching certificate.
+    try {
+      this.onSiteActivating?.(site.host)
+    }
+    catch { /* best-effort cert pre-warm */ }
+
     const ports = new Map<string, number>()
     if (!site.selfRegisters) {
       // Distinct free port per env name; routes that share an env share a port.
