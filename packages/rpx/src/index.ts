@@ -156,12 +156,14 @@ export {
   expandHome,
   listDiscoverableSites,
   projectNameFromHost,
+  readSiteManifest,
   siteIdForHost,
 } from './site-resolver'
 export type {
   ResolvedSite,
   ResolverProbes,
   SiteDetector,
+  SiteManifest,
   SitePreset,
   SiteResolver,
   SiteResolverDeps,

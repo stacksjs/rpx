@@ -89,6 +89,40 @@ describe('detectProjectPreset', () => {
     expect(detectProjectPreset('/p', fakeProbes())).toBeNull()
     expect(detectProjectPreset('/p', fakeProbes({ files: { '/p/package.json': '{"name":"x"}' } }))).toBeNull()
   })
+
+  it('honors a rpx.site.json manifest over auto-detection', () => {
+    const probes = fakeProbes({
+      files: {
+        '/p/buddy': '', // would otherwise be detected as Stacks
+        '/p/rpx.site.json': JSON.stringify({
+          command: 'pnpm dev',
+          env: { FOO: 'bar' },
+          routes: [{ path: '/', portEnv: 'PORT', defaultPort: 5173 }],
+        }),
+      },
+    })
+    const preset = detectProjectPreset('/p', probes)
+    expect(preset?.command).toBe('pnpm dev')
+    expect(preset?.env).toEqual({ FOO: 'bar' })
+    expect(preset?.routes).toEqual([{ path: '/', portEnv: 'PORT', defaultPort: 5173 }])
+  })
+
+  it('honors a "rpx" key in package.json and makes a non-project bootable', () => {
+    const probes = fakeProbes({
+      files: {
+        '/p/package.json': JSON.stringify({ name: 'x', rpx: { command: 'make serve', selfRegisters: true } }),
+      },
+    })
+    const preset = detectProjectPreset('/p', probes)
+    expect(preset?.command).toBe('make serve')
+    expect(preset?.selfRegisters).toBe(true)
+    expect(preset?.routes).toBeUndefined()
+  })
+
+  it('defaults manifest routes to a single / backend when omitted', () => {
+    const probes = fakeProbes({ files: { '/p/rpx.site.json': JSON.stringify({ command: 'bun start' }) } })
+    expect(detectProjectPreset('/p', probes)?.routes).toEqual([{ path: '/', portEnv: 'PORT', defaultPort: 3000, readyGate: true }])
+  })
 })
 
 describe('createSiteResolver — discovery', () => {

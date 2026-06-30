@@ -77,6 +77,38 @@ export interface SitePreset {
 /** Detect a project kind from its directory. Returns `null` for "not a dev project". */
 export type SiteDetector = (dir: string, deps: ResolverProbes) => SitePreset | null
 
+/**
+ * A per-project override of how rpx boots a site — so the dev startup can be
+ * defined **manually** instead of relying on auto-detection. Read from a
+ * `rpx.site.json` file in the project, or a `"rpx"` key in its `package.json`.
+ * A manifest with a `command` fully defines the preset (and makes even a
+ * directory that isn't otherwise a recognized project bootable).
+ *
+ * ```jsonc
+ * // rpx.site.json
+ * {
+ *   "command": "pnpm dev",
+ *   "env": { "NODE_ENV": "development" },
+ *   "routes": [
+ *     { "path": "/", "portEnv": "PORT", "defaultPort": 5173, "readyGate": true },
+ *     { "path": "/api", "portEnv": "API_PORT", "defaultPort": 4000 }
+ *   ]
+ * }
+ * ```
+ */
+export interface SiteManifest {
+  /** Dev command to spawn. When present, the manifest defines the whole preset. */
+  command?: string
+  /** Static env for the command. */
+  env?: Record<string, string>
+  /** Backends rpx manages (port injection + routing). */
+  routes?: SiteRouteTemplate[]
+  /** The command registers its own rpx routes; rpx only boots + reaps it. */
+  selfRegisters?: boolean
+  /** Env var names to set to the site URL (`https://<host>`). */
+  urlEnv?: string[]
+}
+
 /** Filesystem probes the resolver and detector use — injected for tests. */
 export interface ResolverProbes {
   dirExists: (p: string) => boolean
@@ -159,8 +191,55 @@ export function projectNameFromHost(host: string, tlds: string[]): string | null
 }
 
 /**
+ * Read a per-project {@link SiteManifest} so users can define the dev startup
+ * manually. Checked sources, in order: a `rpx.site.json` file in the project,
+ * then a `"rpx"` key in its `package.json`. Returns `null` when neither exists
+ * (or both are malformed).
+ */
+export function readSiteManifest(dir: string, deps: ResolverProbes): SiteManifest | null {
+  const fileRaw = deps.readText(join(dir, 'rpx.site.json'))
+  if (fileRaw) {
+    try {
+      const parsed = JSON.parse(fileRaw)
+      if (parsed && typeof parsed === 'object')
+        return parsed as SiteManifest
+    }
+    catch {
+      // fall through to the package.json key
+    }
+  }
+  const pkgRaw = deps.readText(join(dir, 'package.json'))
+  if (pkgRaw) {
+    try {
+      const pkg = JSON.parse(pkgRaw) as { rpx?: SiteManifest }
+      if (pkg.rpx && typeof pkg.rpx === 'object')
+        return pkg.rpx
+    }
+    catch {
+      // malformed package.json — treated as no manifest
+    }
+  }
+  return null
+}
+
+/** Build a {@link SitePreset} from a manifest that defines a `command`. */
+function presetFromManifest(manifest: SiteManifest): SitePreset {
+  const selfRegisters = manifest.selfRegisters ?? false
+  return {
+    command: manifest.command!,
+    env: manifest.env,
+    urlEnv: manifest.urlEnv,
+    selfRegisters,
+    routes: manifest.routes ?? (selfRegisters ? undefined : [{ path: '/', portEnv: 'PORT', defaultPort: 3000, readyGate: true }]),
+  }
+}
+
+/**
  * Default detector: classify a project directory.
  *
+ * - **Manual** — a {@link SiteManifest} (`rpx.site.json` or a `"rpx"` package.json
+ *   key) with a `command` wins over everything, so the dev startup can be defined
+ *   by hand (and an otherwise-unrecognized directory becomes bootable).
  * - **Stacks** — a `./buddy` launcher, or a `@stacksjs/*` dependency in
  *   `package.json`. Boots frontend (`/`), API (`/api`) and docs (`/docs`) with
  *   the conventional `PORT`/`PORT_API`/`PORT_DOCS` env, deferring proxy + TLS to
@@ -170,6 +249,11 @@ export function projectNameFromHost(host: string, tlds: string[]): string | null
  * - Otherwise `null`.
  */
 export function detectProjectPreset(dir: string, deps: ResolverProbes): SitePreset | null {
+  // A hand-written manifest takes precedence over auto-detection.
+  const manifest = readSiteManifest(dir, deps)
+  if (manifest?.command)
+    return presetFromManifest(manifest)
+
   const hasBuddy = deps.fileExists(join(dir, 'buddy'))
   const pkgRaw = deps.readText(join(dir, 'package.json'))
   let pkg: { scripts?: Record<string, string>, dependencies?: Record<string, string>, devDependencies?: Record<string, string> } | null = null
