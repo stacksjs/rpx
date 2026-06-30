@@ -1,5 +1,42 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.20...v0.11.21)
+
+## 🚀 Features
+
+- serve ACME http-01 challenges from the :80 redirect server ([530b011](https://github.com/stacksjs/rpx/commit/530b011)) _(by Chris <chrisbreuer93@gmail.com>)_
+- add redirect route type to the gateway ([6969a73](https://github.com/stacksjs/rpx/commit/6969a73)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cli**: rpx logs <host> to view an on-demand site's boot log ([b784885](https://github.com/stacksjs/rpx/commit/b784885)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **daemon**: forward RPX_/STACKS_RPX_ env through sudo elevation ([58af641](https://github.com/stacksjs/rpx/commit/58af641)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: show live boot log on the starting splash ([1f9dc36](https://github.com/stacksjs/rpx/commit/1f9dc36)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: serve the splash with a valid cert for booting hosts ([17a5fce](https://github.com/stacksjs/rpx/commit/17a5fce)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: per-project manifest to define the dev startup manually ([274133c](https://github.com/stacksjs/rpx/commit/274133c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cli**: rpx daemon:start --on-demand and rpx sites ([c8c10fb](https://github.com/stacksjs/rpx/commit/c8c10fb)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: wire on-demand sites into the daemon ([03ece76](https://github.com/stacksjs/rpx/commit/03ece76)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: add the on-demand site supervisor ([d4aa5bf](https://github.com/stacksjs/rpx/commit/d4aa5bf)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: resolve hosts to on-demand sites ([af2ed2e](https://github.com/stacksjs/rpx/commit/af2ed2e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: add on-demand site config types ([d2d0dec](https://github.com/stacksjs/rpx/commit/d2d0dec)) _(by Chris <chrisbreuer93@gmail.com>)_
+- HTTP Basic auth for proxy and static routes ([77af8b7](https://github.com/stacksjs/rpx/commit/77af8b7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- read ACME http-01 token from the flat webroot path ([2bb9f87](https://github.com/stacksjs/rpx/commit/2bb9f87)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: force explicit SAN for on-demand hosts in the dev cert ([2b8850b](https://github.com/stacksjs/rpx/commit/2b8850b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: HTTP-aware readiness probe and crash recovery ([6528071](https://github.com/stacksjs/rpx/commit/6528071)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- **sites**: manifest, Stacks default-on, readiness/cert/logs notes ([0c1e3f1](https://github.com/stacksjs/rpx/commit/0c1e3f1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sites**: document on-demand dev servers ([bc66d5e](https://github.com/stacksjs/rpx/commit/bc66d5e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.21 ([a2a944d](https://github.com/stacksjs/rpx/commit/a2a944d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.19...v0.11.20)
 
 ## 🚀 Features
