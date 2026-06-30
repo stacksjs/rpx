@@ -433,10 +433,15 @@ export default { onDemand }
 rpx picks a free port per backend, injects it into the command's env
 (`PORT`/`PORT_API`/`PORT_DOCS`), waits for the ready-gate ports to answer, then
 publishes the routes. Failed boots render a `502` with the site's log tail; a
-browser refresh retries. On-demand sites are opt-in (`--on-demand`) and run on
-the single-process daemon only (ignored with `--workers > 1`). See
-[the on-demand sites guide](./docs/features/on-demand-sites.md) for the full
-configuration reference.
+browser refresh retries. A booting host is added to the dev cert's SAN before
+its splash is served, so it's trusted HTTPS from the first hit. On-demand sites
+are opt-in for raw rpx (`--on-demand`) and run on the single-process daemon only
+(ignored with `--workers > 1`) — but **on by default in Stacks projects**.
+
+Define a project's startup by hand with a `rpx.site.json` (or a `"rpx"` key in
+its `package.json`) — `command`, `env`, and `routes` — which wins over
+auto-detection. See [the on-demand sites guide](./docs/features/on-demand-sites.md)
+for the full reference.
 
 ### Running on a real server (hosts management off + systemd)
 
