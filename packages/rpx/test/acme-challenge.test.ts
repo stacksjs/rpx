@@ -15,11 +15,9 @@ async function withWebroot(fn: (webroot: string) => Promise<void> | void): Promi
 }
 
 describe('readAcmeChallenge', () => {
-  it('returns the token contents for a valid challenge request', async () => {
+  it('returns the token contents (flat <webroot>/<token>) for a valid challenge request', async () => {
     await withWebroot(async (webroot) => {
-      const dir = path.join(webroot, '.well-known', 'acme-challenge')
-      await fsp.mkdir(dir, { recursive: true })
-      await fsp.writeFile(path.join(dir, 'tok3n_AB-cd'), 'tok3n_AB-cd.keyauth')
+      await fsp.writeFile(path.join(webroot, 'tok3n_AB-cd'), 'tok3n_AB-cd.keyauth')
       expect(readAcmeChallenge(webroot, '/.well-known/acme-challenge/tok3n_AB-cd')).toBe('tok3n_AB-cd.keyauth')
     })
   })
