@@ -341,6 +341,15 @@ export interface SharedProxyConfig {
    */
   httpsPort?: number
   /**
+   * Directory the `:80` redirect server serves ACME http-01 challenge tokens
+   * from (under `<webroot>/.well-known/acme-challenge/`) before redirecting
+   * everything else to HTTPS. Set this on a real gateway so certs can be
+   * issued/renewed via http-01 without taking the gateway down to free `:80`
+   * (e.g. a `tlsx acme:renew --webroot <dir>` cron). Omit to disable (every
+   * `:80` request is redirected). Only an exact challenge path is served.
+   */
+  acmeChallengeWebroot?: string
+  /**
    * Route this proxy through the long-running rpx daemon instead of binding
    * its own :443. Lets multiple `rpx start` invocations coexist on shared
    * `:443` (Valet-style). Default: `false` for backward compatibility.

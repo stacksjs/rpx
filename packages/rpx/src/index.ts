@@ -119,6 +119,7 @@ export { createProxyFetchHandler, createProxyWebSocketHandler, stripBasePath } f
 export type { GetRoute, NoRouteOutcome, OnNoRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
 export { buildRedirectLocation, resolveRedirect } from './redirect'
 export type { RedirectRouteConfig, ResolvedRedirect } from './redirect'
+export { ACME_CHALLENGE_PREFIX, readAcmeChallenge } from './acme-challenge'
 
 export { isWildcardPattern, matchesWildcard, matchHost } from './host-match'
 

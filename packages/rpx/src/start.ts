@@ -21,6 +21,7 @@ import { createOriginGuard } from './origin-guard'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
 import { resolveRedirect } from './redirect'
+import { readAcmeChallenge } from './acme-challenge'
 import { resolveAuth } from './auth'
 import type { ResolvedAuth } from './auth'
 import { isWildcardPattern } from './host-match'
@@ -609,11 +610,24 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   }
 }
 
-export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsPort = 443): void {
+export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsPort = 443, acmeChallengeWebroot?: string): void {
   debugLog('redirect', `Starting HTTP redirect server on port ${httpPort}`, verbose)
 
   const server = http
     .createServer((req, res) => {
+      // Serve ACME http-01 challenge tokens (when a webroot is configured) so
+      // certs can be issued/renewed without taking the gateway down to free :80.
+      if (acmeChallengeWebroot && req.url) {
+        const pathname = req.url.split('?', 1)[0]
+        const keyAuth = readAcmeChallenge(acmeChallengeWebroot, pathname)
+        if (keyAuth != null) {
+          debugLog('redirect', `Serving ACME challenge ${pathname}`, verbose)
+          res.writeHead(200, { 'content-type': 'text/plain' })
+          res.end(keyAuth)
+          return
+        }
+      }
+
       const rawHost = req.headers.host || ''
       // Strip any incoming port so we can append the HTTPS port when it's
       // non-standard (e.g. redirecting `:80` → `:8443` in a custom-port setup).
@@ -1082,7 +1096,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     // Start HTTP→HTTPS redirect on the configured HTTP port if it's free.
     const isHttpPortBusy = await isPortInUse(httpPort, '0.0.0.0', verbose)
     if (!isHttpPortBusy) {
-      startHttpRedirectServer(verbose, httpPort, httpsPort)
+      startHttpRedirectServer(verbose, httpPort, httpsPort, mergedOptions.acmeChallengeWebroot)
     }
 
     const isPortBusy = await isPortInUse(httpsPort, '0.0.0.0', verbose)
