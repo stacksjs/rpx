@@ -16,6 +16,7 @@
 - ♾️ Custom Domains _(with wildcard host routing)_
 - 0️⃣ Zero-Config Setup
 - 🔒 SSL Support _(HTTPS by default; per-domain SNI certs in production)_
+- 🚀 On-Demand Sites _(boot a project's dev server on first visit, Valet-style)_
 - 🔌 WebSocket Proxying _(transparent `Upgrade` pass-through)_
 - 📁 Static File Serving _(SPA / clean-URL / flat & directory SSG styles)_
 - 🛣️ Auto HTTP-to-HTTPS Redirection
@@ -388,6 +389,55 @@ registers it).
 On-demand TLS is fully opt-in (`onDemandTls.enabled`); existing deployments are
 unaffected.
 
+### On-demand sites (lazy dev servers, Valet-style)
+
+Stop running dev servers by hand. rpx can boot a project's dev server the **first
+time you open its URL** — visit `myapp.localhost` and rpx finds `~/Code/myapp`,
+runs its dev command (frontend + API + docs), shows a "starting…" page that
+reloads itself, and switches to the live app the moment it's ready. After the
+site goes idle it's stopped again, so a machine can "have" dozens of sites but
+only run the ones you're using.
+
+```sh
+# Start the daemon once in on-demand mode (reads `onDemand` from rpx.config.ts)
+# then just open https://<project>.localhost in the browser
+rpx daemon:start --on-demand
+
+# See everything rpx can boot (and what's currently live)
+rpx sites
+```
+
+A host resolves to a project two ways: an explicit `onDemand.sites` entry (exact
+host, then `_.suffix` wildcard), or by convention — `<name>.<tld>` →
+`<root>/<name>` for each root (default `~/Code`) and dev TLD (`localhost`,
+`test`). A Stacks app (a `./buddy` launcher or `@stacksjs/_` dependency) boots
+frontend/`/api`/`/docs`; any project with a `dev` script boots `bun run dev`.
+
+```ts
+// rpx.config.ts
+import type { OnDemandSitesConfig } from '@stacksjs/rpx'
+
+const onDemand: OnDemandSitesConfig = {
+  enabled: true,
+  roots: ['~/Code', '~/work'],     // where to look for <name>.localhost projects
+  idleTimeoutMs: 30 _ 60_000,      // stop a site after 30 min idle
+  sites: [
+    // Explicit site for a project outside the roots / with a custom command.
+    { to: 'api.localhost', dir: '~/services/api', command: 'bun run start', routes: [{ path: '/', portEnv: 'PORT', defaultPort: 4000 }] },
+  ],
+}
+
+export default { onDemand }
+```
+
+rpx picks a free port per backend, injects it into the command's env
+(`PORT`/`PORT_API`/`PORT_DOCS`), waits for the ready-gate ports to answer, then
+publishes the routes. Failed boots render a `502` with the site's log tail; a
+browser refresh retries. On-demand sites are opt-in (`--on-demand`) and run on
+the single-process daemon only (ignored with `--workers > 1`). See
+[the on-demand sites guide](./docs/features/on-demand-sites.md) for the full
+configuration reference.
+
 ### Running on a real server (hosts management off + systemd)
 
 On a real server with real DNS, rpx should never touch `/etc/hosts` or set up
@@ -396,7 +446,7 @@ local DNS resolvers. Disable all hosts management with `hostsManagement: false`
 
 ```ts
 const config: ProxyOptions = {
-  proxies: [/_ ... */],
+  proxies: [/_ ... _/],
   https: true,
   hostsManagement: false, // no /etc/hosts reads/writes, no dev DNS
 }
