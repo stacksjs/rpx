@@ -536,7 +536,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
         case 'ready':
           return { retry: true }
         case 'starting':
-          return renderStartingPage({ host: status.host, sinceMs: status.sinceMs })
+          return renderStartingPage({ host: status.host, sinceMs: status.sinceMs, logTail: status.logTail })
         case 'failed':
           return renderFailedPage({ host: status.host, error: status.error, logTail: status.logTail })
         case 'unknown':

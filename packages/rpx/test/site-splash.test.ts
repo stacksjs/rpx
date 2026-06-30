@@ -23,6 +23,12 @@ describe('renderStartingPage', () => {
     expect(html).toContain('&lt;evil&gt;.localhost')
     expect(html).not.toContain('<evil>')
   })
+
+  it('renders the boot log tail when provided', async () => {
+    const html = await renderStartingPage({ host: 'x.localhost', sinceMs: 1000, logTail: 'compiling…\nlistening on 3000' }).text()
+    expect(html).toContain('<pre>')
+    expect(html).toContain('listening on 3000')
+  })
 })
 
 describe('renderFailedPage', () => {

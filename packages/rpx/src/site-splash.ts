@@ -60,15 +60,18 @@ ${refresh}
 
 /**
  * The "starting…" splash (HTTP 503 + `Retry-After`). Auto-refreshes until the
- * site's routes go live, at which point the refresh hits the real app.
+ * site's routes go live, at which point the refresh hits the real app. Shows the
+ * tail of the boot log so progress is visible while waiting.
  */
-export function renderStartingPage(opts: { host: string, sinceMs: number }): Response {
+export function renderStartingPage(opts: { host: string, sinceMs: number, logTail?: string }): Response {
   const seconds = Math.max(1, Math.round(opts.sinceMs / 1000))
+  const logBlock = opts.logTail ? `<pre>${escapeHtml(opts.logTail)}</pre>` : ''
   const body = `
     <div class="row"><div class="spinner"></div><h1>Starting ${escapeHtml(opts.host)}…</h1></div>
     <p>rpx is booting this site's dev server on demand. This page reloads itself —
     it'll switch to the app as soon as it's ready (usually a few seconds).</p>
-    <p>Booting for ${seconds}s.</p>`
+    <p>Booting for ${seconds}s.</p>
+    ${logBlock}`
   return new Response(page(`Starting ${opts.host}`, body, 2), {
     status: 503,
     headers: {

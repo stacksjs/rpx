@@ -59,7 +59,7 @@ export type SiteLauncher = (spec: {
 
 export type SiteRequestStatus =
   | { kind: 'unknown' }
-  | { kind: 'starting', host: string, sinceMs: number, source: 'config' | 'discovered' }
+  | { kind: 'starting', host: string, sinceMs: number, source: 'config' | 'discovered', logTail: string }
   | { kind: 'ready', host: string }
   | { kind: 'failed', host: string, error: string, logTail: string }
 
@@ -211,7 +211,7 @@ export class SiteSupervisor {
       return { kind: 'ready', host }
     if (state.status === 'failed')
       return { kind: 'failed', host, error: state.error ?? 'failed to start', logTail: this.readLogTail(state) }
-    return { kind: 'starting', host, sinceMs: this.now() - state.startedAt, source: state.site.source }
+    return { kind: 'starting', host, sinceMs: this.now() - state.startedAt, source: state.site.source, logTail: this.readLogTail(state, 16) }
   }
 
   /** Boot a site: pick ports, spawn the command, and kick off the readiness loop. */
