@@ -16,8 +16,8 @@
  * paths are reachable without touching `~/.stacks/rpx` or :443.
  */
 /* eslint-disable no-console */
-import type { OnDemandTlsConfig, ProductionTlsConfig, ProxyOptions, SSLConfig, TlsOption } from './types'
-import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
+import type { OnDemandSitesConfig, OnDemandTlsConfig, ProductionTlsConfig, ProxyOptions, SSLConfig, TlsOption } from './types'
+import type { OnNoRoute, ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
 import { spawn as nodeSpawn } from 'node:child_process'
 import * as fsp from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -34,10 +34,14 @@ import {
   SHARED_DEV_HOST_CERT_PATH,
 } from './https'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
-import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
+import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
 import { buildSniTlsConfig } from './sni'
 import { OnDemandCertManager } from './on-demand'
+import { createSiteResolver } from './site-resolver'
+import { SiteSupervisor } from './site-supervisor'
+import type { SiteSnapshot } from './site-supervisor'
+import { renderFailedPage, renderStartingPage } from './site-splash'
 import { resolveStaticRoute } from './static-files'
 import { resolveAuth } from './auth'
 import { gcStaleEntries, getRegistryDir, isPidAlive, readAll, watchRegistry } from './registry'
@@ -75,6 +79,12 @@ export interface DaemonOptions {
    * Seeded with the `productionCerts`/`certsDir` certs already on disk.
    */
   onDemandTls?: OnDemandTlsConfig
+  /**
+   * On-demand sites: lazily boot a project's dev server the first time its host
+   * is visited and proxy to it (Valet/puma-dev style). Opt-in via `enabled`.
+   * Only honored by the single-process daemon (ignored when `workers > 1`).
+   */
+  onDemandSites?: OnDemandSitesConfig
   /** PID-GC interval in ms. Defaults to 5000. */
   gcIntervalMs?: number
   /**
@@ -103,6 +113,11 @@ export interface DaemonHandle {
    * tunnel server warm a subdomain's cert at registration time.
    */
   ensureCert: (host: string) => Promise<boolean>
+  /**
+   * Snapshot of the on-demand sites this daemon is supervising (empty when
+   * on-demand sites are disabled, or for the cluster coordinator / workers).
+   */
+  listSites: () => SiteSnapshot[]
 }
 
 const DEFAULT_GC_INTERVAL_MS = 5000
@@ -323,6 +338,8 @@ async function elevateDaemonToRoot(
         // On-demand issuance runs inside the elevated child's own runDaemon
         // handle; this caller-side stub can't reach it directly.
         ensureCert: () => Promise.resolve(false),
+        // The supervisor lives in the elevated child too; not reachable here.
+        listSites: () => [],
       }
     }
     // sudo exits fast when auth fails; while the daemon runs it stays alive.
@@ -440,8 +457,11 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
 
   // Cluster coordinator: owns the singletons and spawns N workers that bind :443.
   const workers = Math.max(1, opts.workers ?? (Number.parseInt(process.env.RPX_WORKERS ?? '', 10) || 1))
-  if (workers > 1)
+  if (workers > 1) {
+    if (opts.onDemandSites?.enabled)
+      log.warn('rpx: on-demand sites are not supported in cluster mode (workers > 1); ignoring')
     return runDaemonCoordinator(opts, { rpxDir, registryDir, httpsPort, httpPort, hostname, verbose, gcIntervalMs, workers })
+  }
 
   const pidPath = await acquireDaemonLock(rpxDir)
 
@@ -486,7 +506,41 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       log.info(`SNI: serving ${sniTls.length} real cert(s): ${sniTls.map(e => e.serverName).join(', ')}`)
   }
 
-  const fetchHandler = createProxyFetchHandler(getRoute, verbose)
+  // On-demand sites (opt-in): when a request finds no live route, resolve the
+  // host to a project, boot its dev server, and hold the request behind a
+  // "starting…" splash until the freshly-published route goes live.
+  let supervisor: SiteSupervisor | null = null
+  let onNoRoute: OnNoRoute | undefined
+  if (opts.onDemandSites?.enabled) {
+    supervisor = new SiteSupervisor({
+      resolver: createSiteResolver(opts.onDemandSites),
+      registryDir,
+      rpxDir,
+      verbose,
+      startupTimeoutMs: opts.onDemandSites.startupTimeoutMs,
+      // The routing table is rebuilt in place on every registry change; the
+      // closure reads the current value so "is this host live yet?" stays fresh.
+      isHostRoutable: host => matchHostList(routingTable, host) !== undefined,
+    })
+    onNoRoute = async (host) => {
+      const status = await supervisor!.onRequest(host)
+      switch (status.kind) {
+        case 'ready':
+          return { retry: true }
+        case 'starting':
+          return renderStartingPage({ host: status.host, sinceMs: status.sinceMs })
+        case 'failed':
+          return renderFailedPage({ host: status.host, error: status.error, logTail: status.logTail })
+        case 'unknown':
+        default:
+          return undefined
+      }
+    }
+    if (verbose)
+      log.info('rpx: on-demand sites enabled')
+  }
+
+  const fetchHandler = createProxyFetchHandler(getRoute, verbose, onNoRoute)
   const wsHandler = createProxyWebSocketHandler(verbose)
 
   // Bootstrap the dev shared cert once when there's no real SNI set, so a single
@@ -679,6 +733,11 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     stopped = true
     clearInterval(gcInterval)
     watcher.close()
+    // Stop any on-demand sites we booted (and deregister their routes) before
+    // tearing the listeners down.
+    await supervisor?.stopAll().catch((err) => {
+      debugLog('daemon', `site supervisor stopAll failed: ${err}`, verbose)
+    })
     // `stop(false)` lets in-flight requests drain before closing the listener.
     httpsServer.stop(false)
     httpServer?.stop(false)
@@ -706,6 +765,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     httpPort: httpServer && typeof httpServer.port === 'number' ? httpServer.port : httpPort,
     pidPath,
     ensureCert: (host: string) => (onDemand ? onDemand.ensureCert(host) : Promise.resolve(false)),
+    listSites: () => supervisor?.list() ?? [],
   }
 }
 
@@ -874,6 +934,7 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
     httpPort: 0,
     pidPath: '',
     ensureCert: () => Promise.resolve(false),
+    listSites: () => [],
   }
 }
 
@@ -1067,6 +1128,7 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
     httpPort,
     pidPath,
     ensureCert: (host: string) => (onDemand ? onDemand.ensureCert(host) : Promise.resolve(false)),
+    listSites: () => [],
   }
 }
 

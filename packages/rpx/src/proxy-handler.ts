@@ -72,6 +72,21 @@ export interface ProxyRoute {
  */
 export type GetRoute = (hostname: string, pathname: string) => ProxyRoute | undefined
 
+/**
+ * Outcome of the no-route fallback ({@link OnNoRoute}):
+ *   - a `Response` — serve it as-is (e.g. a "starting…" splash);
+ *   - `{ retry: true }` — a route was just published, so re-resolve and proxy;
+ *   - `undefined` — no fallback applies, fall through to 404.
+ */
+export type NoRouteOutcome = Response | { retry: true } | undefined
+
+/**
+ * Called when `getRoute` finds nothing for a request. Lets the daemon lazily
+ * boot an on-demand site (see {@link import('./site-supervisor').SiteSupervisor})
+ * and either hold the request behind a splash or signal that the route is now live.
+ */
+export type OnNoRoute = (hostname: string, pathname: string, req: Request) => Promise<NoRouteOutcome>
+
 export type ProxyFetchHandler = (req: Request, server?: ProxyServer) => Promise<Response | undefined>
 
 /** Minimal shape of the Bun server needed for WebSocket upgrades. */
@@ -182,12 +197,22 @@ function splitPathQuery(rawUrl: string): { pathname: string, search: string } {
  * is upgraded (returns `undefined` so Bun completes the handshake) and the
  * traffic is handled by the `websocket` handler from {@link createProxyWebSocketHandler}.
  */
-export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean): ProxyFetchHandler {
+export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, onNoRoute?: OnNoRoute): ProxyFetchHandler {
   const inner = async (req: Request, server?: ProxyServer): Promise<Response | undefined> => {
     const { pathname, search } = splitPathQuery(req.url)
     const hostname = extractHostname(req)
 
-    const route = getRoute(hostname, pathname)
+    let route = getRoute(hostname, pathname)
+    if (!route && onNoRoute) {
+      // No live route — give the daemon a chance to boot an on-demand site. It
+      // either serves a splash/error page directly, or signals `retry` once the
+      // freshly-published route is in the table so we proxy this same request.
+      const outcome = await onNoRoute(hostname, pathname, req)
+      if (outcome instanceof Response)
+        return outcome
+      if (outcome && outcome.retry)
+        route = getRoute(hostname, pathname)
+    }
     if (!route) {
       debugLog('request', `No route found for host: ${hostname}`, verbose)
       return new Response(`No proxy configured for ${hostname}`, { status: 404 })

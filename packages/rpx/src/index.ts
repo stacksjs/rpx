@@ -116,7 +116,7 @@ export type {
 } from './daemon'
 
 export { createProxyFetchHandler, createProxyWebSocketHandler, stripBasePath } from './proxy-handler'
-export type { GetRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
+export type { GetRoute, NoRouteOutcome, OnNoRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
 
 export { isWildcardPattern, matchesWildcard, matchHost } from './host-match'
 
@@ -174,6 +174,8 @@ export type {
   SiteSnapshot,
   SiteSupervisorOptions,
 } from './site-supervisor'
+
+export { escapeHtml, renderFailedPage, renderStartingPage } from './site-splash'
 
 export { deriveIdFromTarget, runViaDaemon } from './daemon-runner'
 export type { DaemonRunnerOptions, DaemonRunnerProxy } from './daemon-runner'
