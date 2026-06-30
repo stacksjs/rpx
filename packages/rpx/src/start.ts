@@ -20,6 +20,7 @@ import { ProcessManager } from './process-manager'
 import { createOriginGuard } from './origin-guard'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import type { ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
+import { resolveRedirect } from './redirect'
 import { resolveAuth } from './auth'
 import type { ResolvedAuth } from './auth'
 import { isWildcardPattern } from './host-match'
@@ -1171,8 +1172,19 @@ export async function collectRouteEntries(
 
     const auth = resolveAuth(option.auth)
 
+    // Redirect route: answer with a Location (e.g. an alternate domain → its
+    // canonical host). Takes precedence over proxy/static — no upstream needed.
+    if (option.redirect) {
+      const redirect = resolveRedirect(option.redirect)
+      routeEntries.push({
+        host: domain,
+        path: routePath,
+        route: { redirect, basePath, auth },
+      })
+      debugLog('proxies', `Route: ${domain}${routePath ?? ''} → redirect ${redirect.status} ${redirect.to}${auth ? ' (auth)' : ''}`, verbose)
+    }
     // Static-file route: serve a local directory instead of proxying.
-    if (option.static) {
+    else if (option.static) {
       routeEntries.push({
         host: domain,
         path: routePath,

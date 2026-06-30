@@ -1,5 +1,6 @@
 import type { TlsConfig, TlsOption } from '@stacksjs/tlsx'
 import type { OriginGuardOptions } from './origin-guard'
+import type { RedirectRouteConfig } from './redirect'
 
 export interface StartOptions {
   command: string
@@ -96,9 +97,19 @@ export interface BaseProxyConfig {
   /**
    * Serve a local directory for this route instead of proxying to `from`.
    * Provide an absolute directory path (shorthand) or a {@link StaticRouteConfig}.
-   * When set, `from` is optional; exactly one of `from`/`static` must be present.
+   * When set, `from` is optional; exactly one of `from`/`static`/`redirect` must
+   * be present.
    */
   static?: string | StaticRouteConfig
+  /**
+   * Answer this route with an HTTP redirect instead of proxying or serving
+   * files — point an alternate/parked domain at its canonical host (e.g.
+   * `very-good-adblock.org` → `https://verygoodadblock.org`). The request path +
+   * query are appended to the target by default so deep links survive. Provide a
+   * target URL string (permanent 301) or a {@link RedirectRouteConfig}. Mutually
+   * exclusive with `from`/`static`.
+   */
+  redirect?: string | RedirectRouteConfig
   /**
    * Stable id used when registering this proxy with the rpx daemon. Derived
    * from `to` if omitted. Must match `/^[a-zA-Z0-9._-]+$/` and be ≤128 chars.

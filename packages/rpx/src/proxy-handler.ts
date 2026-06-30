@@ -15,10 +15,12 @@
  */
 import type { ServerWebSocket } from 'bun'
 import type { ResolvedAuth } from './auth'
+import type { ResolvedRedirect } from './redirect'
 import type { ResolvedStaticRoute } from './static-files'
 import type { PathRewrite } from './types'
 import { enforceBasicAuth } from './auth'
 import { FALLBACK, POOL_BUSY, proxyViaPool, TIMEOUT } from './proxy-pool'
+import { buildRedirectLocation } from './redirect'
 import { serveStaticFile } from './static-files'
 import { debugLog, resolvePathRewrite } from './utils'
 
@@ -36,6 +38,8 @@ export interface ProxyRoute {
   pathRewrites?: PathRewrite[]
   /** When set, serve files from a local directory instead of proxying. */
   static?: ResolvedStaticRoute
+  /** When set, answer with an HTTP redirect (Location) instead of proxying/serving. */
+  redirect?: ResolvedRedirect
   /**
    * Path prefix this route is mounted under (e.g. `/docs`). Used together with
    * {@link stripBasePathPrefix} to map request paths to the target. `/` (the
@@ -226,6 +230,14 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
         debugLog('request', `401 challenge for ${hostname}${pathname}`, verbose)
         return challenge
       }
+    }
+
+    // Redirect route: answer with a `Location` instead of touching an upstream
+    // or disk. Enforced after the auth gate but before every transport.
+    if (route.redirect) {
+      const location = buildRedirectLocation(route.redirect, pathname, search)
+      debugLog('request', `${route.redirect.status} redirect ${hostname}${pathname} → ${location}`, verbose)
+      return new Response(null, { status: route.redirect.status, headers: { location } })
     }
 
     // Static file serving short-circuits everything else. Strip the route's

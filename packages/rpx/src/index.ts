@@ -117,6 +117,8 @@ export type {
 
 export { createProxyFetchHandler, createProxyWebSocketHandler, stripBasePath } from './proxy-handler'
 export type { GetRoute, NoRouteOutcome, OnNoRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
+export { buildRedirectLocation, resolveRedirect } from './redirect'
+export type { RedirectRouteConfig, ResolvedRedirect } from './redirect'
 
 export { isWildcardPattern, matchesWildcard, matchHost } from './host-match'
 
