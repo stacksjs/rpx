@@ -34,7 +34,7 @@ import { homedir } from 'node:os'
 import * as path from 'node:path'
 import * as process from 'node:process'
 import { normalizePathPrefix } from './host-routes'
-import { findAvailablePort, testPortConnectivity } from './port-manager'
+import { findAvailablePort } from './port-manager'
 import { getRegistryDir, removeEntry as defaultRemoveEntry, writeEntry as defaultWriteEntry } from './registry'
 import { debugLog } from './utils'
 import { log } from './logger'
@@ -116,6 +116,8 @@ interface SiteState {
   failedAt: number
   error?: string
   logPath: string
+  /** Set once the process has exited (so the readiness loop stops probing). */
+  exited: boolean
   ready: Promise<void>
 }
 
@@ -156,7 +158,7 @@ export class SiteSupervisor {
     this.restartDelayMs = opts.restartDelayMs ?? DEFAULT_RESTART_DELAY_MS
     this.killGraceMs = opts.killGraceMs ?? KILL_GRACE_MS
     this.launch = opts.launcher ?? makeDefaultLauncher(this.verbose)
-    this.probePort = opts.probePort ?? (port => testPortConnectivity(port, '127.0.0.1', 1500))
+    this.probePort = opts.probePort ?? defaultReadinessProbe
     this.pickPort = opts.pickPort ?? (preferred => findAvailablePort(preferred, '127.0.0.1'))
     this.isHostRoutable = opts.isHostRoutable ?? (() => false)
     this.now = opts.now ?? Date.now
@@ -241,6 +243,7 @@ export class SiteSupervisor {
       failedAt: startError ? this.now() : 0,
       error: startError,
       logPath,
+      exited: false,
       ready: Promise.resolve(),
     }
     this.sites.set(site.host, state)
@@ -251,35 +254,48 @@ export class SiteSupervisor {
     }
 
     log.info(`rpx: booting ${site.host} → ${site.command} (${site.dir})`)
+    // One exit handler for the whole lifetime: fail a site that dies before it's
+    // ready, or — once it's live — drop its route so the next visit reboots it.
+    handle!.exited.then(code => this.onProcessExit(state, code)).catch(() => {})
     state.ready = this.driveReadiness(state).catch((err) => {
       debugLog('sites', `readiness loop for ${site.host} threw: ${err}`, this.verbose)
     })
     return state
   }
 
+  /**
+   * React to a site process exiting. If we initiated the stop (idle reap /
+   * shutdown drop the state first) there's nothing to do. A still-booting site
+   * fails; a live one has its route removed and state cleared so the next request
+   * reboots it cleanly — a crashed dev server self-heals on the next visit.
+   */
+  private async onProcessExit(state: SiteState, code: number | null): Promise<void> {
+    state.exited = true
+    if (this.stopped || this.sites.get(state.site.host) !== state)
+      return
+    if (state.status === 'ready') {
+      log.warn(`rpx: ${state.site.host} exited${code !== null ? ` (code ${code})` : ''} — will reboot on next request`)
+      this.sites.delete(state.site.host)
+      for (const id of state.routeIds)
+        await this.removeEntry(id, this.registryDir, this.verbose).catch(() => {})
+    }
+    else if (state.status === 'starting') {
+      this.fail(state, `process exited${code !== null ? ` with code ${code}` : ''} before becoming ready`)
+    }
+  }
+
   /** Probe the ready gate, publish routes, and flip the site to `ready` (or `failed`). */
   private async driveReadiness(state: SiteState): Promise<void> {
-    const { site, handle } = state
+    const { site } = state
     const deadline = this.now() + this.startupTimeoutMs
-
-    // Fail fast if the process dies before it ever becomes ready — but not when
-    // we're the ones killing it (shutdown / idle reap drop the state first).
-    let exitedEarly = false
-    handle?.exited.then((code) => {
-      if (state.status === 'starting' && !this.stopped && this.sites.get(site.host) === state) {
-        exitedEarly = true
-        this.fail(state, `process exited${code !== null ? ` with code ${code}` : ''} before becoming ready`)
-      }
-    }).catch(() => {})
 
     const ready = site.selfRegisters
       ? () => this.isHostRoutable(site.host)
       : await this.makeGateProbe(site, state.ports)
 
     while (this.now() < deadline && !this.stopped) {
-      if (state.status !== 'starting')
-        return
-      if (exitedEarly)
+      // `onProcessExit` fails/clears the state if the process died; stop probing.
+      if (state.status !== 'starting' || state.exited)
         return
       if (await ready()) {
         await this.publishRoutes(state)
@@ -478,6 +494,29 @@ export class SiteSupervisor {
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * Default readiness probe: an HTTP GET to the port that resolves `true` on ANY
+ * response (200, 404, 500 — we only care that the server is *fielding* requests,
+ * not what it answers). A plain TCP probe is fooled by dev servers (stx,
+ * bun-router, Vite) that hold the socket in LISTEN for a moment — or while the
+ * first request compiles — before the handler is wired, which would publish the
+ * route too early and bounce the first real request off a 502.
+ */
+async function defaultReadinessProbe(port: number): Promise<boolean> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 2000)
+  try {
+    await fetch(`http://127.0.0.1:${port}/`, { signal: controller.signal, redirect: 'manual' })
+    return true
+  }
+  catch {
+    return false
+  }
+  finally {
+    clearTimeout(timer)
+  }
 }
 
 /**

@@ -221,6 +221,42 @@ describe('SiteSupervisor', () => {
     expect(removed).toContain('myapp.localhost')
   })
 
+  it('reboots a site that crashes after going live', async () => {
+    await mkdir()
+    const procs = [fakeProc(100), fakeProc(200)]
+    let launches = 0
+    const removed: string[] = []
+    let routable = false
+    const sup = new SiteSupervisor({
+      resolver: resolverFor(stacksSite()),
+      rpxDir,
+      registryDir: rpxDir,
+      launcher: () => procs[launches++]!.handle,
+      pickPort: async preferred => preferred,
+      probePort: async () => true,
+      isHostRoutable: () => routable,
+      writeEntry: async () => { routable = true },
+      removeEntry: async (id) => { removed.push(id) },
+      pollIntervalMs: 5,
+      killGraceMs: 20,
+    })
+    supervisors.push(sup)
+
+    await sup.onRequest('myapp.localhost')
+    await waitFor(async () => (await sup.onRequest('myapp.localhost')).kind === 'ready')
+    expect(launches).toBe(1)
+
+    // The live dev server crashes — its route is dropped and state cleared.
+    procs[0]!.exit(1)
+    await waitFor(() => removed.includes('myapp.localhost'))
+    routable = false
+
+    // The next request reboots it (a second launch).
+    const after = await sup.onRequest('myapp.localhost')
+    expect(after.kind).toBe('starting')
+    expect(launches).toBe(2)
+  })
+
   it('stopAll signals every running site', async () => {
     await mkdir()
     const proc = fakeProc(123)
