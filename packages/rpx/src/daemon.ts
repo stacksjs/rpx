@@ -297,6 +297,13 @@ async function elevateDaemonToRoot(
   const forwardedEnv = [`HOME=${home}`, `PATH=${process.env.PATH ?? ''}`]
   if (verbose)
     forwardedEnv.push('RPX_VERBOSE=1')
+  // Forward rpx/Stacks-rpx config env so on-demand-site overrides
+  // (e.g. STACKS_RPX_SITE_ROOTS) survive the privileged re-exec — sudo otherwise
+  // drops the environment. Passed as `env KEY=VAL` argv, so no shell-quoting risk.
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && key !== 'RPX_VERBOSE' && /^(?:RPX_|STACKS_RPX_)/.test(key))
+      forwardedEnv.push(`${key}=${value}`)
+  }
 
   // `sudo -S` reads the password from stdin; `-n` (no password) relies on a
   // cached credential. Either way we never block on an interactive prompt.
