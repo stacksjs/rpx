@@ -662,20 +662,27 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
         httpsServer.stop(false)
         let lastErr: unknown
         let rebound = false
-        for (let attempt = 0; attempt < 20 && !stopped; attempt++) {
+        // A slow OS port release must not permanently unbind :443. Retry with
+        // growing backoff for ~30s (25,50,100,200,400,then 500ms) instead of the
+        // old 20×25ms (=0.5s), which gave up while the old socket was still held.
+        const REBIND_MAX_ATTEMPTS = 60
+        const REBIND_BACKOFF_CAP_MS = 500
+        for (let attempt = 0; !stopped && !rebound; attempt++) {
           try {
             httpsServer = serveHttps(target)
             rebound = true
             break
           }
           catch (err) {
-            // EADDRINUSE while the old socket releases — back off briefly, retry.
+            // EADDRINUSE while the old socket releases — back off and retry.
             lastErr = err
-            await new Promise(resolve => setTimeout(resolve, 25))
+            if (attempt >= REBIND_MAX_ATTEMPTS)
+              break
+            await new Promise(resolve => setTimeout(resolve, Math.min(25 * 2 ** Math.min(attempt, 4), REBIND_BACKOFF_CAP_MS)))
           }
         }
         if (!rebound)
-          log.error(`rpx: failed to rebuild :443 after issuing cert: ${(lastErr as Error)?.message}`)
+          log.error(`rpx: CRITICAL — could not rebind :443 after ${REBIND_MAX_ATTEMPTS} attempts issuing cert; HTTPS unbound until the next cert event or a gateway restart: ${(lastErr as Error)?.message}`)
         // Loop: if a newer rebuild was requested mid-rebind, apply it next.
       }
     }
