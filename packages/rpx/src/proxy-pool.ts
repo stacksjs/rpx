@@ -405,7 +405,7 @@ class UpstreamPool {
   /** Currently checked-out connections — watched by the sweeper for stuck slots. */
   private readonly inUse = new Set<Conn>()
 
-  constructor(private host: string, private port: number, private maxTotal: number) {
+  constructor(private host: string, private port: number, private maxTotal: number, private readonly key: string = '') {
     this.maxWaiters = maxQueued(maxTotal)
   }
 
@@ -616,6 +616,12 @@ class UpstreamPool {
     if (this.idle.length === 0 && this.inUse.size === 0 && this.sweeper) {
       clearInterval(this.sweeper)
       this.sweeper = null
+      // Drop the fully-drained pool from the global registry so a gateway that
+      // fans out to many distinct upstreams over its lifetime doesn't accumulate
+      // empty pool objects without bound. Guard against evicting a pool that has
+      // already been replaced in the map (a new request re-created it).
+      if (this.key && pools.get(this.key) === this)
+        pools.delete(this.key)
     }
   }
 }
@@ -629,7 +635,7 @@ function poolFor(hostPort: string, maxPerHost: number): UpstreamPool {
     const idx = hostPort.lastIndexOf(':')
     const host = idx === -1 ? hostPort : hostPort.slice(0, idx)
     const port = idx === -1 ? 80 : Number(hostPort.slice(idx + 1))
-    pool = new UpstreamPool(host, port, maxPerHost)
+    pool = new UpstreamPool(host, port, maxPerHost, hostPort)
     pools.set(hostPort, pool)
   }
   return pool
