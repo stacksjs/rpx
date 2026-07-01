@@ -112,6 +112,19 @@ interface WsState {
   upstream: WebSocket
   upstreamOpen: boolean
   pending: Array<string | ArrayBufferLike | Uint8Array>
+  /** Running byte total of {@link pending}, bounded by {@link MAX_WS_PENDING_BYTES}. */
+  pendingBytes: number
+}
+
+/**
+ * Cap on client→upstream frames buffered *before the upstream WebSocket opens*.
+ * Without it, a fast client (or an upstream that never opens) grows `pending`
+ * without bound until the gateway OOMs. Beyond the cap the client socket is
+ * closed with 1009 (message too big). Override with `RPX_MAX_WS_PENDING_BYTES`;
+ * read once per handler so tests (and reloads) can pick up a new value.
+ */
+export function wsPendingCapBytes(): number {
+  return Math.max(0, Number(process.env.RPX_MAX_WS_PENDING_BYTES)) || 8 * 1024 * 1024
 }
 
 const HOP_BY_HOP = new Set([
@@ -376,6 +389,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
  */
 export function createProxyWebSocketHandler(verbose?: boolean) {
   const state = new WeakMap<ServerWebSocket<WsData>, WsState>()
+  const maxPendingBytes = wsPendingCapBytes()
 
   return {
     open(ws: ServerWebSocket<WsData>): void {
@@ -394,7 +408,7 @@ export function createProxyWebSocketHandler(verbose?: boolean) {
         return
       }
       upstream.binaryType = 'arraybuffer'
-      const st: WsState = { upstream, upstreamOpen: false, pending: [] }
+      const st: WsState = { upstream, upstreamOpen: false, pending: [], pendingBytes: 0 }
       state.set(ws, st)
 
       upstream.addEventListener('open', () => {
@@ -402,6 +416,7 @@ export function createProxyWebSocketHandler(verbose?: boolean) {
         for (const frame of st.pending)
           upstream.send(frame)
         st.pending = []
+        st.pendingBytes = 0
       })
       upstream.addEventListener('message', (ev: MessageEvent) => {
         // Forward both binary (ArrayBuffer) and text frames to the client.
@@ -424,10 +439,24 @@ export function createProxyWebSocketHandler(verbose?: boolean) {
       if (!st)
         return
       const frame = typeof message === 'string' ? message : new Uint8Array(message)
-      if (st.upstreamOpen)
+      if (st.upstreamOpen) {
         st.upstream.send(frame)
-      else
-        st.pending.push(frame)
+        return
+      }
+      // Upstream not open yet — buffer, but bound the buffer: a fast client (or an
+      // upstream that never opens) must not grow `pending` until the gateway OOMs.
+      const size = typeof frame === 'string' ? Buffer.byteLength(frame) : frame.byteLength
+      if (st.pendingBytes + size > maxPendingBytes) {
+        debugLog('ws', `pending buffer would exceed ${maxPendingBytes}B before upstream open; closing socket`, verbose)
+        try { ws.close(1009, 'buffer limit') }
+        catch { /* already closing */ }
+        try { st.upstream.close(1011, 'client buffer overflow') }
+        catch { /* already closing */ }
+        state.delete(ws)
+        return
+      }
+      st.pending.push(frame)
+      st.pendingBytes += size
     },
 
     close(ws: ServerWebSocket<WsData>, code: number, reason: string): void {

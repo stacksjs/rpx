@@ -79,6 +79,54 @@ describe('WebSocket proxying (issue #26)', () => {
     }
   })
 
+  it('caps the pre-open pending buffer and closes an over-limit client with 1009', async () => {
+    // An upstream that stalls the WS handshake, so frames the client sends the
+    // instant it connects pile up in the proxy's pre-open `pending` buffer
+    // instead of being forwarded — the exact condition the cap must bound.
+    const slowUpstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      async fetch(req, server) {
+        await Bun.sleep(400)
+        if (server.upgrade(req, { data: undefined }))
+          return undefined
+        return new Response('expected websocket upgrade', { status: 426 })
+      },
+      websocket: { message() {} },
+    })
+
+    const prev = process.env.RPX_MAX_WS_PENDING_BYTES
+    process.env.RPX_MAX_WS_PENDING_BYTES = '2048' // tiny cap so a few frames trip it
+    const routeEntries = [{ host: '127.0.0.1', route: { sourceHost: `127.0.0.1:${slowUpstream.port}` } }]
+    const proxy = createSharedProxyServer({ routeEntries, listenPort: 0, sslConfig: null, originGuard: null, verbose: false })
+
+    try {
+      const closeCode = await new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('expected the proxy to close the over-limit client')), 5000)
+        const ws = new WebSocket(`ws://127.0.0.1:${proxy!.port}/`)
+        ws.addEventListener('open', () => {
+          // > 2048 bytes of frames before the (400ms-delayed) upstream opens.
+          const chunk = 'x'.repeat(1024)
+          for (let i = 0; i < 8; i++)
+            ws.send(chunk)
+        })
+        ws.addEventListener('close', (ev: CloseEvent) => {
+          clearTimeout(timer)
+          resolve(ev.code)
+        })
+      })
+      // 1009 = "message too big" — the buffer-limit close code the cap emits.
+      expect(closeCode).toBe(1009)
+    }
+    finally {
+      proxy!.stop(true)
+      slowUpstream.stop(true)
+      if (prev === undefined)
+        delete process.env.RPX_MAX_WS_PENDING_BYTES
+      else process.env.RPX_MAX_WS_PENDING_BYTES = prev
+    }
+  })
+
   it('returns 404 for an upgrade to a host with no route (no crash)', async () => {
     const routeEntries = [{ host: 'known.localhost', route: { sourceHost: `127.0.0.1:${upstream.port}` } }]
     const proxy = createSharedProxyServer({ routeEntries, listenPort: 0, sslConfig: null, originGuard: null, verbose: false })
