@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.21...v0.11.22)
+
+## 🐛 Bug Fixes
+
+- keep retrying :443 rebind so a slow port release can't unbind HTTPS ([122b881](https://github.com/stacksjs/rpx/commit/122b881)) _(by Chris <chrisbreuer93@gmail.com>)_
+- bound the pre-open WebSocket pending buffer (OOM guard) ([38a0711](https://github.com/stacksjs/rpx/commit/38a0711)) _(by Chris <chrisbreuer93@gmail.com>)_
+- drop fully-drained upstream pools from the global registry ([1a0b15c](https://github.com/stacksjs/rpx/commit/1a0b15c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.22 ([e70704c](https://github.com/stacksjs/rpx/commit/e70704c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.20...v0.11.21)
 
 ## 🚀 Features
