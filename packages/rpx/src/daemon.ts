@@ -34,6 +34,7 @@ import {
   SHARED_DEV_HOST_CERT_PATH,
 } from './https'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
+import { readAcmeChallenge } from './acme-challenge'
 import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
 import { buildSniTlsConfig } from './sni'
@@ -85,6 +86,16 @@ export interface DaemonOptions {
    * Only honored by the single-process daemon (ignored when `workers > 1`).
    */
   onDemandSites?: OnDemandSitesConfig
+  /**
+   * Directory an external ACME client (e.g. a `tlsx acme:renew --webroot <dir>`
+   * cron) drops http-01 challenge tokens into. When set, the `:80` listener
+   * serves `/.well-known/acme-challenge/<token>` from `<webroot>/<token>` before
+   * redirecting to HTTPS, so certs can be issued/renewed without freeing `:80`.
+   * This is independent of `onDemandTls` (which uses an in-memory challenge
+   * store) — both are checked, so webroot renewal works even when on-demand TLS
+   * is disabled. Omit to disable webroot challenge serving.
+   */
+  acmeChallengeWebroot?: string
   /** PID-GC interval in ms. Defaults to 5000. */
   gcIntervalMs?: number
   /**
@@ -406,7 +417,7 @@ function installDaemonCrashGuards(): void {
  * targets, and a thrown `new URL` would reject the fetch handler and make Bun
  * drop the connection with no response. A bad target becomes a 400 instead.
  */
-function handleHttpRedirect(req: Request, onDemand: OnDemandCertManager | null): Response {
+export function handleHttpRedirect(req: Request, onDemand: OnDemandCertManager | null, acmeChallengeWebroot?: string): Response {
   let u: URL
   try {
     u = new URL(req.url)
@@ -416,11 +427,23 @@ function handleHttpRedirect(req: Request, onDemand: OnDemandCertManager | null):
   }
   const host = (req.headers.get('host') ?? u.hostname).split(':')[0]
 
-  if (onDemand && u.pathname.startsWith('/.well-known/acme-challenge/')) {
-    const keyAuth = onDemand.challengeStore.handlePath(u.pathname)
-    if (keyAuth !== undefined)
-      return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
-    return new Response('challenge not found', { status: 404 })
+  if (u.pathname.startsWith('/.well-known/acme-challenge/')) {
+    // On-demand TLS (rpx's own ACME client) keeps its tokens in memory.
+    if (onDemand) {
+      const keyAuth = onDemand.challengeStore.handlePath(u.pathname)
+      if (keyAuth !== undefined)
+        return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
+    }
+    // An external `tlsx acme:renew --webroot` drops tokens on disk. Serve those
+    // too, independent of on-demand TLS, so webroot renewal works with no cert
+    // manager running. Only redirect a challenge request once BOTH stores miss.
+    if (acmeChallengeWebroot) {
+      const keyAuth = readAcmeChallenge(acmeChallengeWebroot, u.pathname)
+      if (keyAuth != null)
+        return new Response(keyAuth, { status: 200, headers: { 'content-type': 'text/plain' } })
+    }
+    if (onDemand)
+      return new Response('challenge not found', { status: 404 })
   }
 
   // First plaintext hit for an approved-but-uncovered host: kick off issuance so
@@ -697,7 +720,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       port: httpPort,
       hostname,
       fetch(req: Request) {
-        return handleHttpRedirect(req, onDemand)
+        return handleHttpRedirect(req, onDemand, opts.acmeChallengeWebroot)
       },
       error() {
         return new Response('Bad Request', { status: 400 })
@@ -1070,7 +1093,7 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
       port: httpPort,
       hostname,
       fetch(req: Request) {
-        return handleHttpRedirect(req, onDemand)
+        return handleHttpRedirect(req, onDemand, opts.acmeChallengeWebroot)
       },
       error() {
         return new Response('Bad Request', { status: 400 })

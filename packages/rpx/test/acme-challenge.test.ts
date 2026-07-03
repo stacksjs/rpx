@@ -3,6 +3,7 @@ import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { readAcmeChallenge } from '../src/acme-challenge'
+import { handleHttpRedirect } from '../src/daemon'
 
 async function withWebroot(fn: (webroot: string) => Promise<void> | void): Promise<void> {
   const webroot = await fsp.mkdtemp(path.join(os.tmpdir(), 'rpx-acme-'))
@@ -45,5 +46,31 @@ describe('readAcmeChallenge', () => {
     await withWebroot((webroot) => {
       expect(readAcmeChallenge(webroot, '/.well-known/acme-challenge/missing')).toBeNull()
     })
+  })
+})
+
+describe('handleHttpRedirect webroot ACME serving', () => {
+  const req = (url: string) => new Request(url, { headers: { host: new URL(url).host } })
+
+  it('serves a webroot challenge token on :80 with NO on-demand manager (200, not 301)', async () => {
+    await withWebroot(async (webroot) => {
+      await fsp.writeFile(path.join(webroot, 'boxtok-1'), 'boxtok-1.keyauth')
+      const res = handleHttpRedirect(req('http://dashboard.example.com/.well-known/acme-challenge/boxtok-1'), null, webroot)
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('boxtok-1.keyauth')
+    })
+  })
+
+  it('redirects a normal request to HTTPS (301)', () => {
+    const res = handleHttpRedirect(req('http://dashboard.example.com/login'), null)
+    expect(res.status).toBe(301)
+    expect(res.headers.get('location')).toBe('https://dashboard.example.com/login')
+  })
+
+  it('redirects a challenge request to HTTPS when neither store nor webroot has the token', () => {
+    // No on-demand manager and no webroot configured: a challenge miss must not
+    // 404 (that would break other ACME clients) — it falls through to the 301.
+    const res = handleHttpRedirect(req('http://dashboard.example.com/.well-known/acme-challenge/absent'), null)
+    expect(res.status).toBe(301)
   })
 })
