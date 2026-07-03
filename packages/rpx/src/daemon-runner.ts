@@ -10,7 +10,7 @@
  *
  * The daemon's PID-GC reaps anything we miss if this process dies `kill -9`.
  */
-import type { PathRewrite, StaticRouteConfig } from './types'
+import type { LoadBalancerConfig, PathRewrite, ProxyFrom, StaticRouteConfig } from './types'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as process from 'node:process'
@@ -21,8 +21,11 @@ import { debugLog } from './utils'
 
 export interface DaemonRunnerProxy {
   id?: string
-  /** Upstream `host:port`. Optional when `static` is set. */
-  from?: string
+  /**
+   * Upstream `host:port`. Optional when `static` is set. May be an array of
+   * upstreams (see {@link ProxyFrom}) to load-balance across for this route.
+   */
+  from?: ProxyFrom
   to: string
   /**
    * Optional path prefix this route owns under the host `to` (e.g. `'/api'`).
@@ -36,6 +39,8 @@ export interface DaemonRunnerProxy {
   pathRewrites?: PathRewrite[]
   /** Serve a local directory for this route instead of proxying. */
   static?: string | StaticRouteConfig
+  /** Load-balancing strategy/health-check config when `from` is a multi-upstream pool. */
+  loadBalancer?: LoadBalancerConfig
 }
 
 export interface DaemonRunnerOptions {
@@ -115,6 +120,7 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
       changeOrigin: p.changeOrigin,
       pathRewrites: p.pathRewrites,
       static: p.static,
+      loadBalancer: p.loadBalancer,
     }, registryDir, verbose)
   }
 

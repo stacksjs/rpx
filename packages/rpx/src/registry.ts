@@ -14,7 +14,7 @@
  *   - `id` is validated against a strict charset to keep it from escaping
  *     the registry directory.
  */
-import type { BasicAuthConfig, PathRewrite, StaticRouteConfig } from './types'
+import type { BasicAuthConfig, LoadBalancerConfig, PathRewrite, ProxyFrom, StaticRouteConfig } from './types'
 import * as fs from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -24,8 +24,11 @@ import { debugLog } from './utils'
 
 export interface RegistryEntry {
   id: string
-  /** Upstream `host:port`. Optional when `static` is set. */
-  from?: string
+  /**
+   * Upstream `host:port`. Optional when `static` is set. May be an array of
+   * upstreams (see {@link ProxyFrom}) to load-balance across for this route.
+   */
+  from?: ProxyFrom
   to: string
   /**
    * Optional path prefix this route owns under the host `to` (e.g. `'/api'`).
@@ -51,6 +54,8 @@ export interface RegistryEntry {
   static?: string | StaticRouteConfig
   /** Optional HTTP Basic auth gate for this route. */
   auth?: BasicAuthConfig
+  /** Load-balancing strategy/health-check config when `from` is a multi-upstream pool. */
+  loadBalancer?: LoadBalancerConfig
 }
 
 const ID_PATTERN = /^[a-zA-Z0-9._-]+$/
@@ -102,8 +107,10 @@ function isValidEntry(value: unknown): value is RegistryEntry {
   // (manual entries from `rpx register`) the daemon's PID-GC skips it.
   const pidOk = e.pid === undefined
     || (typeof e.pid === 'number' && Number.isInteger(e.pid) && e.pid > 0)
-  // A route forwards to an upstream (`from`) OR serves files (`static`).
-  const hasFrom = typeof e.from === 'string' && e.from.length > 0
+  // A route forwards to an upstream (`from`) OR serves files (`static`). `from`
+  // is either a plain `host:port` string or an array of upstreams/targets.
+  const hasFrom = (typeof e.from === 'string' && e.from.length > 0)
+    || (Array.isArray(e.from) && e.from.length > 0)
   const hasStatic = typeof e.static === 'string'
     || (!!e.static && typeof e.static === 'object' && typeof (e.static as StaticRouteConfig).dir === 'string')
   // path is optional; when present it must be a string.
@@ -294,6 +301,7 @@ export function watchRegistry(
           cleanUrls: entry.cleanUrls,
           changeOrigin: entry.changeOrigin,
           static: entry.static,
+          loadBalancer: entry.loadBalancer,
         }))
         .sort((a, b) => a.id.localeCompare(b.id)),
     )

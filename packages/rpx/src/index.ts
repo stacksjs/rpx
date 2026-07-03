@@ -117,6 +117,18 @@ export type {
 
 export { createProxyFetchHandler, createProxyWebSocketHandler, stripBasePath } from './proxy-handler'
 export type { GetRoute, NoRouteOutcome, OnNoRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
+
+export {
+  createUpstreamPool,
+  markFailure,
+  markSuccess,
+  primaryUpstreamUrl,
+  selectUpstream,
+  startHealthChecks,
+  stopHealthChecks,
+} from './load-balancer'
+export type { UpstreamPool, UpstreamState } from './load-balancer'
+
 export { buildRedirectLocation, resolveRedirect } from './redirect'
 export type { RedirectRouteConfig, ResolvedRedirect } from './redirect'
 export { ACME_CHALLENGE_PREFIX, readAcmeChallenge } from './acme-challenge'

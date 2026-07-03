@@ -33,6 +33,8 @@ import {
   generateCertificate,
   SHARED_DEV_HOST_CERT_PATH,
 } from './https'
+import { createUpstreamPool, primaryUpstreamUrl, startHealthChecks, stopHealthChecks } from './load-balancer'
+import type { UpstreamPool } from './load-balancer'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import { readAcmeChallenge } from './acme-challenge'
 import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
@@ -212,8 +214,32 @@ export async function releaseDaemonLock(rpxDir: string = getDaemonRpxDir()): Pro
 }
 
 /**
+ * Upstream pools for registry-backed routes, keyed by entry id so pool state
+ * (health, round-robin cursor, active-connection counts) survives across
+ * `rebuild()` calls — the registry watcher rebuilds the whole routing table
+ * from scratch on every add/remove/change, and recreating pools each time
+ * would otherwise reset load-balancer state on unrelated registry churn.
+ */
+const registryUpstreamPools = new Map<string, UpstreamPool>()
+
+/**
+ * Drop cached pools for entries no longer present in the registry (and stop
+ * their active-health-check timers) so a removed/renamed route's pool doesn't
+ * leak forever.
+ */
+function pruneRegistryUpstreamPools(liveIds: Set<string>): void {
+  for (const [id, pool] of registryUpstreamPools) {
+    if (!liveIds.has(id)) {
+      stopHealthChecks(pool)
+      registryUpstreamPools.delete(id)
+    }
+  }
+}
+
+/**
  * Translate a registry entry into the routing shape consumed by the proxy
- * fetch handler. The entry's `from` is normalized to `host:port`.
+ * fetch handler. The entry's `from` is normalized to `host:port`, or (for a
+ * multi-upstream `from`) load-balanced via a per-entry-id cached pool.
  */
 function entryToRoute(entry: RegistryEntry): ProxyRoute {
   const cleanUrls = entry.cleanUrls ?? false
@@ -228,9 +254,19 @@ function entryToRoute(entry: RegistryEntry): ProxyRoute {
     }
   }
   const from = entry.from ?? 'localhost:1'
-  const fromUrl = new URL(from.startsWith('http') ? from : `http://${from}`)
+  const primaryFrom = primaryUpstreamUrl(from)
+  const fromUrl = new URL(primaryFrom.startsWith('http') ? primaryFrom : `http://${primaryFrom}`)
+
+  let pool = registryUpstreamPools.get(entry.id)
+  if (!pool) {
+    pool = createUpstreamPool(from, entry.loadBalancer)
+    startHealthChecks(pool)
+    registryUpstreamPools.set(entry.id, pool)
+  }
+
   return {
     sourceHost: fromUrl.host,
+    upstreamPool: pool,
     cleanUrls,
     changeOrigin: entry.changeOrigin ?? false,
     pathRewrites: entry.pathRewrites,
@@ -515,6 +551,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     routingTable = buildHostRoutes(
       entries.map(e => ({ host: e.to, path: e.path, route: entryToRoute(e) })),
     )
+    pruneRegistryUpstreamPools(new Set(entries.map(e => e.id)))
     const hosts = Array.from(routingTable.keys())
     debugLog('daemon', `routing table now covers ${hosts.length} host(s): ${hosts.join(', ') || '<empty>'}`, verbose)
   }
@@ -818,6 +855,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     await tearDownDevelopmentDns({ rpxDir, verbose }).catch((err) => {
       debugLog('daemon', `DNS teardown failed: ${err}`, verbose)
     })
+    pruneRegistryUpstreamPools(new Set())
     await releaseDaemonLock(rpxDir)
     if (verbose)
       log.info('rpx daemon stopped')
@@ -925,6 +963,7 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
     matchHostRoute(routingTable, host, pathname)
   const rebuild = (entries: RegistryEntry[]): void => {
     routingTable = buildHostRoutes(entries.map(e => ({ host: e.to, path: e.path, route: entryToRoute(e) })))
+    pruneRegistryUpstreamPools(new Set(entries.map(e => e.id)))
   }
   rebuild(await readAll(registryDir, verbose))
 
@@ -991,6 +1030,7 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
     process.off('SIGHUP', onHup)
     watcher.close()
     httpsServer.stop(false)
+    pruneRegistryUpstreamPools(new Set())
     resolveDone()
     return done
   }

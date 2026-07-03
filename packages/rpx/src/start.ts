@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { BaseProxyConfig, CleanupOptions, ProxyConfig, ProxyOption, ProxyOptions, ProxySetupOptions, ResolvedProxyOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
+import type { BaseProxyConfig, CleanupOptions, LoadBalancerConfig, ProxyConfig, ProxyFrom, ProxyOption, ProxyOptions, ProxySetupOptions, ResolvedProxyOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
 import { exec, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
@@ -15,6 +15,8 @@ import { config } from './config'
 import { runViaDaemon } from './daemon-runner'
 import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
+import { createUpstreamPool, primaryUpstreamUrl, startHealthChecks, stopHealthChecks } from './load-balancer'
+import type { UpstreamPool } from './load-balancer'
 import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
 import { ProcessManager } from './process-manager'
 import { createOriginGuard } from './origin-guard'
@@ -38,6 +40,9 @@ const globalPortManager = new DefaultPortManager('0.0.0.0')
 
 // Keep track of all running servers for cleanup
 const activeServers: Set<http.Server | https.Server> = new Set()
+// Upstream pools with active-health-check timers, so `cleanup()` can stop them
+// and not leak `setInterval` handles across repeated start/stop cycles (tests).
+const activeUpstreamPools: Set<UpstreamPool> = new Set()
 type SharedTlsConfig = SSLConfig | SniTlsEntry[]
 
 let isCleaningUp = false
@@ -105,6 +110,12 @@ export async function cleanup(options?: CleanupOptions): Promise<void> {
     cleanupPromises.push(...serverClosePromises)
     // Drop references so a subsequent cleanup() doesn't try to stop them again.
     activeServers.clear()
+
+    // Stop any active-health-check timers so they don't keep firing (or
+    // leak) after the servers they belong to are gone.
+    for (const pool of activeUpstreamPools)
+      stopHealthChecks(pool)
+    activeUpstreamPools.clear()
 
     // hosts file cleanup if configured
     if (options?.hosts && options.domains?.length) {
@@ -336,8 +347,13 @@ async function testConnection(hostname: string, port: number, verbose?: boolean,
 export async function startServer(options: SingleProxyConfig): Promise<void> {
   debugLog('server', `Starting server with options: ${safeStringify(options)}`, options.verbose)
 
-  // Parse URLs early to get the hostnames
-  const fromUrl = new URL((options.from?.startsWith('http') ? options.from : `http://${options.from}`) || 'localhost:5173')
+  // Parse URLs early to get the hostnames. `from` may be a load-balanced pool
+  // (array); connection testing / hosts-file checks below only need a single
+  // representative upstream, so use the first one — the full `options.from`
+  // (with all upstreams) is still passed through to `setupProxy` untouched for
+  // the actual pool construction downstream.
+  const primaryFrom = primaryUpstreamUrl(options.from)
+  const fromUrl = new URL(primaryFrom.startsWith('http') ? primaryFrom : `http://${primaryFrom}`)
   const toUrl = new URL((options.to?.startsWith('http') ? options.to : `http://${options.to}`) || 'rpx.localhost')
   const fromPort = Number.parseInt(fromUrl.port) || (fromUrl.protocol.includes('https:') ? 443 : 80)
 
@@ -443,7 +459,8 @@ export async function startServer(options: SingleProxyConfig): Promise<void> {
 
   await setupProxy({
     ...options,
-    from: options.from || 'localhost:5173',
+    from: primaryFrom,
+    originalFrom: options.from || primaryFrom,
     to: toUrl.hostname,
     fromPort,
     sourceUrl: {
@@ -465,6 +482,8 @@ async function createProxyServer(
   cleanUrls?: boolean,
   changeOrigin?: boolean,
   auth?: ResolvedAuth,
+  originalFrom?: ProxyFrom,
+  loadBalancer?: LoadBalancerConfig,
 ): Promise<void> {
   debugLog('proxy', `Creating proxy server ${from} -> ${to} with cleanUrls: ${cleanUrls}`, verbose)
 
@@ -474,10 +493,20 @@ async function createProxyServer(
   // `wss` proxying in single-proxy mode, which dev-server HMR over HTTPS relies
   // on (issue #26). The previous hand-rolled `fetch()` forwarder had no
   // `websocket` handler, so HMR upgrades were dropped.
+  //
+  // `from` may be a load-balanced pool (array); always route dispatch through
+  // an `upstreamPool` (even the degenerate single-upstream case) so the
+  // selection/health-tracking logic in `resolveTarget` has one code path.
+  // `sourceHost` is kept too as a plain-string mirror for tests/tools that
+  // still read it directly.
+  const pool = createUpstreamPool(originalFrom ?? sourceUrl.host, loadBalancer)
+  startHealthChecks(pool)
+
   const routeEntries = [{
     host: to,
     route: {
       sourceHost: sourceUrl.host,
+      upstreamPool: pool,
       cleanUrls: cleanUrls || false,
       changeOrigin: changeOrigin || false,
       basePath: '/',
@@ -486,8 +515,12 @@ async function createProxyServer(
   }]
 
   const server = createSharedProxyServer({ routeEntries, listenPort, sslConfig: ssl, originGuard: null, verbose: verbose ?? false })
-  if (!server)
+  if (!server) {
+    stopHealthChecks(pool)
     throw new Error(`Failed to start proxy server for ${to} on port ${listenPort}`)
+  }
+
+  activeUpstreamPools.add(pool)
 
   logToConsole({
     from,
@@ -503,7 +536,7 @@ async function createProxyServer(
 export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   debugLog('setup', `Setting up reverse proxy: ${safeStringify(options)}`, options.verbose)
 
-  const { from, to, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
+  const { from, originalFrom, to, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
   const httpPort = 80
   const httpsPort = 443
   const hostname = '0.0.0.0'
@@ -595,7 +628,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       debugLog('setup', `Using standard ${targetPort === 443 ? 'HTTPS' : 'HTTP'} port ${targetPort} for ${to}`, verbose)
     }
 
-    await createProxyServer(from, to, finalPort, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin, resolveAuth((options as { auth?: import('./types').BasicAuthConfig }).auth))
+    await createProxyServer(from, to, finalPort, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin, resolveAuth((options as { auth?: import('./types').BasicAuthConfig }).auth), originalFrom, options.loadBalancer)
   }
   catch (err) {
     debugLog('setup', `Setup failed: ${err}`, verbose)
@@ -843,8 +876,11 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
           await processManager.startProcess(proxyId, proxy.start, verbose)
 
-          // Parse the URL to get hostname and port
-          const fromUrl = new URL(proxy.from?.startsWith('http') ? proxy.from : `http://${proxy.from}`)
+          // Parse the URL to get hostname and port. `from` may be a
+          // load-balanced pool (array) — use the first upstream to gate
+          // readiness (the `start` command boots a single process).
+          const proxyPrimaryFrom = primaryUpstreamUrl(proxy.from)
+          const fromUrl = new URL(proxyPrimaryFrom.startsWith('http') ? proxyPrimaryFrom : `http://${proxyPrimaryFrom}`)
           const hostname = fromUrl.hostname || 'localhost'
           const port = Number(fromUrl.port) || 80
 
@@ -882,8 +918,11 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         await processManager.startProcess(proxyId, mergedOptions.start, verbose)
       }
 
-      // Parse the URL to get hostname and port
-      const fromUrl = new URL(mergedOptions.from?.startsWith('http') ? mergedOptions.from : `http://${mergedOptions.from}`)
+      // Parse the URL to get hostname and port. `from` may be a load-balanced
+      // pool (array) — use the first upstream to gate readiness (the `start`
+      // command boots a single process).
+      const mergedPrimaryFrom = primaryUpstreamUrl(mergedOptions.from)
+      const fromUrl = new URL(mergedPrimaryFrom.startsWith('http') ? mergedPrimaryFrom : `http://${mergedPrimaryFrom}`)
       const hostname = fromUrl.hostname || 'localhost'
       const port = Number(fromUrl.port) || 80
 
@@ -1207,12 +1246,20 @@ export async function collectRouteEntries(
       debugLog('proxies', `Route: ${domain}${routePath ?? ''} → static ${typeof option.static === 'string' ? option.static : option.static.dir}${auth ? ' (auth)' : ''}`, verbose)
     }
     else {
-      const fromUrl = new URL(option.from?.startsWith('http') ? option.from : `http://${option.from}`)
+      const primaryFrom = primaryUpstreamUrl(option.from)
+      const fromUrl = new URL(primaryFrom.startsWith('http') ? primaryFrom : `http://${primaryFrom}`)
+      // Always build an `upstreamPool` (even for a plain single-string `from`)
+      // so route dispatch has one selection/health-tracking code path — see
+      // `pickUpstream`/`resolveTarget` in proxy-handler.ts.
+      const pool = createUpstreamPool(option.from ?? fromUrl.host, option.loadBalancer)
+      startHealthChecks(pool)
+      activeUpstreamPools.add(pool)
       routeEntries.push({
         host: domain,
         path: routePath,
         route: {
           sourceHost: fromUrl.host,
+          upstreamPool: pool,
           cleanUrls,
           changeOrigin: option.changeOrigin || false,
           pathRewrites: option.pathRewrites,

@@ -15,10 +15,12 @@
  */
 import type { ServerWebSocket } from 'bun'
 import type { ResolvedAuth } from './auth'
+import type { UpstreamPool, UpstreamState } from './load-balancer'
 import type { ResolvedRedirect } from './redirect'
 import type { ResolvedStaticRoute } from './static-files'
 import type { PathRewrite } from './types'
 import { enforceBasicAuth } from './auth'
+import { markFailure, markSuccess, selectUpstream } from './load-balancer'
 import { FALLBACK, POOL_BUSY, proxyViaPool, TIMEOUT } from './proxy-pool'
 import { buildRedirectLocation } from './redirect'
 import { serveStaticFile } from './static-files'
@@ -27,9 +29,18 @@ import { debugLog, resolvePathRewrite } from './utils'
 export interface ProxyRoute {
   /**
    * Upstream `host:port` to forward requests to (e.g. `localhost:5173`).
-   * Optional when `static` is set.
+   * Optional when `static` is set. When {@link upstreamPool} is also set, this
+   * is ignored for selection (the pool is the source of truth) but may still
+   * be read by callers/tests as a hint of the primary/original upstream.
    */
   sourceHost?: string
+  /**
+   * Multi-upstream load-balancing pool for this route. When set (even with a
+   * single upstream), request dispatch selects a target via
+   * {@link selectUpstream} instead of the static {@link sourceHost}, and
+   * tracks passive health / active-connection counts across requests.
+   */
+  upstreamPool?: UpstreamPool
   /** Strip `.html` suffix and 301 to clean URLs. */
   cleanUrls?: boolean
   /** Set the `origin` header to the target. */
@@ -168,12 +179,29 @@ export function stripBasePath(pathname: string, basePath?: string): string {
 }
 
 /**
+ * Select the upstream for this request from the route's load-balancer pool,
+ * when it has one. Returns `undefined` for a static/redirect route (no pool,
+ * no `sourceHost`) or when an N>1 pool has no healthy upstream left — the
+ * caller treats that as a 502. A route with no pool falls back to the plain
+ * `sourceHost` string (pre-load-balancer behavior), reported here as a
+ * synthetic state with no health tracking.
+ */
+function pickUpstream(route: ProxyRoute): UpstreamState | undefined {
+  if (route.upstreamPool)
+    return selectUpstream(route.upstreamPool)
+  if (route.sourceHost)
+    return { url: route.sourceHost, weight: 1, healthy: true, activeConnections: 0, consecutiveFailures: 0, consecutiveSuccesses: 0 }
+  return undefined
+}
+
+/**
  * Resolve the upstream target (`host` + `path`) for a request against a route,
  * applying any matching path rewrite. Takes the already-extracted `pathname` so
- * the hot path never re-parses the request URL.
+ * the hot path never re-parses the request URL. `upstream` is the pool
+ * selection already made for this request (see {@link pickUpstream}).
  */
-function resolveTarget(pathname: string, route: ProxyRoute, verbose?: boolean): { targetHost: string, targetPath: string } {
-  let targetHost = route.sourceHost ?? ''
+function resolveTarget(pathname: string, route: ProxyRoute, upstream: UpstreamState | undefined, verbose?: boolean): { targetHost: string, targetPath: string } {
+  let targetHost = upstream?.url ?? route.sourceHost ?? ''
   // Proxy backends preserve their mount prefix by default (most apps own their
   // `/api` namespace), opting in to stripping via `stripBasePathPrefix`.
   // Explicit `pathRewrites` still apply on top of this.
@@ -264,10 +292,11 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
 
     // WebSocket upgrade: hand the socket to Bun and dial the upstream on open.
     if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
-      if (!server || !route.sourceHost)
+      const wsUpstream = pickUpstream(route)
+      if (!server || !wsUpstream)
         return new Response('WebSocket upgrade not supported here', { status: 400 })
 
-      const { targetHost, targetPath } = resolveTarget(pathname, route, verbose)
+      const { targetHost, targetPath } = resolveTarget(pathname, route, wsUpstream, verbose)
       const targetUrl = `ws://${targetHost}${targetPath}${search}`
 
       const forwardHeaders: Record<string, string> = {}
@@ -289,8 +318,13 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
       return new Response('WebSocket upgrade failed', { status: 400 })
     }
 
-    if (!route.sourceHost)
+    const upstream = pickUpstream(route)
+    if (!upstream) {
+      // Either no upstream configured at all, or (N>1 pool) every upstream is
+      // currently unhealthy — same 502 status as the pre-load-balancer
+      // "no upstream configured" case for a static/redirect-less route.
       return new Response(`No upstream configured for ${hostname}`, { status: 502 })
+    }
 
     // Strip `.html` and 301 to the clean URL when enabled — before any upstream
     // work, since the redirect doesn't depend on the origin response.
@@ -302,8 +336,8 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
       })
     }
 
-    const { targetHost, targetPath } = resolveTarget(pathname, route, verbose)
-    const originOverride = route.changeOrigin ? `http://${route.sourceHost}` : undefined
+    const { targetHost, targetPath } = resolveTarget(pathname, route, upstream, verbose)
+    const originOverride = route.changeOrigin ? `http://${targetHost}` : undefined
 
     // Forward through the pooled raw-socket transport: a reused keepalive pool
     // per upstream (like nginx's `keepalive`) that stays flat under load, where
@@ -313,8 +347,11 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
     // pool declines what it doesn't handle (streaming uploads, Expect, upgrades)
     // via FALLBACK, and bodyless requests can retry through fetch() as a backstop.
     const hasBody = req.body != null && req.method !== 'GET' && req.method !== 'HEAD'
+    const pool = route.upstreamPool
+    if (pool)
+      upstream.activeConnections++
     try {
-      return await proxyViaPool({
+      const res = await proxyViaPool({
         hostPort: targetHost,
         method: req.method,
         path: `${targetPath}${search}`,
@@ -323,18 +360,24 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
         originOverride,
         body: req.body,
       })
+      if (pool)
+        markSuccess(pool, upstream)
+      return res
     }
     catch (err) {
       // Upstream stalled past the configured timeout → 504 (no fetch retry — it
       // would just stall again).
       if (err === TIMEOUT) {
         debugLog('request', `Upstream timeout for ${hostname}`, verbose)
+        if (pool)
+          markFailure(pool, upstream)
         return new Response('Gateway Timeout', { status: 504 })
       }
       // Pool saturated: every connection to this upstream is busy and the wait
       // for a free slot timed out. Fail fast and loud (503) instead of parking
       // the request forever — a parked request with no response is what made the
-      // listener appear "wedged" in production.
+      // listener appear "wedged" in production. Saturation isn't a liveness
+      // failure, so it does not count against the upstream's passive health.
       if (err === POOL_BUSY) {
         debugLog('request', `Upstream pool saturated for ${hostname}`, verbose)
         return new Response('Service Unavailable', { status: 503, headers: { 'retry-after': '1' } })
@@ -348,20 +391,31 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
           headers.set('x-forwarded-host', hostname)
           if (originOverride !== undefined)
             headers.set('origin', originOverride)
-          return await fetch(`http://${targetHost}${targetPath}${search}`, {
+          const res = await fetch(`http://${targetHost}${targetPath}${search}`, {
             method: req.method,
             headers,
             body: req.body,
             redirect: 'manual',
           })
+          if (pool)
+            markSuccess(pool, upstream)
+          return res
         }
         catch (fetchErr) {
           debugLog('request', `Proxy error for ${hostname}: ${fetchErr}`, verbose)
+          if (pool)
+            markFailure(pool, upstream)
           return new Response(`Proxy Error: ${fetchErr}`, { status: 502 })
         }
       }
       debugLog('request', `Proxy error for ${hostname}: ${err}`, verbose)
+      if (pool)
+        markFailure(pool, upstream)
       return new Response(`Proxy Error: ${err}`, { status: 502 })
+    }
+    finally {
+      if (pool)
+        upstream.activeConnections--
     }
   }
 

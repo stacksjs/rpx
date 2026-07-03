@@ -74,13 +74,69 @@ export interface BasicAuthConfig {
   htpasswdFile?: string
 }
 
+/**
+ * One upstream in a load-balanced pool, with an optional relative weight.
+ */
+export interface UpstreamTarget {
+  /** Upstream `host:port`, e.g. `'localhost:3001'` or `'10.0.0.5:3000'`. */
+  url: string
+  /** Relative weight for weighted strategies. @default 1 */
+  weight?: number
+}
+
+/**
+ * Upstream `host:port` to forward to. Either a single string (backward
+ * compatible, degenerate one-item pool) or an array of upstreams — either
+ * plain `host:port` strings or {@link UpstreamTarget} objects with a weight —
+ * to load-balance across.
+ */
+export type ProxyFrom = string | Array<string | UpstreamTarget>
+
+/** How {@link selectUpstream} picks the next upstream from a healthy pool. */
+export type LoadBalancerStrategy = 'round-robin' | 'weighted-round-robin' | 'least-connections'
+
+/**
+ * Health checking for a load-balanced pool. Passive checks (derived from live
+ * traffic outcomes) are always on; active checks (periodic out-of-band probes)
+ * are opt-in via {@link enabled}.
+ */
+export interface HealthCheckConfig {
+  /** Enable active health checks (periodic probing). @default false (passive only) */
+  enabled?: boolean
+  /** HTTP path to probe for active checks. @default '/' */
+  path?: string
+  /** Probe interval ms. @default 10000 */
+  interval?: number
+  /** Probe timeout ms. @default 2000 */
+  timeout?: number
+  /** Consecutive successes to mark healthy again. @default 2 */
+  healthyThreshold?: number
+  /** Consecutive failures to mark unhealthy. @default 3 */
+  unhealthyThreshold?: number
+}
+
+/** Per-route load-balancing configuration. */
+export interface LoadBalancerConfig {
+  /** Upstream-selection strategy. @default 'round-robin' */
+  strategy?: LoadBalancerStrategy
+  /** Health checking behavior for this route's upstream pool. */
+  healthCheck?: HealthCheckConfig
+}
+
 export interface BaseProxyConfig {
   /**
    * Upstream `host:port` to forward to (e.g. `localhost:5173`). Optional when
    * `static` is set (the route serves files from disk instead of proxying).
+   * Provide an array to load-balance across multiple upstreams — see
+   * {@link ProxyFrom}.
    */
-  from?: string // localhost:5173
+  from?: ProxyFrom // localhost:5173
   to: string // stacks.localhost
+  /**
+   * Load-balancing strategy and health-check behavior when {@link from} is an
+   * array of more than one upstream. Ignored for a single-upstream `from`.
+   */
+  loadBalancer?: LoadBalancerConfig
   /**
    * Optional HTTP Basic auth gate for this route. Omit for a public route.
    */
@@ -424,7 +480,10 @@ export interface ProxySetupOptions extends Omit<ProxyOption, 'from'> {
   fromPort: number
   sourceUrl: Pick<URL, 'hostname' | 'host'>
   ssl: SSLConfig | null
+  /** Primary upstream `host:port`, resolved from {@link originalFrom} for display/logging and the legacy single-upstream path. */
   from: string
+  /** The original (possibly multi-upstream) `from` as configured, for load-balancer pool construction. Falls back to {@link from} when unset. */
+  originalFrom?: ProxyFrom
   to: string
   portManager?: PortManager
 }
