@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.25...HEAD)
+
+## 🐛 Bug Fixes
+
+- **test**: guard possibly-undefined Bun.serve port in lb test ([6b17957](https://github.com/stacksjs/rpx/commit/6b17957)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.24...HEAD)
 
 ## 🐛 Bug Fixes
