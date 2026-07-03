@@ -1188,6 +1188,10 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           verbose: option.verbose || false,
           _cachedSSLConfig: mergedOptions._cachedSSLConfig,
           changeOrigin: option.changeOrigin || false,
+          loadBalancer: option.loadBalancer,
+          auth: option.auth,
+          path: option.path,
+          pathRewrites: option.pathRewrites,
         })
       }
       catch (err) {
