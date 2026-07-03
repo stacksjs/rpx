@@ -33,7 +33,7 @@ import {
   generateCertificate,
   SHARED_DEV_HOST_CERT_PATH,
 } from './https'
-import { createUpstreamPool, primaryUpstreamUrl, startHealthChecks, stopHealthChecks } from './load-balancer'
+import { createUpstreamPool, primaryUpstreamUrl, resolveUpstreamUrls, startHealthChecks, stopHealthChecks } from './load-balancer'
 import type { UpstreamPool } from './load-balancer'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import { readAcmeChallenge } from './acme-challenge'
@@ -237,11 +237,26 @@ function pruneRegistryUpstreamPools(liveIds: Set<string>): void {
 }
 
 /**
+ * Whether `pool`'s upstream URLs (in order) still match what `from` currently
+ * resolves to. Order-sensitive because round-robin/weighted-round-robin
+ * cursor state is positional.
+ */
+function poolMatchesFrom(pool: UpstreamPool, from: RegistryEntry['from']): boolean {
+  const currentUrls = resolveUpstreamUrls(from ?? 'localhost:1')
+  if (pool.upstreams.length !== currentUrls.length)
+    return false
+  return pool.upstreams.every((u, i) => u.url === currentUrls[i])
+}
+
+/**
  * Translate a registry entry into the routing shape consumed by the proxy
  * fetch handler. The entry's `from` is normalized to `host:port`, or (for a
  * multi-upstream `from`) load-balanced via a per-entry-id cached pool.
+ *
+ * Exported for tests, which exercise the entry-id-keyed pool cache/reconcile
+ * logic directly rather than through a full daemon + live HTTP round trip.
  */
-function entryToRoute(entry: RegistryEntry): ProxyRoute {
+export function entryToRoute(entry: RegistryEntry): ProxyRoute {
   const cleanUrls = entry.cleanUrls ?? false
   const basePath = normalizePathPrefix(entry.path)
   const auth = resolveAuth(entry.auth)
@@ -258,6 +273,14 @@ function entryToRoute(entry: RegistryEntry): ProxyRoute {
   const fromUrl = new URL(primaryFrom.startsWith('http') ? primaryFrom : `http://${primaryFrom}`)
 
   let pool = registryUpstreamPools.get(entry.id)
+  // A registry entry keeps its `id` across in-place edits (e.g. `from` gets
+  // updated to add/remove/replace an upstream). A cached pool that no longer
+  // matches the entry's current upstream list is stale — rebuild it rather
+  // than silently keep routing to the old addresses.
+  if (pool && !poolMatchesFrom(pool, from)) {
+    stopHealthChecks(pool)
+    pool = undefined
+  }
   if (!pool) {
     pool = createUpstreamPool(from, entry.loadBalancer)
     startHealthChecks(pool)

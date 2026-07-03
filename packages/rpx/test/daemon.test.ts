@@ -7,6 +7,7 @@ import * as process from 'node:process'
 import {
   acquireDaemonLock,
   ensureDaemonRunning,
+  entryToRoute,
   getDaemonPidPath,
   isDaemonRunning,
   readDaemonPid,
@@ -102,6 +103,29 @@ describe('releaseDaemonLock', () => {
 
   it('is a no-op when nothing is locked', async () => {
     await expect(releaseDaemonLock(rpxDir)).resolves.toBeUndefined()
+  })
+})
+
+describe('entryToRoute', () => {
+  it('rebuilds the cached upstream pool when an entry\'s `from` changes in place', () => {
+    const base = {
+      id: `pool-reconcile-${Math.random().toString(36).slice(2)}`,
+      to: 'pool-reconcile.localhost',
+      createdAt: new Date().toISOString(),
+    }
+
+    const route1 = entryToRoute({ ...base, from: ['localhost:1111', 'localhost:2222'] })
+    expect(route1.upstreamPool?.upstreams.map(u => u.url)).toEqual(['localhost:1111', 'localhost:2222'])
+
+    // Same entry id, but the upstream list changed (B swapped for C) — the
+    // cached pool from the first call must not be reused as-is.
+    const route2 = entryToRoute({ ...base, from: ['localhost:1111', 'localhost:3333'] })
+    expect(route2.upstreamPool?.upstreams.map(u => u.url)).toEqual(['localhost:1111', 'localhost:3333'])
+
+    // Calling again with the same `from` should keep reusing that pool
+    // (verifies we didn't regress to rebuilding on every call).
+    const route3 = entryToRoute({ ...base, from: ['localhost:1111', 'localhost:3333'] })
+    expect(route3.upstreamPool).toBe(route2.upstreamPool)
   })
 })
 

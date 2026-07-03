@@ -85,6 +85,18 @@ function normalizeUpstreams(from: ProxyFrom): UpstreamState[] {
 }
 
 /**
+ * The ordered list of upstream `host:port` URLs a {@link ProxyFrom} resolves
+ * to, ignoring weight/other per-upstream config. Lets callers cheaply compare
+ * "does this pool still match this `from`" without rebuilding a full pool —
+ * see `entryToRoute` in daemon.ts, which reconciles a cached pool against a
+ * registry entry's current `from` on every call.
+ */
+export function resolveUpstreamUrls(from: ProxyFrom): string[] {
+  const list = Array.isArray(from) ? from : [from]
+  return list.map(entry => (typeof entry === 'string' ? entry : entry.url))
+}
+
+/**
  * The first upstream's `host:port` from a {@link ProxyFrom}, for call sites
  * that need a single representative address (connection testing before the
  * pool exists, hosts-file checks, id derivation, log lines) rather than the
