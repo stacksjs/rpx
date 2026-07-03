@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.22...v0.11.23)
+
+## 🐛 Bug Fixes
+
+- **daemon**: serve webroot ACME http-01 challenges on :80 ([eae9092](https://github.com/stacksjs/rpx/commit/eae9092)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.23 ([98a499e](https://github.com/stacksjs/rpx/commit/98a499e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.21...v0.11.22)
 
 ## 🐛 Bug Fixes
