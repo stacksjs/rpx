@@ -1,6 +1,6 @@
 import type { IncomingHttpHeaders } from 'node:http'
 import type { MultiProxyConfig, ProxyOption, SharedProxyConfig, SingleProxyConfig } from '../src/types'
-import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import * as http from 'node:http'
 import * as Start from '../src/start'
 import { isMultiProxyConfig } from '../src/utils'
@@ -137,6 +137,15 @@ describe('multi-proxy configurations', () => {
     beforeEach(() => {
       // Spy on startProxies to avoid actually starting servers
       startProxiesSpy = spyOn(Start, 'startProxies').mockImplementation(async () => { })
+    })
+
+    // Without this, the mock leaks into every test file that runs afterward
+    // in the same process — `Start.startProxies` silently no-ops for any
+    // later file expecting the real implementation (confirmed: it broke
+    // start-single-proxy-production-certs.test.ts's assertions with zero
+    // indication why, since the mocked call just resolves immediately).
+    afterEach(() => {
+      startProxiesSpy.mockRestore()
     })
 
     it('passes the correct changeOrigin settings to each proxy', () => {

@@ -1124,7 +1124,16 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   // fronted hosts that lack the CDN's shared-secret header (the CDN injects it).
   const originGuard = mergedOptions.originGuard ? createOriginGuard(mergedOptions.originGuard) : null
 
-  const useSharedHttps = !!sslConfig && (proxyOptions.length > 1 || singlePortMode)
+  // Real per-domain SNI certs (Let's Encrypt PEMs under `productionCerts`) only
+  // work through the shared listener's SNI array — `startServer`'s individual
+  // (non-shared) path below always mints/uses a local dev self-signed cert,
+  // ignoring `productionTlsConfig` entirely (it's never even passed through).
+  // Without this, a single-`proxies`-entry production gateway (the common
+  // one-site-per-box shape) silently served a browser-untrusted dev cert
+  // despite a real cert sitting on disk — confirmed via a live Hetzner deploy
+  // (stacksjs/status#1 Phase 9) where `uptime-status.org`'s real Let's Encrypt
+  // cert was ignored until this forced the shared path for its single route.
+  const useSharedHttps = !!sslConfig && (proxyOptions.length > 1 || singlePortMode || productionTlsConfig.length > 0)
   const useSharedHttp = !sslConfig && singlePortMode && proxyOptions.length > 0
 
   if (useSharedHttps && sslConfig) {
