@@ -264,7 +264,7 @@ describe('active health checks', () => {
   it('probes real backends and marks a dead one unhealthy, then healthy again once it recovers', async () => {
     const upstream = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('ok') })
     try {
-      const deadPort = upstream.port + 1 // nothing listens here initially
+      const deadPort = (upstream.port ?? 0) + 1 // nothing listens here initially
       const pool = createUpstreamPool(
         [`127.0.0.1:${upstream.port}`, `127.0.0.1:${deadPort}`],
         { healthCheck: { enabled: true, interval: 30, timeout: 200, unhealthyThreshold: 2, healthyThreshold: 2 } },
