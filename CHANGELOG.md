@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.24...HEAD)
+
+## 🐛 Bug Fixes
+
+- **lb**: forward loadBalancer config in single-route fallback path ([70c201a](https://github.com/stacksjs/rpx/commit/70c201a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.23...HEAD)
 
 ## 🚀 Features
