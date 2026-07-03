@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.23...HEAD)
+
+## 🚀 Features
+
+- **lb**: multi-upstream load balancing with health checks ([05cf8ac](https://github.com/stacksjs/rpx/commit/05cf8ac)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.22...v0.11.23)
 
 ## 🐛 Bug Fixes
