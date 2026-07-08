@@ -77,7 +77,7 @@
   "devDependencies": {
     "bunfig": "^0.15.6",
     "mitata": "^1.0.34",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "simple-git-hooks": {
     "pre-commit": "bunx lint-staged"
