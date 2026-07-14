@@ -92,9 +92,12 @@ export function safeRelativePath(pathname: string): string | null {
     return null
 
   // `path.posix.normalize` collapses `..`/`.`; a leading `/` keeps it rooted so
-  // a normalized result that still contains `..` means traversal above root.
+  // any real traversal above root is already clamped away. The residual guard is
+  // belt-and-suspenders: reject only a literal `..` *segment*, NOT any substring.
+  // A filename can legitimately contain `..` (e.g. a bundler chunk named
+  // `_...grid_.BSbC0ByJ.js`); a naive `includes('..')` 403s those valid assets.
   const normalized = path.posix.normalize(`/${decoded}`)
-  if (normalized.includes('..'))
+  if (normalized.split('/').includes('..'))
     return null
   // Strip the leading slash to get a path relative to the static root.
   return normalized.replace(/^\/+/, '')

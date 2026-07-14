@@ -62,6 +62,16 @@ describe('safeRelativePath', () => {
     expect(safeRelativePath('/%2e%2e/secret')).toBe('secret')
   })
 
+  it('allows a filename that merely contains .. (not a traversal segment)', () => {
+    // Regression: bundlers emit chunk names like `_...grid_.BSbC0ByJ.js`. The
+    // `..` is inside a single segment, not a `..` path segment, so it must serve
+    // (a substring `includes('..')` guard wrongly 403'd these valid assets).
+    expect(safeRelativePath('/_nuxt/chunks/_...grid_.BSbC0ByJ.js')).toBe('_nuxt/chunks/_...grid_.BSbC0ByJ.js')
+    expect(safeRelativePath('/assets/foo..bar.js')).toBe('assets/foo..bar.js')
+    // A real `..` segment is still rejected/clamped, never escaping root.
+    expect(safeRelativePath('/a/../b')).toBe('b')
+  })
+
   it('rejects backslash and NUL escapes', () => {
     expect(safeRelativePath('/a\\b')).toBeNull()
     expect(safeRelativePath('/a\0b')).toBeNull()

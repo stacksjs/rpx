@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.27...v0.11.28)
+
+## 🐛 Bug Fixes
+
+- **daemon**: rebuild upstream pool when entry's from changes ([e89e29f](https://github.com/stacksjs/rpx/commit/e89e29f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.28 ([1872bfb](https://github.com/stacksjs/rpx/commit/1872bfb)) _(by Chris <chrisbreuer93@gmail.com>)_
+- upgrade to TypeScript 7 ([acceaca](https://github.com/stacksjs/rpx/commit/acceaca)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: refresh bun.lock to pick up pickier 0.1.37 ([7cdb77a](https://github.com/stacksjs/rpx/commit/7cdb77a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.25...HEAD)
 
 ## 🐛 Bug Fixes
