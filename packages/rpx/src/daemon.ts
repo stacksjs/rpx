@@ -37,6 +37,7 @@ import {
 import { createUpstreamPool, primaryUpstreamUrl, resolveUpstreamUrls, startHealthChecks, stopHealthChecks } from './load-balancer'
 import type { UpstreamPool } from './load-balancer'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
+import { resolveImgx } from './imgx'
 import { readAcmeChallenge } from './acme-challenge'
 import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
@@ -280,6 +281,7 @@ export function entryToRoute(entry: RegistryEntry): ProxyRoute {
     return {
       static: resolveStaticRoute(entry.static, cleanUrls),
       cleanUrls,
+      imgx: resolveImgx(entry.imgx),
       basePath,
       auth,
     }
@@ -308,6 +310,7 @@ export function entryToRoute(entry: RegistryEntry): ProxyRoute {
     upstreamPool: pool,
     cleanUrls,
     changeOrigin: entry.changeOrigin ?? false,
+    imgx: resolveImgx(entry.imgx),
     pathRewrites: entry.pathRewrites,
     basePath,
     auth,

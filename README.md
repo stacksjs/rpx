@@ -22,6 +22,7 @@
 - 🛣️ Auto HTTP-to-HTTPS Redirection
 - ✏️ `/etc/hosts` Management _(fully disable-able for real servers)_
 - 🧼 Clean URLs _(removes `.html` extension)_
+- 🏞️ Image Transforms _(imgx integration: `?w=200&h=1200&q=80` on any image response)_
 - 🤖 CLI & Library Support
 
 ## Install
