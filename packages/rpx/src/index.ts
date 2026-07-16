@@ -115,6 +115,9 @@ export type {
   StopDaemonResult,
 } from './daemon'
 
+export { applyImgxTransform, hasImgxParams, parseImgxParams, resolveImgx } from './imgx'
+export type { ImgxTransform, ResolvedImgxOptions } from './imgx'
+
 export { createProxyFetchHandler, createProxyWebSocketHandler, stripBasePath } from './proxy-handler'
 export type { GetRoute, NoRouteOutcome, OnNoRoute, ProxyFetchHandler, ProxyRoute, ProxyServer } from './proxy-handler'
 

@@ -54,6 +54,7 @@ interface CLIOptions {
   verbose?: boolean
   viaDaemon?: boolean
   id?: string
+  imgx?: boolean
 }
 
 cli
@@ -69,6 +70,7 @@ cli
   .option('--start-cwd <path>', 'Current working directory for the dev server')
   .option('--start-env <env>', 'Environment variables for the dev server')
   .option('--change-origin', 'Change the origin of the host header to the target URL')
+  .option('--imgx', 'Transform image responses on the fly from imgix-style query params (?w=200&h=1200&q=80) via imgx')
   .option('--single-port-mode', 'Route all proxies through one shared listener (by Host header) instead of a port per proxy')
   .option('--http-port <port>', 'Port for the shared HTTP listener / redirect (default: 80)')
   .option('--https-port <port>', 'Port for the shared HTTPS listener (default: 443)')
@@ -101,6 +103,7 @@ cli
       },
       verbose: options.verbose || false,
       changeOrigin: options.changeOrigin || false,
+      imgx: options.imgx || false,
       singlePortMode: options.singlePortMode || false,
       httpPort: options.httpPort !== undefined ? Number(options.httpPort) : undefined,
       httpsPort: options.httpsPort !== undefined ? Number(options.httpsPort) : undefined,

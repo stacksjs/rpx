@@ -15,11 +15,13 @@
  */
 import type { ServerWebSocket } from 'bun'
 import type { ResolvedAuth } from './auth'
+import type { ResolvedImgxOptions } from './imgx'
 import type { UpstreamPool, UpstreamState } from './load-balancer'
 import type { ResolvedRedirect } from './redirect'
 import type { ResolvedStaticRoute } from './static-files'
 import type { PathRewrite } from './types'
 import { enforceBasicAuth } from './auth'
+import { applyImgxTransform } from './imgx'
 import { markFailure, markSuccess, selectUpstream } from './load-balancer'
 import { FALLBACK, POOL_BUSY, proxyViaPool, TIMEOUT } from './proxy-pool'
 import { buildRedirectLocation } from './redirect'
@@ -47,6 +49,12 @@ export interface ProxyRoute {
   changeOrigin?: boolean
   /** Per-route path rewrites (vite/nginx-style prefix routing). */
   pathRewrites?: PathRewrite[]
+  /**
+   * When set, transform image responses on the fly from imgix/meema-style
+   * query params (`?w=200&h=1200&q=80`) via the imgx (ts-images) pipeline.
+   * Applies to proxied and static responses alike.
+   */
+  imgx?: ResolvedImgxOptions
   /** When set, serve files from a local directory instead of proxying. */
   static?: ResolvedStaticRoute
   /** When set, answer with an HTTP redirect (Location) instead of proxying/serving. */
@@ -287,7 +295,8 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
     if (route.static) {
       const strip = route.stripBasePathPrefix ?? true
       const staticPath = strip ? stripBasePath(pathname, route.basePath) : pathname
-      return serveStaticFile(staticPath, route.static)
+      const staticRes = await serveStaticFile(staticPath, route.static)
+      return applyImgxTransform(req, pathname, search, route.imgx, staticRes, verbose)
     }
 
     // WebSocket upgrade: hand the socket to Bun and dial the upstream on open.
@@ -362,7 +371,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
       })
       if (pool)
         markSuccess(pool, upstream)
-      return res
+      return await applyImgxTransform(req, pathname, search, route.imgx, res, verbose)
     }
     catch (err) {
       // Upstream stalled past the configured timeout → 504 (no fetch retry — it
@@ -399,7 +408,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
           })
           if (pool)
             markSuccess(pool, upstream)
-          return res
+          return await applyImgxTransform(req, pathname, search, route.imgx, res, verbose)
         }
         catch (fetchErr) {
           debugLog('request', `Proxy error for ${hostname}: ${fetchErr}`, verbose)
