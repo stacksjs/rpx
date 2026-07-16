@@ -361,6 +361,34 @@ export interface OnDemandSitesConfig {
   startupTimeoutMs?: number
 }
 
+/**
+ * imgx integration: serve on-the-fly image transforms driven by
+ * imgix/meema-style query params (`?w=200&h=1200&q=80&format=webp`), powered by
+ * the pure-TypeScript `ts-images` pipeline. `true` enables the defaults; an
+ * object tunes them. Enabled globally or per proxy; transformed variants are
+ * cached in memory keyed by the upstream bytes, so an unchanged image is never
+ * re-encoded twice.
+ */
+export interface ImgxOptions {
+  /** Encode quality used when the request has no `q` param. @default 80 */
+  quality?: number
+  /** Upper clamp for the requested output width. @default 8192 */
+  maxWidth?: number
+  /** Upper clamp for the requested output height. @default 8192 */
+  maxHeight?: number
+  /**
+   * Responses larger than this many bytes pass through untransformed (they
+   * keep streaming; nothing is buffered past the cap). @default 33554432 (32 MiB)
+   */
+  maxInputBytes?: number
+  /** Cache transformed variants in memory. @default true */
+  cache?: boolean
+  /** Total byte budget for the transform cache. @default 67108864 (64 MiB) */
+  cacheMaxBytes?: number
+  /** Max entries in the transform cache. @default 500 */
+  cacheMaxEntries?: number
+}
+
 export interface SharedProxyConfig {
   https: boolean | TlsOption
   cleanup: boolean | CleanupOptions
@@ -370,6 +398,12 @@ export interface SharedProxyConfig {
   start?: StartOptions
   cleanUrls: boolean
   changeOrigin?: boolean // default: false - changes the origin of the host header to the target URL
+  /**
+   * Transform image responses on the fly from imgix/meema-style query params
+   * (`?w=200&h=1200&q=80`) via the imgx (ts-images) pipeline — see {@link ImgxOptions}.
+   * Default: `false`. Overridable per proxy in multi-proxy configs.
+   */
+  imgx?: boolean | ImgxOptions
   regenerateUntrustedCerts?: boolean // If true, will regenerate and re-trust certs that exist but are not trusted by the system.
   /**
    * Route every proxy through a single shared listener instead of binding a
@@ -449,7 +483,7 @@ export type SharedProxyOptions = Partial<SharedProxyConfig>
 export interface SingleProxyConfig extends BaseProxyConfig, SharedProxyConfig {}
 
 export interface MultiProxyConfig extends SharedProxyConfig {
-  proxies: Array<BaseProxyConfig & { cleanUrls: boolean, pathRewrites?: PathRewrite[] }>
+  proxies: Array<BaseProxyConfig & { cleanUrls: boolean, pathRewrites?: PathRewrite[], imgx?: boolean | ImgxOptions }>
 }
 
 export type ProxyConfig = SingleProxyConfig
@@ -467,7 +501,7 @@ export type ProxyOptions = Partial<SingleProxyConfig> | Partial<MultiProxyConfig
  * single and multi shapes without falling back to `any`.
  */
 export type ResolvedProxyOptions = Partial<SingleProxyConfig> & {
-  proxies?: Array<BaseProxyConfig & { cleanUrls?: boolean, changeOrigin?: boolean, pathRewrites?: PathRewrite[] }>
+  proxies?: Array<BaseProxyConfig & { cleanUrls?: boolean, changeOrigin?: boolean, pathRewrites?: PathRewrite[], imgx?: boolean | ImgxOptions }>
 }
 
 export interface SSLConfig {

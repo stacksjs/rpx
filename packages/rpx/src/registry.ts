@@ -14,7 +14,7 @@
  *   - `id` is validated against a strict charset to keep it from escaping
  *     the registry directory.
  */
-import type { BasicAuthConfig, LoadBalancerConfig, PathRewrite, ProxyFrom, StaticRouteConfig } from './types'
+import type { BasicAuthConfig, ImgxOptions, LoadBalancerConfig, PathRewrite, ProxyFrom, StaticRouteConfig } from './types'
 import * as fs from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -50,6 +50,8 @@ export interface RegistryEntry {
   pathRewrites?: PathRewrite[]
   cleanUrls?: boolean
   changeOrigin?: boolean
+  /** Transform image responses from imgix-style query params — see {@link ImgxOptions}. */
+  imgx?: boolean | ImgxOptions
   /** Serve a local directory for this route instead of proxying. */
   static?: string | StaticRouteConfig
   /** Optional HTTP Basic auth gate for this route. */
@@ -300,6 +302,7 @@ export function watchRegistry(
           pathRewrites: entry.pathRewrites,
           cleanUrls: entry.cleanUrls,
           changeOrigin: entry.changeOrigin,
+          imgx: entry.imgx,
           static: entry.static,
           loadBalancer: entry.loadBalancer,
         }))

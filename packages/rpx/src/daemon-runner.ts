@@ -10,7 +10,7 @@
  *
  * The daemon's PID-GC reaps anything we miss if this process dies `kill -9`.
  */
-import type { LoadBalancerConfig, PathRewrite, ProxyFrom, StaticRouteConfig } from './types'
+import type { ImgxOptions, LoadBalancerConfig, PathRewrite, ProxyFrom, StaticRouteConfig } from './types'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as process from 'node:process'
@@ -36,6 +36,8 @@ export interface DaemonRunnerProxy {
   path?: string
   cleanUrls?: boolean
   changeOrigin?: boolean
+  /** Transform image responses from imgix-style query params — see {@link ImgxOptions}. */
+  imgx?: boolean | ImgxOptions
   pathRewrites?: PathRewrite[]
   /** Serve a local directory for this route instead of proxying. */
   static?: string | StaticRouteConfig
@@ -118,6 +120,7 @@ export async function runViaDaemon(opts: DaemonRunnerOptions): Promise<void> {
       createdAt,
       cleanUrls: p.cleanUrls,
       changeOrigin: p.changeOrigin,
+      imgx: p.imgx,
       pathRewrites: p.pathRewrites,
       static: p.static,
       loadBalancer: p.loadBalancer,
