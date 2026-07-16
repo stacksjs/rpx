@@ -52,6 +52,7 @@ export default {
           { text: 'SSL Termination', link: '/features/ssl-termination' },
           { text: 'Load Balancing', link: '/features/load-balancing' },
           { text: 'Request Routing', link: '/features/request-routing' },
+          { text: 'Image Transforms (imgx)', link: '/features/imgx' },
         ],
       },
       {

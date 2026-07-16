@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { BaseProxyConfig, CleanupOptions, LoadBalancerConfig, ProxyConfig, ProxyFrom, ProxyOption, ProxyOptions, ProxySetupOptions, ResolvedProxyOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
+import type { BaseProxyConfig, CleanupOptions, ImgxOptions, LoadBalancerConfig, ProxyConfig, ProxyFrom, ProxyOption, ProxyOptions, ProxySetupOptions, ResolvedProxyOptions, SingleProxyConfig, SSLConfig, StartOptions } from './types'
 import { exec, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
@@ -15,6 +15,7 @@ import { config } from './config'
 import { runViaDaemon } from './daemon-runner'
 import { addHosts, checkHosts, removeHosts } from './hosts'
 import { checkExistingCertificates, cleanupCertificates, generateCertificate, httpsConfig, loadSSLConfig } from './https'
+import { resolveImgx } from './imgx'
 import { createUpstreamPool, primaryUpstreamUrl, startHealthChecks, stopHealthChecks } from './load-balancer'
 import type { UpstreamPool } from './load-balancer'
 import { DefaultPortManager, findAvailablePort, isPortInUse } from './port-manager'
@@ -486,6 +487,7 @@ async function createProxyServer(
   auth?: ResolvedAuth,
   originalFrom?: ProxyFrom,
   loadBalancer?: LoadBalancerConfig,
+  imgx?: boolean | ImgxOptions,
 ): Promise<void> {
   debugLog('proxy', `Creating proxy server ${from} -> ${to} with cleanUrls: ${cleanUrls}`, verbose)
 
@@ -511,6 +513,7 @@ async function createProxyServer(
       upstreamPool: pool,
       cleanUrls: cleanUrls || false,
       changeOrigin: changeOrigin || false,
+      imgx: resolveImgx(imgx),
       basePath: '/',
       auth,
     } as ProxyRoute,
@@ -630,7 +633,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       debugLog('setup', `Using standard ${targetPort === 443 ? 'HTTPS' : 'HTTP'} port ${targetPort} for ${to}`, verbose)
     }
 
-    await createProxyServer(from, to, finalPort, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin, resolveAuth((options as { auth?: import('./types').BasicAuthConfig }).auth), originalFrom, options.loadBalancer)
+    await createProxyServer(from, to, finalPort, sourceUrl, ssl, vitePluginUsage, verbose, cleanUrls, changeOrigin, resolveAuth((options as { auth?: import('./types').BasicAuthConfig }).auth), originalFrom, options.loadBalancer, options.imgx)
   }
   catch (err) {
     debugLog('setup', `Setup failed: ${err}`, verbose)
@@ -735,6 +738,7 @@ export function startProxy(options: ProxyOption): void {
         path: mergedOptions.path,
         cleanUrls: mergedOptions.cleanUrls,
         changeOrigin: mergedOptions.changeOrigin,
+        imgx: mergedOptions.imgx,
         pathRewrites: mergedOptions.pathRewrites,
       }],
       verbose: mergedOptions.verbose,
@@ -796,6 +800,7 @@ export function startProxy(options: ProxyOption): void {
     cleanup: mergedOptions.cleanup,
     vitePluginUsage: mergedOptions.vitePluginUsage,
     changeOrigin: mergedOptions.changeOrigin,
+    imgx: mergedOptions.imgx,
     verbose: mergedOptions.verbose,
     regenerateUntrustedCerts: mergedOptions.regenerateUntrustedCerts,
   }
@@ -855,6 +860,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     verbose: false,
     cleanUrls: false,
     changeOrigin: false,
+    imgx: false,
     regenerateUntrustedCerts: true,
   } as ResolvedProxyOptions
 
@@ -889,7 +895,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   if (mergedOptions.viaDaemon) {
     const isMulti = 'proxies' in mergedOptions && Array.isArray(mergedOptions.proxies)
     const proxies = isMulti
-      ? (mergedOptions.proxies as Array<BaseProxyConfig & { cleanUrls?: boolean, changeOrigin?: boolean }>)
+      ? (mergedOptions.proxies as Array<BaseProxyConfig & { cleanUrls?: boolean, changeOrigin?: boolean, imgx?: boolean | ImgxOptions }>)
         .map(p => ({
           id: p.id,
           from: p.from,
@@ -897,6 +903,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           path: p.path,
           cleanUrls: p.cleanUrls ?? mergedOptions.cleanUrls,
           changeOrigin: p.changeOrigin ?? mergedOptions.changeOrigin,
+          imgx: p.imgx ?? mergedOptions.imgx,
           pathRewrites: p.pathRewrites,
         }))
       : [{
@@ -906,6 +913,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           path: mergedOptions.path,
           cleanUrls: mergedOptions.cleanUrls,
           changeOrigin: mergedOptions.changeOrigin,
+          imgx: mergedOptions.imgx,
           pathRewrites: mergedOptions.pathRewrites,
         }]
     await runViaDaemon({ proxies, verbose })
@@ -1080,6 +1088,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         cleanUrls: proxy.cleanUrls ?? ('cleanUrls' in mergedOptions ? mergedOptions.cleanUrls : false),
         vitePluginUsage: mergedOptions.vitePluginUsage,
         changeOrigin: proxy.changeOrigin ?? mergedOptions.changeOrigin,
+        imgx: proxy.imgx ?? mergedOptions.imgx,
         verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
       } as ProxyOption))
@@ -1092,6 +1101,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         vitePluginUsage: mergedOptions.vitePluginUsage,
         start: ('start' in mergedOptions) ? mergedOptions.start : undefined,
         changeOrigin: mergedOptions.changeOrigin,
+        imgx: mergedOptions.imgx,
         auth: 'auth' in mergedOptions ? mergedOptions.auth : undefined,
         verbose,
         _cachedSSLConfig: mergedOptions._cachedSSLConfig,
@@ -1355,6 +1365,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           verbose: option.verbose || false,
           _cachedSSLConfig: mergedOptions._cachedSSLConfig,
           changeOrigin: option.changeOrigin || false,
+          imgx: option.imgx,
           loadBalancer: option.loadBalancer,
           auth: option.auth,
           path: option.path,
@@ -1397,6 +1408,7 @@ export async function collectRouteEntries(
     const basePath = normalizePathPrefix(routePath)
 
     const auth = resolveAuth(option.auth)
+    const imgx = resolveImgx(option.imgx)
 
     // Redirect route: answer with a Location (e.g. an alternate domain → its
     // canonical host). Takes precedence over proxy/static — no upstream needed.
@@ -1414,7 +1426,7 @@ export async function collectRouteEntries(
       routeEntries.push({
         host: domain,
         path: routePath,
-        route: { static: resolveStaticRoute(option.static, cleanUrls), cleanUrls, basePath, auth },
+        route: { static: resolveStaticRoute(option.static, cleanUrls), cleanUrls, imgx, basePath, auth },
       })
       debugLog('proxies', `Route: ${domain}${routePath ?? ''} → static ${typeof option.static === 'string' ? option.static : option.static.dir}${auth ? ' (auth)' : ''}`, verbose)
     }
@@ -1435,6 +1447,7 @@ export async function collectRouteEntries(
           upstreamPool: pool,
           cleanUrls,
           changeOrigin: option.changeOrigin || false,
+          imgx,
           pathRewrites: option.pathRewrites,
           basePath,
           auth,
