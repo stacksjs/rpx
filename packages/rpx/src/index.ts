@@ -7,8 +7,17 @@ export { config, config as defaultConfig } from './config'
 export {
   addHosts,
   checkHosts,
+  dropStaleRpxHostsLines,
+  filterRpxHostsEntries,
+  findStaleRpxHosts,
+  hostsLineMapsHost,
+  parseHostsLine,
   removeHosts,
+  removeStaleRpxHosts,
+  RPX_HOSTS_MARKER,
 } from './hosts'
+
+export type { HostsFilterResult, HostsLine, StaleRpxHostsResult } from './hosts'
 
 export {
   SHARED_DEV_HOST_CERT_PATH,
