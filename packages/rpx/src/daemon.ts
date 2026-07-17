@@ -55,7 +55,7 @@ import {
   syncDevelopmentDnsFromRegistry,
   tearDownDevelopmentDns,
 } from './dns'
-import { debugLog, shouldReusePort } from './utils'
+import { debugLog, execSudoSync, shouldReusePort } from './utils'
 
 export interface DaemonOptions {
   verbose?: boolean
@@ -1446,7 +1446,13 @@ export async function stopDaemon(opts: StopDaemonOptions = {}): Promise<StopDaem
       await releaseDaemonLock(rpxDir)
       return { stopped: false, pid, forced: false }
     }
-    throw err
+    // The shared daemon re-execs through sudo to bind :443, so stopping it
+    // from an unprivileged session needs sudo too (SUDO_PASSWORD or cached
+    // credentials) rather than dying on EPERM.
+    if (code === 'EPERM')
+      execSudoSync(`kill -TERM ${pid}`)
+    else
+      throw err
   }
 
   const deadline = Date.now() + timeoutMs
@@ -1466,7 +1472,10 @@ export async function stopDaemon(opts: StopDaemonOptions = {}): Promise<StopDaem
     process.kill(pid, 'SIGKILL')
   }
   catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ESRCH')
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'EPERM')
+      execSudoSync(`kill -KILL ${pid}`)
+    else if (code !== 'ESRCH')
       throw err
   }
   // SIGKILL bypasses the cleanup handler, so remove the pid file ourselves.
