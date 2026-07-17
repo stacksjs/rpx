@@ -49,6 +49,7 @@ import { resolveStaticRoute } from './static-files'
 import { resolveAuth } from './auth'
 import { gcStaleEntries, getRegistryDir, isPidAlive, readAll, watchRegistry } from './registry'
 import type { RegistryEntry } from './registry'
+import { removeStaleRpxHosts } from './hosts'
 import {
   reconcileStaleDevelopmentDns,
   syncDevelopmentDnsFromRegistry,
@@ -583,6 +584,12 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   await gcStaleEntries(registryDir, verbose).catch((err) => {
     debugLog('daemon', `initial gc failed: ${err}`, verbose)
   })
+  // Reap rpx-owned /etc/hosts lines whose dev-session owner is gone; they
+  // outrank DNS, so a leftover line hijacks the domain even after the
+  // registry entry and resolver file are cleaned up.
+  await removeStaleRpxHosts({ verbose }).catch((err) => {
+    debugLog('daemon', `stale hosts GC on start failed: ${err}`, verbose)
+  })
   const initialEntries = await readAll(registryDir, verbose)
   rebuild(initialEntries)
 
@@ -851,6 +858,14 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       })
       .catch((err) => {
         debugLog('daemon', `periodic gc failed: ${err}`, verbose)
+      })
+    removeStaleRpxHosts({ verbose })
+      .then((removed) => {
+        if (removed.length > 0)
+          debugLog('daemon', `gc reaped stale hosts entries: ${removed.join(', ')}`, verbose)
+      })
+      .catch((err) => {
+        debugLog('daemon', `periodic hosts gc failed: ${err}`, verbose)
       })
   }, gcIntervalMs)
   // Don't keep the event loop alive just for GC.
@@ -1136,6 +1151,7 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
     debugLog('daemon', `DNS setup on start failed: ${err}`, verbose)
   })
   await gcStaleEntries(registryDir, verbose).catch(() => {})
+  await removeStaleRpxHosts({ verbose }).catch(() => {})
   const watcher = watchRegistry(
     (entries) => {
       syncDevelopmentDnsFromRegistry(entries, { rpxDir, verbose, ownerPid: process.pid }).catch((err) => {
@@ -1146,6 +1162,7 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
   )
   const gcInterval = setInterval(() => {
     gcStaleEntries(registryDir, verbose).catch(() => {})
+    removeStaleRpxHosts({ verbose }).catch(() => {})
   }, gcIntervalMs)
   gcInterval.unref?.()
 
