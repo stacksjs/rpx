@@ -1,5 +1,27 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.28...v0.11.29)
+
+## 🐛 Bug Fixes
+
+- **https**: never wildcard a public suffix in dev certs ([597a9c5](https://github.com/stacksjs/rpx/commit/597a9c5)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **daemon**: fall back to sudo when stopping the root daemon ([37587e2](https://github.com/stacksjs/rpx/commit/37587e2)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **daemon**: reap stale rpx hosts entries alongside registry GC ([0816bcd](https://github.com/stacksjs/rpx/commit/0816bcd)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **hosts**: exact host matching and pid-stamped rpx markers ([7804fb8](https://github.com/stacksjs/rpx/commit/7804fb8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.29 ([9d6ffdb](https://github.com/stacksjs/rpx/commit/9d6ffdb)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: bump bun.sh to ^1.3.14 ([e3e3259](https://github.com/stacksjs/rpx/commit/e3e3259)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📄 Miscellaneous
+
+- Merge commit '10f6f9d3' ([57f6d49](https://github.com/stacksjs/rpx/commit/57f6d49)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.27...v0.11.28)
 
 ## 🐛 Bug Fixes
