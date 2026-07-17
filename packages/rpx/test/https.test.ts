@@ -14,16 +14,28 @@ describe('https', () => {
   })
 
   describe('generateWildcardPatterns', () => {
-    it('generates wildcard patterns for a domain', () => {
+    it('never wildcards a bare two-label domain (would cover a whole TLD)', () => {
       const patterns = generateWildcardPatterns('example.com')
       expect(patterns).toContain('example.com')
-      expect(patterns).toContain('*.com')
+      expect(patterns).not.toContain('*.com')
     })
 
     it('generates patterns for subdomains', () => {
       const patterns = generateWildcardPatterns('api.example.com')
       expect(patterns).toContain('api.example.com')
       expect(patterns).toContain('*.example.com')
+    })
+
+    it('never wildcards a second-level public suffix like co.uk', () => {
+      const patterns = generateWildcardPatterns('example.co.uk')
+      expect(patterns).toContain('example.co.uk')
+      expect(patterns).not.toContain('*.co.uk')
+    })
+
+    it('still wildcards a registered domain under a second-level suffix', () => {
+      const patterns = generateWildcardPatterns('api.example.co.uk')
+      expect(patterns).toContain('api.example.co.uk')
+      expect(patterns).toContain('*.example.co.uk')
     })
 
     it('handles single-level domains', () => {

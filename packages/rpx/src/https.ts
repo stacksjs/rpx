@@ -203,9 +203,23 @@ export function generateWildcardPatterns(domain: string): string[] {
   const patterns = new Set<string>()
   patterns.add(domain)
 
+  // Only wildcard real subdomains: `api.example.com` → `*.example.com`. A
+  // two-label domain must stay bare — `example.com` → `*.com` wildcards an
+  // entire public suffix, which modern system verifiers (macOS 26 Secure
+  // Transport) reject as CSSMERR_TP_CERT_SUSPENDED, and which would let this
+  // dev cert impersonate every site under the TLD. The same applies when the
+  // wildcard base itself is a second-level public suffix: `example.co.uk`
+  // must not produce `*.co.uk` — while a deeper subdomain like
+  // `api.example.co.uk` still gets `*.example.co.uk`.
   const parts = domain.split('.')
-  if (parts.length >= 2)
-    patterns.add(`*.${parts.slice(1).join('.')}`)
+  if (parts.length >= 3) {
+    const tld = parts[parts.length - 1]
+    const sld = parts[parts.length - 2]
+    const secondLevelSuffixes = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu'])
+    const baseIsPublicSuffix = parts.length === 3 && tld.length === 2 && secondLevelSuffixes.has(sld)
+    if (!baseIsPublicSuffix)
+      patterns.add(`*.${parts.slice(1).join('.')}`)
+  }
 
   return Array.from(patterns)
 }
@@ -510,7 +524,14 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
       const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
 echo "Trusting RPX Root CA"
-sudo security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
+# SUDO_PASSWORD (e.g. from a Stacks app's .env) makes the trust step
+# non-interactive. Without it, fall back to a normal sudo prompt.
+if [ -n "$SUDO_PASSWORD" ]
+then
+  printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
+else
+  sudo security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
+fi
 echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `
@@ -523,7 +544,14 @@ echo "If you still see certificate warnings, type 'thisisunsafe' on the warning 
       const scriptPath = join(sslDir, 'trust-rpx-cert.sh')
       const scriptContent = `#!/bin/bash
 echo "Trusting RPX Root CA"
-sudo security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
+# SUDO_PASSWORD (e.g. from a Stacks app's .env) makes the trust step
+# non-interactive. Without it, fall back to a normal sudo prompt.
+if [ -n "$SUDO_PASSWORD" ]
+then
+  printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
+else
+  sudo security add-trusted-cert ${MACOS_CA_TRUST_FLAGS} -k ${MACOS_SYSTEM_KEYCHAIN} "${rootCAPaths.caCertPath}"
+fi
 echo "Root CA trusted! Please restart your browser."
 echo "If you still see certificate warnings, type 'thisisunsafe' on the warning page in Chrome/Arc browsers."
 `

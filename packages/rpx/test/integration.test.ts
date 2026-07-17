@@ -45,6 +45,6 @@ describe('Integration', () => {
     // Test a utility function
     const patterns = Https.generateWildcardPatterns('example.com')
     expect(patterns).toContain('example.com')
-    expect(patterns).toContain('*.com')
+    expect(patterns).not.toContain('*.com')
   })
 })
