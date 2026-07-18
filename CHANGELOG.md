@@ -1,5 +1,27 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.29...v0.11.30)
+
+## 🐛 Bug Fixes
+
+- **start**: wire on-demand TLS into the startProxies shared path ([99512c7](https://github.com/stacksjs/rpx/commit/99512c7)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **on-demand**: adopt on-disk certs despite negative cache ([1cd1ac0](https://github.com/stacksjs/rpx/commit/1cd1ac0)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: require tlsx ^0.13.13 for bounded ACME requests ([0092b9f](https://github.com/stacksjs/rpx/commit/0092b9f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- **start**: restore spies after each start.test.ts test ([9403b26](https://github.com/stacksjs/rpx/commit/9403b26)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.30 ([6a9c988](https://github.com/stacksjs/rpx/commit/6a9c988)) _(by Chris <chrisbreuer93@gmail.com>)_
+- release v0.11.29 ([b0e0e8b](https://github.com/stacksjs/rpx/commit/b0e0e8b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- release v0.11.28 ([e885c4e](https://github.com/stacksjs/rpx/commit/e885c4e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.28...v0.11.29)
 
 ## 🐛 Bug Fixes
