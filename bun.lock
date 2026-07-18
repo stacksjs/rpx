@@ -5,7 +5,7 @@
     "": {
       "name": "@stacksjs/rpx",
       "devDependencies": {
-        "@stacksjs/tlsx": "^0.13.9",
+        "@stacksjs/tlsx": "^0.13.13",
         "better-dx": "^0.2.15",
         "typescript": "^7.0.2",
         "vite": "^8.0.1",
@@ -13,21 +13,21 @@
     },
     "packages/bun-plugin": {
       "name": "bun-plugin-rpx",
-      "version": "0.11.27",
+      "version": "0.11.29",
       "dependencies": {
         "@stacksjs/rpx": "workspace:*",
       },
     },
     "packages/rpx": {
       "name": "@stacksjs/rpx",
-      "version": "0.11.27",
+      "version": "0.11.29",
       "bin": {
         "rpx": "./dist/bin/cli.js",
         "reverse-proxy": "./dist/bin/cli.js",
       },
       "dependencies": {
         "@stacksjs/clapp": "^0.2.10",
-        "@stacksjs/tlsx": "^0.13.9",
+        "@stacksjs/tlsx": "^0.13.13",
       },
       "devDependencies": {
         "bunfig": "^0.15.6",
@@ -37,10 +37,10 @@
     },
     "packages/vite-plugin": {
       "name": "vite-plugin-rpx",
-      "version": "0.11.27",
+      "version": "0.11.29",
       "dependencies": {
         "@stacksjs/rpx": "workspace:*",
-        "@stacksjs/tlsx": "^0.13.9",
+        "@stacksjs/tlsx": "^0.13.13",
       },
     },
   },
@@ -118,7 +118,7 @@
 
     "@stacksjs/stx": ["@stacksjs/stx@0.2.82", "", { "dependencies": { "@cwcss/crosswind": "^0.2.6", "@stacksjs/clapp": "^0.2.0", "@stacksjs/desktop": "0.2.82", "@stacksjs/sanitizer": "0.2.82", "@stacksjs/ts-craft": "^0.0.2", "@stacksjs/ts-i18n": "^0.1.11", "bun-plugin-stx": "0.2.82", "bunfig": "^0.15.6", "stx-router": "0.2.82", "ts-broadcasting": "^0.0.4", "ts-images": "^0.1.8", "ts-syntax-highlighter": "^0.2.1" }, "bin": { "stx": "./dist/cli.js" } }, "sha512-k8pgFx3uBW8+QwdBzMQWMgC5RtLpmEvrlLW6NMzkop34jZppz8L5L/1vfs73mVvnKvnh6IqAT0Hizgp1R8umSg=="],
 
-    "@stacksjs/tlsx": ["@stacksjs/tlsx@0.13.9", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0" }, "bin": { "tlsx": "./dist/bin/cli.js" } }, "sha512-uBBqOjlJFUyFLg6jfD77Roodnvip1xoXbNZduDKCZEceoYFOYgTOuNoxaG0ZZU2XrteIiz/iHH24hl6NNd7O2A=="],
+    "@stacksjs/tlsx": ["@stacksjs/tlsx@0.13.13", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0" }, "bin": { "tlsx": "./dist/bin/cli.js" } }, "sha512-L86ODgK13VugFxsYlNsc4l/HLjMQDlY2yDu7yH5N3IVDcW0FzGyyL8ZElmgx7T5IthpJ03MABjEZLmSaDCT88w=="],
 
     "@stacksjs/ts-avif": ["@stacksjs/ts-avif@0.1.0", "", {}, "sha512-ytcta6ZhZeZwXJTcWlTraNLBsqL4imOfruSkJ2PwEp5RjHb4eSoqb21W4u7HLILRcILr7B1nOkIMeQct4Pozbw=="],
 
