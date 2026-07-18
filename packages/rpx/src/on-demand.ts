@@ -189,6 +189,14 @@ export class OnDemandCertManager {
 
     const until = this.negativeCache.get(host)
     if (until !== undefined && Date.now() < until) {
+      // A cert may have been placed on disk externally since the failure (e.g.
+      // via `tlsx acme:issue`, the documented recovery path) — adopt it now
+      // instead of refusing until the window expires. The negative cache still
+      // gates actual ACME re-issuance attempts.
+      if (await this.loadFromDisk(host)) {
+        this.negativeCache.delete(host)
+        return true
+      }
       debugLog('on-demand', `${host} negatively cached for ${until - Date.now()}ms`, this.verbose)
       return false
     }

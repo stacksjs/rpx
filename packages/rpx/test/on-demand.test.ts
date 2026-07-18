@@ -201,6 +201,30 @@ describe('OnDemandCertManager.ensureCert', () => {
     expect(attempts).toBe(1)
   })
 
+  it('adopts an externally placed on-disk cert even while negatively cached', async () => {
+    let attempts = 0
+    const issuer: CertIssuer = async () => {
+      attempts++
+      throw new Error('boom')
+    }
+    const m = new OnDemandCertManager({
+      config: { enabled: true, allowedSuffixes: ['example.com'] },
+      certsDir: dir,
+      issuer,
+      negativeCacheMs: 10_000,
+    })
+    expect(await m.ensureCert('fixed.example.com')).toBe(false)
+    expect(attempts).toBe(1)
+    // Operator recovers out-of-band (e.g. `tlsx acme:issue`) while the failure
+    // is still negatively cached.
+    await fsp.writeFile(path.join(dir, 'fixed.example.com.crt'), 'disk-cert')
+    await fsp.writeFile(path.join(dir, 'fixed.example.com.key'), 'disk-key')
+    expect(await m.ensureCert('fixed.example.com')).toBe(true)
+    expect(m.sniEntries().find(e => e.serverName === 'fixed.example.com')?.cert).toBe('disk-cert')
+    // The negative cache still gated ACME: no further issuance attempt ran.
+    expect(attempts).toBe(1)
+  })
+
   it('refuses obviously-invalid hostnames before approval/issuance', async () => {
     const { issuer, calls } = fakeIssuer()
     const m = new OnDemandCertManager({
