@@ -30,6 +30,7 @@ import { isWildcardPattern } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
 import { buildSniTlsConfig } from './sni'
 import type { SniTlsEntry } from './sni'
+import { OnDemandCertManager } from './on-demand'
 import { resolveStaticRoute } from './static-files'
 import { debugLog, getSudoPassword, safeStringify, shouldReusePort } from './utils'
 
@@ -643,20 +644,40 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   }
 }
 
-export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsPort = 443, acmeChallengeWebroot?: string): void {
+export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsPort = 443, acmeChallengeWebroot?: string, onDemand?: OnDemandCertManager | null): void {
   debugLog('redirect', `Starting HTTP redirect server on port ${httpPort}`, verbose)
 
   const server = http
     .createServer((req, res) => {
-      // Serve ACME http-01 challenge tokens (when a webroot is configured) so
-      // certs can be issued/renewed without taking the gateway down to free :80.
-      if (acmeChallengeWebroot && req.url) {
-        const pathname = req.url.split('?', 1)[0]
-        const keyAuth = readAcmeChallenge(acmeChallengeWebroot, pathname)
-        if (keyAuth != null) {
-          debugLog('redirect', `Serving ACME challenge ${pathname}`, verbose)
-          res.writeHead(200, { 'content-type': 'text/plain' })
-          res.end(keyAuth)
+      const pathname = req.url ? req.url.split('?', 1)[0] : ''
+
+      // ACME http-01 challenges: rpx's on-demand manager keeps its tokens in
+      // memory; an external `tlsx acme:renew --webroot` drops them on disk.
+      // Serve both so certs issue/renew without taking the gateway down.
+      if (pathname.startsWith('/.well-known/acme-challenge/')) {
+        if (onDemand) {
+          const keyAuth = onDemand.challengeStore.handlePath(pathname)
+          if (keyAuth !== undefined) {
+            debugLog('redirect', `Serving on-demand ACME challenge ${pathname}`, verbose)
+            res.writeHead(200, { 'content-type': 'text/plain' })
+            res.end(keyAuth)
+            return
+          }
+        }
+        if (acmeChallengeWebroot) {
+          const keyAuth = readAcmeChallenge(acmeChallengeWebroot, pathname)
+          if (keyAuth != null) {
+            debugLog('redirect', `Serving ACME challenge ${pathname}`, verbose)
+            res.writeHead(200, { 'content-type': 'text/plain' })
+            res.end(keyAuth)
+            return
+          }
+        }
+        // With on-demand active a challenge miss is a real 404 (Let's Encrypt
+        // must not follow a redirect for a token we never registered).
+        if (onDemand) {
+          res.writeHead(404, { 'content-type': 'text/plain' })
+          res.end('challenge not found')
           return
         }
       }
@@ -665,6 +686,11 @@ export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsP
       // Strip any incoming port so we can append the HTTPS port when it's
       // non-standard (e.g. redirecting `:80` → `:8443` in a custom-port setup).
       const hostname = rawHost.includes(':') ? rawHost.slice(0, rawHost.indexOf(':')) : rawHost
+      // First plaintext hit for an approved-but-uncovered host: kick off
+      // issuance so the cert exists for the subsequent HTTPS request.
+      if (onDemand && hostname && !onDemand.hasCert(hostname))
+        onDemand.ensureCert(hostname).catch(() => {})
+
       const target = httpsPort === 443 ? hostname : `${hostname}:${httpsPort}`
       debugLog('redirect', `Redirecting request from ${rawHost}${req.url} to https://${target}`, verbose)
       res.writeHead(301, {
@@ -802,6 +828,10 @@ function isHostsManagementEnabled(options: ProxyOptions): boolean {
   return true
 }
 
+// `options` IS used below; pickier's no-unused-vars mis-fires on this fn after
+// the on-demand wiring (its --fix would wrongly rename to `_options`) — the
+// same false positive documented on runDaemon in daemon.ts.
+// eslint-disable-next-line pickier/no-unused-vars
 export async function startProxies(options?: ProxyOptions): Promise<void> {
   // Allow re-using a previous SSL config between multiple startProxies calls
   // This is particularly important for the Vite plugin
@@ -1141,10 +1171,75 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
     const routeEntries = await collectRouteEntries(proxyOptions, hostsEnabled, verbose)
 
-    // Start HTTP→HTTPS redirect on the configured HTTP port if it's free.
+    // On-demand TLS (opt-in): lazily issue a real cert for an approved-but-
+    // unknown host the first time it's needed — the same manager and config
+    // shape the daemon path uses. Without this, a gateway launched via
+    // `startProxies` (e.g. ts-cloud's launcher) never issued anything: no ACME
+    // attempt, no log line, and externally-placed certs only got adopted after
+    // a restart. Holds the live SNI set; a newly issued/adopted cert triggers
+    // a listener rebuild below (Bun can't hot-update tls — see on-demand.ts).
+    let sharedServer: ReturnType<typeof Bun.serve> | null = null
+    const onDemandCfg = mergedOptions.onDemandTls
+    const onDemand: OnDemandCertManager | null = onDemandCfg?.enabled
+      ? new OnDemandCertManager({
+          config: onDemandCfg,
+          // Matches the daemon's fallback chain (getDaemonRpxDir() inlined to
+          // keep start.ts free of the daemon module graph).
+          certsDir: onDemandCfg.certsDir ?? mergedOptions.productionCerts?.certsDir ?? path.join(os.homedir(), '.stacks', 'rpx', 'on-demand-certs'),
+          initial: productionTlsConfig,
+          verbose,
+          onCertAdded: (entries) => { void rebuildSharedTls(entries) },
+        })
+      : null
+
+    /**
+     * (Re)bind the shared listener with the newest SNI set. Single-flight,
+     * mirroring the daemon's rebuild: concurrent cert events record the newest
+     * desired set and one in-flight rebuild converges to it. `createShared-
+     * ProxyServer` returns null on bind failure (e.g. EADDRINUSE while the old
+     * socket drains), so retry on a short backoff instead of giving up.
+     */
+    let rebuildLatest: SniTlsEntry[] | null = null
+    let rebuilding = false
+    async function rebuildSharedTls(entries: SniTlsEntry[]): Promise<void> {
+      rebuildLatest = entries
+      if (rebuilding)
+        return
+      rebuilding = true
+      try {
+        while (rebuildLatest) {
+          const target = rebuildLatest
+          rebuildLatest = null
+          debugLog('proxies', `rebuilding :${httpsPort} with ${target.length} SNI cert(s)`, verbose)
+          if (sharedServer) {
+            activeServers.delete(sharedServer as unknown as http.Server)
+            sharedServer.stop(false)
+          }
+          let rebound = false
+          for (let attempt = 0; !rebound && attempt < 60; attempt++) {
+            const s = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig: target, originGuard, verbose })
+            if (s) {
+              sharedServer = s
+              rebound = true
+              break
+            }
+            await new Promise(resolve => setTimeout(resolve, Math.min(25 * 2 ** Math.min(attempt, 4), 500)))
+          }
+          if (!rebound)
+            log.error(`rpx: CRITICAL — could not rebind :${httpsPort} after cert issuance; HTTPS unbound until the next cert event or a gateway restart`)
+        }
+      }
+      finally {
+        rebuilding = false
+      }
+    }
+
+    // Start HTTP→HTTPS redirect on the configured HTTP port if it's free. The
+    // :80 server also serves the on-demand challenge store and kicks reactive
+    // issuance on the first plaintext hit for an uncovered host.
     const isHttpPortBusy = await isPortInUse(httpPort, '0.0.0.0', verbose)
     if (!isHttpPortBusy) {
-      startHttpRedirectServer(verbose, httpPort, httpsPort, mergedOptions.acmeChallengeWebroot)
+      startHttpRedirectServer(verbose, httpPort, httpsPort, mergedOptions.acmeChallengeWebroot, onDemand)
     }
 
     const isPortBusy = await isPortInUse(httpsPort, '0.0.0.0', verbose)
@@ -1155,8 +1250,12 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       return
     }
 
-    const server = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig, originGuard, verbose })
-    if (!server) {
+    // Seed from the manager's live set when on-demand is active (it may have
+    // adopted certs from `certsDir` beyond the initial production set); until
+    // it holds anything, serve the pre-on-demand TLS config as-is.
+    const initialTls = onDemand && onDemand.sniEntries().length > 0 ? onDemand.sniEntries() : sslConfig
+    sharedServer = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig: initialTls, originGuard, verbose })
+    if (!sharedServer) {
       log.error(`Shared HTTPS proxy failed to bind :${httpsPort}; not exiting`)
       return
     }
