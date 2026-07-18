@@ -1,5 +1,5 @@
 import type { ProxyOption } from '../src/types'
-import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import * as http from 'node:http'
 import * as https from 'node:https'
 import * as net from 'node:net'
@@ -10,6 +10,13 @@ import { ProcessManager } from '../src/process-manager'
 import * as Start from '../src/start'
 
 describe('start', () => {
+  // bun test shares one module registry across files in the process — restore
+  // every spy after each test so these node:http/net/https mocks don't leak
+  // into later files that bind real servers (e.g. start-on-demand.test.ts).
+  afterEach(() => {
+    mock.restore()
+  })
+
   // Mock dependencies
   beforeEach(() => {
     // Mock process.exit to prevent tests from actually exiting
