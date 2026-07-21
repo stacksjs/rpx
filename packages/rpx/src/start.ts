@@ -28,7 +28,7 @@ import { resolveAuth } from './auth'
 import type { ResolvedAuth } from './auth'
 import { isWildcardPattern } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
-import { buildSniTlsConfig } from './sni'
+import { buildSniTlsConfig, withLowMemoryTls } from './sni'
 import type { SniTlsEntry } from './sni'
 import { OnDemandCertManager } from './on-demand'
 import { resolveStaticRoute } from './static-files'
@@ -1440,7 +1440,7 @@ export function createSharedProxyServer(opts: {
       reusePort: shouldReusePort(),
       ...(sslConfig
         ? {
-            tls: Array.isArray(sslConfig)
+            tls: withLowMemoryTls(Array.isArray(sslConfig)
               ? sslConfig.map(entry => ({
                   serverName: entry.serverName,
                   key: entry.key,
@@ -1452,7 +1452,7 @@ export function createSharedProxyServer(opts: {
                   ca: sslConfig.ca,
                   requestCert: false,
                   rejectUnauthorized: false,
-                },
+                }),
           }
         : {}),
       fetch(req: Request, server: unknown) {

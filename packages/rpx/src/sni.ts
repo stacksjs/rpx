@@ -19,6 +19,21 @@ export interface SniTlsEntry {
 }
 
 /**
+ * Production gateways keep many TLS contexts alive and may serve large,
+ * concurrent responses. Ask OpenSSL to release per-connection read and write
+ * buffers as soon as they are idle instead of retaining their peak size for the
+ * lifetime of every keep-alive socket.
+ */
+export function withLowMemoryTls(tls: Bun.TLSOptions): Bun.TLSOptions
+export function withLowMemoryTls(tls: Bun.TLSOptions[]): Bun.TLSOptions[]
+export function withLowMemoryTls(tls: Bun.TLSOptions | Bun.TLSOptions[]): Bun.TLSOptions | Bun.TLSOptions[]
+export function withLowMemoryTls(tls: Bun.TLSOptions | Bun.TLSOptions[]): Bun.TLSOptions | Bun.TLSOptions[] {
+  if (Array.isArray(tls))
+    return tls.map(entry => ({ ...entry, lowMemoryMode: true }))
+  return { ...tls, lowMemoryMode: true }
+}
+
+/**
  * Map a PEM filename under a `certsDir` to its SNI server name. Returns `null`
  * for files that aren't `<name>.crt`. The wildcard convention
  * `_wildcard.<apex>.crt` maps to server name `*.<apex>`.

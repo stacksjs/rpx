@@ -39,7 +39,7 @@ import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-ha
 import { readAcmeChallenge } from './acme-challenge'
 import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
-import { buildSniTlsConfig } from './sni'
+import { buildSniTlsConfig, withLowMemoryTls } from './sni'
 import { OnDemandCertManager } from './on-demand'
 import { createSiteResolver } from './site-resolver'
 import { SiteSupervisor } from './site-supervisor'
@@ -676,15 +676,15 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   /** Build the TLS option for Bun.serve from the current SNI set (or dev cert). */
   function tlsFor(entries: Array<{ serverName: string, cert: string, key: string }>): Bun.TLSOptions | Bun.TLSOptions[] {
     if (entries.length > 0)
-      return entries.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
+      return withLowMemoryTls(entries.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key })))
     // No real certs: fall back to the dev self-signed shared cert.
-    return {
+    return withLowMemoryTls({
       key: devSslConfig!.key,
       cert: devSslConfig!.cert,
       ca: devSslConfig!.ca,
       requestCert: false,
       rejectUnauthorized: false,
-    }
+    })
   }
 
   /** (Re)create the :443 listener. Factored so on-demand can rebuild it. */
@@ -963,9 +963,9 @@ async function readClusterSni(rpxDir: string): Promise<ClusterSni> {
 /** Build the Bun.serve `tls` option from a published SNI set (or the dev fallback). */
 function clusterTlsFor(cfg: ClusterSni): Bun.TLSOptions | Bun.TLSOptions[] | undefined {
   if (cfg.sni.length > 0)
-    return cfg.sni.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key }))
+    return withLowMemoryTls(cfg.sni.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key })))
   if (cfg.dev)
-    return { key: cfg.dev.key, cert: cfg.dev.cert, ca: cfg.dev.ca, requestCert: false, rejectUnauthorized: false }
+    return withLowMemoryTls({ key: cfg.dev.key, cert: cfg.dev.cert, ca: cfg.dev.ca, requestCert: false, rejectUnauthorized: false })
   return undefined // no certs published yet; handshakes fail until the first SIGHUP reload
 }
 
