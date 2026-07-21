@@ -65,9 +65,9 @@
   },
   "devDependencies": {
     "@stacksjs/tlsx": "^0.13.13",
-    "better-dx": "^0.2.15",
+    "better-dx": "^0.2.20",
     "typescript": "^7.0.2",
-    "vite": "^8.0.1"
+    "vite": "^8.1.5"
   },
   "workspaces": [
     "packages/*"
