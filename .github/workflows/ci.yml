@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.1.2
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.1.2
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2.1.2
@@ -89,7 +89,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PANTRY_PUBLISH_COMMITS == 'true'
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
