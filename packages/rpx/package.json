@@ -71,11 +71,11 @@
     "zip:darwin-arm64": "zip -j bin/rpx-darwin-arm64.zip bin/rpx-darwin-arm64"
   },
   "dependencies": {
-    "@stacksjs/clapp": "^0.2.10",
+    "@stacksjs/clapp": "^0.2.12",
     "@stacksjs/tlsx": "^0.13.13"
   },
   "devDependencies": {
-    "bunfig": "^0.15.6",
+    "bunfig": "^0.15.15",
     "mitata": "^1.0.34",
     "typescript": "^7.0.2"
   },
