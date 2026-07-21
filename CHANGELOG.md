@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.30...v0.11.31)
+
+## 🚀 Features
+
+- **dev**: expose explicit system authorization ([e9474a6](https://github.com/stacksjs/rpx/commit/e9474a6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.31 ([095d714](https://github.com/stacksjs/rpx/commit/095d714)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.29...v0.11.30)
 
 ## 🐛 Bug Fixes
