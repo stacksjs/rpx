@@ -3,6 +3,50 @@ import { describe, expect, it, spyOn } from 'bun:test'
 import * as utils from '../src/utils'
 
 describe('utils', () => {
+  describe('authorizeSystemAccess', () => {
+    it('accepts cached sudo credentials without prompting', () => {
+      const commands: string[] = []
+      const authorized = utils.authorizeSystemAccess({
+        exec: ((command: string) => {
+          commands.push(command)
+          return Buffer.from('')
+        }) as never,
+      })
+
+      expect(authorized).toBe(true)
+      expect(commands).toEqual(['sudo -n true'])
+    })
+
+    it('fails immediately for non-interactive callers without cached credentials', () => {
+      const commands: string[] = []
+      const authorized = utils.authorizeSystemAccess({
+        exec: ((command: string) => {
+          commands.push(command)
+          throw new Error('sudo password required')
+        }) as never,
+      })
+
+      expect(authorized).toBe(false)
+      expect(commands).toEqual(['sudo -n true'])
+    })
+
+    it('prompts only when an explicit setup caller requests it', () => {
+      const commands: string[] = []
+      const authorized = utils.authorizeSystemAccess({
+        interactive: true,
+        exec: ((command: string) => {
+          commands.push(command)
+          if (command === 'sudo -n true')
+            throw new Error('sudo password required')
+          return Buffer.from('')
+        }) as never,
+      })
+
+      expect(authorized).toBe(true)
+      expect(commands).toEqual(['sudo -n true', 'sudo -v'])
+    })
+  })
+
   describe('shouldReusePort', () => {
     const original = process.env.RPX_REUSE_PORT
     const restore = () => {

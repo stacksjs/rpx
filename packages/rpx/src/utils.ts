@@ -26,6 +26,44 @@ export function isProcessElevated(): boolean {
   }
 }
 
+export interface SystemAuthorizationOptions {
+  /** Prompt through sudo when cached credentials are unavailable. */
+  interactive?: boolean
+  /** Command runner override used by embedders and tests. */
+  exec?: typeof execSync
+}
+
+/**
+ * Ensure rpx may perform its privileged setup work without hiding a prompt in
+ * daemon startup. Normal dev-server probes are non-interactive and return
+ * false immediately. Explicit setup commands opt into one visible `sudo -v`
+ * prompt, which also seeds sudo's credential cache for the daemon launch.
+ */
+export function authorizeSystemAccess(options: SystemAuthorizationOptions = {}): boolean {
+  if (process.platform === 'win32')
+    return true
+  if (isProcessElevated() || !!getSudoPassword())
+    return true
+
+  const run = options.exec ?? execSync
+  try {
+    run('sudo -n true', { stdio: 'ignore' })
+    return true
+  }
+  catch {
+    if (!options.interactive)
+      return false
+  }
+
+  try {
+    run('sudo -v', { stdio: 'inherit' })
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
 /**
  * Execute a command with sudo, using SUDO_PASSWORD if available
  */
