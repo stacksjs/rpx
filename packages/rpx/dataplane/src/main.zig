@@ -17,7 +17,9 @@
 //! path (the new `std.Io` exposes no socket→socket splice; file→socket offload
 //! lives on `Stream.Writer.sendFile`).
 const std = @import("std");
-const http = @import("http.zig");
+const http = @import("http");
+const build_options = @import("build_options");
+const waf_engine = @import("waf_hook");
 const net = std.Io.net;
 
 const BUF_SIZE: usize = 64 * 1024;
@@ -40,6 +42,16 @@ pub fn main(init: std.process.Init) !void {
     // Optional bind host; default to every interface (a real front-end). Pass
     // 127.0.0.1 to restrict to loopback (what the local bench uses).
     const bind_host = args.next() orelse "0.0.0.0";
+    // Optional SecLang rules file; only meaningful in a -Dwaf build.
+    const rules_path = args.next();
+
+    if (build_options.has_waf) {
+        const path = rules_path orelse fatal("this is a -Dwaf build: pass a rules file as the 5th argument");
+        const rules = std.Io.Dir.cwd().readFileAlloc(io, path, init.gpa, .limited(16 * 1024 * 1024)) catch
+            fatal("cannot read the rules file");
+        defer init.gpa.free(rules);
+        if (!waf_engine.init(rules)) fatal("rules failed to compile (run `zig-waf validate` for diagnostics)");
+    }
 
     upstream_addr = net.IpAddress.parse(up_host, up_port) catch fatal("invalid upstream host (expected an IP literal)");
 
@@ -88,9 +100,16 @@ fn handleConn(io: std.Io, client: net.Stream) void {
     var head_buf: [HEAD_BUF_SIZE]u8 = undefined;
     var header_storage: [MAX_HEADERS]http.Header = undefined;
     const prefix = readRequestHead(io, client, &head_buf, &header_storage);
-    // TODO(zig-waf): if prefix.head, run it through the C connector ABI and, on
-    // an intervention, reply to `client` with the block response and return
-    // instead of forwarding.
+
+    // WAF inspection: run the parsed head through the engine and, on an
+    // enforced intervention, reply 403 and drop the connection instead of
+    // forwarding. A no-op unless this is a -Dwaf build.
+    if (prefix.head) |head| {
+        if (waf_engine.inspect(head)) {
+            sendForbidden(io, client);
+            return;
+        }
+    }
 
     // Forward whatever we buffered (the head plus any body bytes that arrived
     // with it), then pump both directions for the remainder.
@@ -134,6 +153,20 @@ fn readRequestHead(io: std.Io, client: net.Stream, buf: []u8, storage: []http.He
     return .{ .bytes = buf[0..filled], .head = null }; // head larger than the buffer
 }
 
+/// Write a minimal 403 response to a blocked client. Best-effort — errors are
+/// ignored since the connection is being dropped anyway.
+fn sendForbidden(io: std.Io, client: net.Stream) void {
+    const response =
+        "HTTP/1.1 403 Forbidden\r\n" ++
+        "Content-Type: text/plain\r\n" ++
+        "Content-Length: 10\r\n" ++
+        "Connection: close\r\n" ++
+        "\r\n" ++
+        "Forbidden\n";
+    var writer = client.writer(io, &.{});
+    writer.interface.writeAll(response) catch {};
+}
+
 /// Move bytes from `src` to `dst` until EOF, then half-close `dst`'s send side
 /// so the peer observes the end of the stream. A read/write error tears the
 /// direction down; the connection's `defer close` cleans up the sockets.
@@ -154,10 +187,6 @@ fn pump(io: std.Io, src: net.Stream, dst: net.Stream) void {
 }
 
 // ---- tests --------------------------------------------------------------
-
-test {
-    _ = @import("http.zig");
-}
 
 test "parsePort accepts valid ports and rejects the rest" {
     try std.testing.expectEqual(@as(?u16, 8080), parsePort("8080"));

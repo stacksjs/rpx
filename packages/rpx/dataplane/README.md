@@ -72,9 +72,26 @@ zig-waf pins, so the dataplane and the WAF engine build against one Zig.
 ## Integrating the zig-waf WAF
 
 The dataplane is the front-end for [zig-waf](https://github.com/zig-utils/zig-waf):
-it links zig-waf's **C connector ABI** (`zig_waf.h`) and runs each request
-through the engine's phases before forwarding, blocking on an intervention. The
-ABI is toolchain-agnostic, so the two link cleanly. (Wiring in progress.)
+it links zig-waf's **C connector ABI** (`zig_waf.h`) and runs each request head
+through the engine before forwarding, replying **403** and dropping the
+connection on an enforced intervention. It's opt-in at build time:
+
+```bash
+# 1. build zig-waf so its C library exists (zig-out/lib/libzig-waf.a)
+(cd /path/to/zig-waf && zig build)
+
+# 2. build the dataplane against it, then front an origin with a rules file
+zig build -Dwaf=/path/to/zig-waf -Doptimize=ReleaseFast
+./zig-out/bin/rpx-dataplane 8443 127.0.0.1 3000 0.0.0.0 rules.conf
+```
+
+Now `?q=attack` (matched by a `SecRule ARGS "@rx attack" "...,deny"`) returns
+`403 Forbidden`, while benign requests proxy through untouched. Without `-Dwaf`
+the dataplane builds as a plain proxy with **zero** zig-waf dependency (the
+inspection hook compiles to a no-op), so `zig build` / `zig build test` need no
+zig-waf checkout. The compiled rule plan is immutable, so evaluating it from
+many connection tasks concurrently is safe. Inspection currently covers the
+request-headers phase of the first request on a connection.
 
 ## Roadmap
 
