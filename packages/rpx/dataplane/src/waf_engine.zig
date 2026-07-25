@@ -1,10 +1,12 @@
-//! zig-waf request inspection over the C connector ABI.
+//! zig-waf request/response inspection over the C connector ABI.
 //!
 //! Compiled into the dataplane only when the build is configured with `-Dwaf`
 //! (which also links `libzig-waf.a`, `liblmdb.a`, and the header). `init` stands
-//! up a rules-loaded WAF; `inspect` runs a request head through the engine and
-//! returns true when the request must be blocked. The compiled plan is
-//! immutable, so evaluating from many connection tasks concurrently is safe.
+//! up a rules-loaded WAF; a per-connection `Inspector` holds one transaction so
+//! the request phases (1-2) and the response phases (3-4) share the same
+//! anomaly-score accumulation — the way CRS's blocking-evaluation stages expect.
+//! The compiled plan is immutable, so evaluating from many connection tasks
+//! concurrently is safe.
 
 const std = @import("std");
 const http = @import("http");
@@ -31,37 +33,75 @@ pub fn init(rules: []const u8) bool {
     return true;
 }
 
-/// Run `head` (and `body`, which may be empty) through the request-headers and
-/// request-body phases; true means an enforced intervention fired and the caller
-/// should block. Fails open (returns false) on any ABI error so a WAF hiccup
-/// never takes the proxy down.
-pub fn inspect(head: http.RequestHead, body: []const u8) bool {
-    const waf = handle orelse return false;
-    var tx: ?*c.zig_waf_transaction_t = null;
-    if (c.zig_waf_transaction_create(waf, &tx) != c.ZIG_WAF_OK) return false;
-    defer c.zig_waf_transaction_destroy(tx);
+/// A per-connection inspection context. It owns one WAF transaction across the
+/// request and response phases; call `deinit` when the connection is done.
+/// Every method fails open (returns false / does nothing) when the WAF is not
+/// configured or the transaction could not be created, so a WAF hiccup never
+/// takes the proxy down.
+pub const Inspector = struct {
+    tx: ?*c.zig_waf_transaction_t,
 
-    const loopback = "127.0.0.1";
-    _ = c.zig_waf_transaction_process_connection(tx, loopback, loopback.len, 1, loopback, loopback.len, 80);
-    if (c.zig_waf_transaction_process_uri(tx, head.target.ptr, head.target.len, head.method.ptr, head.method.len, head.version.ptr, head.version.len) != c.ZIG_WAF_OK)
-        return false;
-    for (head.headers) |field| {
-        _ = c.zig_waf_transaction_add_request_header(tx, field.name.ptr, field.name.len, field.value.ptr, field.value.len);
+    /// Begin inspecting a connection: create a transaction and record the
+    /// (loopback-placeholder) connection endpoints. Returns an inert inspector
+    /// when the WAF is disabled or a transaction cannot be created.
+    pub fn begin() Inspector {
+        const waf = handle orelse return .{ .tx = null };
+        var tx: ?*c.zig_waf_transaction_t = null;
+        if (c.zig_waf_transaction_create(waf, &tx) != c.ZIG_WAF_OK) return .{ .tx = null };
+        const loopback = "127.0.0.1";
+        _ = c.zig_waf_transaction_process_connection(tx, loopback, loopback.len, 1, loopback, loopback.len, 80);
+        return .{ .tx = tx };
     }
 
-    // Phase 1: request headers (query args, headers).
-    _ = c.zig_waf_transaction_process_request_headers(tx);
-    _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_REQUEST_HEADERS);
-    if (blocked(tx)) return true;
-
-    // Phase 2: request body (ARGS_POST / JSON / multipart / XML).
-    if (body.len != 0) {
-        _ = c.zig_waf_transaction_write_request_body(tx, body.ptr, body.len);
+    pub fn deinit(self: *Inspector) void {
+        if (self.tx) |tx| c.zig_waf_transaction_destroy(tx);
+        self.tx = null;
     }
-    _ = c.zig_waf_transaction_process_request_body(tx);
-    _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_REQUEST_BODY);
-    return blocked(tx);
-}
+
+    /// Run `head` (and `body`, which may be empty) through the request-headers
+    /// and request-body phases; true means an enforced intervention fired and
+    /// the caller should reply 403 instead of forwarding to the origin.
+    pub fn inspectRequest(self: *Inspector, head: http.RequestHead, body: []const u8) bool {
+        const tx = self.tx orelse return false;
+        if (c.zig_waf_transaction_process_uri(tx, head.target.ptr, head.target.len, head.method.ptr, head.method.len, head.version.ptr, head.version.len) != c.ZIG_WAF_OK)
+            return false;
+        for (head.headers) |field| {
+            _ = c.zig_waf_transaction_add_request_header(tx, field.name.ptr, field.name.len, field.value.ptr, field.value.len);
+        }
+
+        _ = c.zig_waf_transaction_process_request_headers(tx);
+        _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_REQUEST_HEADERS);
+        if (blocked(tx)) return true;
+
+        if (body.len != 0) {
+            _ = c.zig_waf_transaction_write_request_body(tx, body.ptr, body.len);
+        }
+        _ = c.zig_waf_transaction_process_request_body(tx);
+        _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_REQUEST_BODY);
+        return blocked(tx);
+    }
+
+    /// Run the origin's response `head` (and `body`, which may be empty) through
+    /// the response-headers and response-body phases; true means an enforced
+    /// intervention fired (e.g. CRS data-leakage rules) and the caller should
+    /// replace the origin response with a 403.
+    pub fn inspectResponse(self: *Inspector, head: http.ResponseHead, body: []const u8) bool {
+        const tx = self.tx orelse return false;
+        for (head.headers) |field| {
+            _ = c.zig_waf_transaction_add_response_header(tx, field.name.ptr, field.name.len, field.value.ptr, field.value.len);
+        }
+        _ = c.zig_waf_transaction_process_response_headers(tx, head.status, head.version.ptr, head.version.len);
+        _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_RESPONSE_HEADERS);
+        if (blocked(tx)) return true;
+
+        if (body.len != 0) {
+            _ = c.zig_waf_transaction_write_response_body(tx, body.ptr, body.len);
+        }
+        _ = c.zig_waf_transaction_process_response_body(tx);
+        _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_RESPONSE_BODY);
+        return blocked(tx);
+    }
+};
 
 /// Whether the transaction has an enforced pending intervention.
 fn blocked(tx: ?*c.zig_waf_transaction_t) bool {

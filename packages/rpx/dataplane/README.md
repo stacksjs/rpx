@@ -90,12 +90,19 @@ Now `?q=attack` (matched by a `SecRule ARGS "@rx attack" "...,deny"`) returns
 the dataplane builds as a plain proxy with **zero** zig-waf dependency (the
 inspection hook compiles to a no-op), so `zig build` / `zig build test` need no
 zig-waf checkout. The compiled rule plan is immutable, so evaluating it from
-many connection tasks concurrently is safe. Inspection covers the
+many connection tasks concurrently is safe. A single WAF transaction spans a
+connection's request and response, so anomaly scores accumulate across the
+phases (as CRS's blocking-evaluation stages expect). Inspection covers the
 request-headers phase (query args, headers) and the request-body phase (a
 Content-Length body up to 128 KB is buffered and run through the body
-processors — URL-encoded / JSON / multipart / XML — into `ARGS_POST` etc.);
-larger bodies stream through uninspected. This covers the first request on a
-connection; keep-alive follow-ups are pumped through.
+processors — URL-encoded / JSON / multipart / XML — into `ARGS_POST` etc.),
+then the **response** phases: the origin's response head and, when it is
+Content-Length-framed and within the 128 KB cap, its body are buffered and run
+through the response-headers and response-body phases (e.g. CRS data-leakage
+rules), replacing the response with `403` on an enforced intervention. Larger,
+chunked, or close-framed bodies stream through with only their head inspected.
+This covers the first request on a connection; keep-alive follow-ups are pumped
+through.
 
 ## Roadmap
 

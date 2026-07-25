@@ -8,6 +8,19 @@ pub fn init(_: []const u8) bool {
     return false;
 }
 
-pub fn inspect(_: http.RequestHead, _: []const u8) bool {
-    return false;
-}
+/// Mirror of `waf_engine.Inspector` with inert methods.
+pub const Inspector = struct {
+    pub fn begin() Inspector {
+        return .{};
+    }
+
+    pub fn deinit(_: *Inspector) void {}
+
+    pub fn inspectRequest(_: *Inspector, _: http.RequestHead, _: []const u8) bool {
+        return false;
+    }
+
+    pub fn inspectResponse(_: *Inspector, _: http.ResponseHead, _: []const u8) bool {
+        return false;
+    }
+};

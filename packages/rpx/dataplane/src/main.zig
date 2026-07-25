@@ -90,25 +90,27 @@ fn fatal(comptime msg: []const u8) noreturn {
     std.process.exit(1);
 }
 
-/// Proxy one client connection: open the upstream, then pump both directions
-/// concurrently until each side closes.
+/// Proxy one client connection: inspect the request (and, in a -Dwaf build, the
+/// origin response) through the WAF, then pump both directions until each side
+/// closes. One `Inspector` (one WAF transaction) spans the request and response
+/// phases so anomaly scores accumulate across them.
 fn handleConn(io: std.Io, client: net.Stream) void {
     defer client.close(io);
     const upstream = upstream_addr.connect(io, .{ .mode = .stream }) catch return;
     defer upstream.close(io);
 
-    // Buffer and parse the request head before forwarding — this is where a WAF
-    // inspection hook runs (feed head.method/target/headers through the engine
-    // and block on an intervention). We inspect the first request head on the
+    var inspector = waf_engine.Inspector.begin();
+    defer inspector.deinit();
+
+    // Buffer and parse the request head before forwarding — this is where the
+    // WAF request phases (1-2) run. We inspect the first request head on the
     // connection; keep-alive follow-ups are pumped through.
     var head_buf: [HEAD_BUF_SIZE]u8 = undefined;
     var header_storage: [MAX_HEADERS]http.Header = undefined;
     const prefix = readRequestHead(io, client, &head_buf, &header_storage);
 
-    // WAF inspection: run the parsed head (and, in a -Dwaf build, the buffered
-    // request body) through the engine and, on an enforced intervention, reply
-    // 403 and drop instead of forwarding. Everything below is a no-op in a
-    // non-WAF build.
+    // On an enforced request-phase intervention, reply 403 and drop instead of
+    // forwarding. Everything below is a no-op in a non-WAF build.
     var request_buf: [HEAD_BUF_SIZE + BODY_CAP]u8 = undefined;
     var forward: []const u8 = prefix.bytes;
     if (prefix.head) |head| {
@@ -119,24 +121,65 @@ fn handleConn(io: std.Io, client: net.Stream) void {
                 body = buffered.body;
             }
         }
-        if (waf_engine.inspect(head, body)) {
+        if (inspector.inspectRequest(head, body)) {
             sendForbidden(io, client);
             return;
         }
     }
 
-    // Forward what we buffered (head, plus the body when we read it), then pump
-    // both directions for the remainder.
+    // Forward what we buffered (head, plus the body when we read it) to origin.
     if (forward.len != 0) {
         var out = upstream.writer(io, &.{});
         out.interface.writeAll(forward) catch return;
     }
 
+    // Pump client→upstream in the background (further request bytes / keep-alive)
+    // while we handle the origin→client direction with response inspection.
     var group: std.Io.Group = .init;
     defer group.cancel(io);
     group.async(io, pump, .{ io, client, upstream });
-    pump(io, upstream, client);
+    if (build_options.has_waf and prefix.head != null) {
+        // Reuse the request buffers — the request has already been forwarded.
+        inspectResponse(io, upstream, client, &inspector, &head_buf, &header_storage, &request_buf);
+    } else {
+        pump(io, upstream, client);
+    }
     group.await(io) catch {};
+}
+
+/// Read the origin response head (and a bounded, Content-Length-framed body),
+/// run it through the WAF response phases (3-4), and either forward it to the
+/// client or — on an enforced intervention (e.g. CRS data-leakage rules) —
+/// replace it with a 403. Chunked / close-framed / oversize responses stream
+/// through with only their head inspected. `buf` (the already-forwarded request
+/// buffer) is reused to keep per-connection stack flat.
+fn inspectResponse(
+    io: std.Io,
+    upstream: net.Stream,
+    client: net.Stream,
+    inspector: *waf_engine.Inspector,
+    head_buf: []u8,
+    storage: []http.Header,
+    buf: []u8,
+) void {
+    const prefix = readResponseHead(io, upstream, head_buf, storage);
+    var forward: []const u8 = prefix.bytes;
+    if (prefix.head) |head| {
+        var body: []const u8 = &.{};
+        if (readResponseBody(io, upstream, head, prefix.bytes, buf)) |buffered| {
+            forward = buffered.forward;
+            body = buffered.body;
+        }
+        if (inspector.inspectResponse(head, body)) {
+            sendForbidden(io, client);
+            return;
+        }
+    }
+    if (forward.len != 0) {
+        var out = client.writer(io, &.{});
+        out.interface.writeAll(forward) catch return;
+    }
+    pump(io, upstream, client);
 }
 
 const HeadPrefix = struct {
@@ -196,6 +239,59 @@ fn readBody(io: std.Io, client: net.Stream, head: http.RequestHead, prefix_bytes
 }
 
 fn contentLength(head: http.RequestHead) ?usize {
+    const value = head.header("content-length") orelse return null;
+    return std.fmt.parseInt(usize, std.mem.trim(u8, value, " \t"), 10) catch null;
+}
+
+const ResponsePrefix = struct {
+    /// The response bytes read so far (head, plus any body prefix in the same
+    /// read), destined for the client.
+    bytes: []u8,
+    /// The parsed response head, or null on EOF/oversize/malformed (bytes are
+    /// then forwarded transparently).
+    head: ?http.ResponseHead,
+};
+
+/// Read from `upstream` until the HTTP response head is complete, parsing it.
+/// Mirrors `readRequestHead` for the origin→client direction.
+fn readResponseHead(io: std.Io, upstream: net.Stream, buf: []u8, storage: []http.Header) ResponsePrefix {
+    var filled: usize = 0;
+    while (filled < buf.len) {
+        if (http.parseResponse(buf[0..filled], storage)) |maybe_head| {
+            if (maybe_head) |head| return .{ .bytes = buf[0..filled], .head = head };
+        } else |_| {
+            return .{ .bytes = buf[0..filled], .head = null }; // malformed
+        }
+        var vec: [1][]u8 = .{buf[filled..]};
+        const n = upstream.read(io, &vec) catch return .{ .bytes = buf[0..filled], .head = null };
+        if (n == 0) return .{ .bytes = buf[0..filled], .head = null }; // EOF before head
+        filled += n;
+    }
+    return .{ .bytes = buf[0..filled], .head = null }; // head larger than the buffer
+}
+
+/// Buffer the response body (bounded by Content-Length and `buf`) so the WAF can
+/// inspect phase 4. Returns null when there is no declared body or it is too
+/// large / not length-framed (chunked, close-delimited), in which case the
+/// caller forwards `prefix_bytes` and streams the body uninspected.
+fn readResponseBody(io: std.Io, upstream: net.Stream, head: http.ResponseHead, prefix_bytes: []const u8, buf: []u8) ?Buffered {
+    const content_length = contentLengthResponse(head) orelse return null;
+    if (content_length == 0) return null;
+    const wire_total = head.head_len + content_length;
+    if (wire_total > buf.len) return null; // too large — stream it uninspected
+
+    @memcpy(buf[0..prefix_bytes.len], prefix_bytes);
+    var filled = prefix_bytes.len;
+    while (filled < wire_total) {
+        var vec: [1][]u8 = .{buf[filled..wire_total]};
+        const n = upstream.read(io, &vec) catch break;
+        if (n == 0) break; // origin closed early — inspect what we have
+        filled += n;
+    }
+    return .{ .forward = buf[0..filled], .body = buf[head.head_len..filled] };
+}
+
+fn contentLengthResponse(head: http.ResponseHead) ?usize {
     const value = head.header("content-length") orelse return null;
     return std.fmt.parseInt(usize, std.mem.trim(u8, value, " \t"), 10) catch null;
 }

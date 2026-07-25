@@ -78,6 +78,70 @@ pub fn parse(input: []const u8, storage: []Header) Error!?RequestHead {
     };
 }
 
+pub const ResponseHead = struct {
+    version: []const u8,
+    status: u16,
+    /// Reason phrase (may be empty); borrowed from the input.
+    reason: []const u8,
+    /// Borrowed from the caller's storage; valid as long as the input buffer is.
+    headers: []const Header,
+    /// Byte length of the head through the terminating CRLF CRLF; the response
+    /// body (if any) begins at `input[head_len..]`.
+    head_len: usize,
+
+    /// First header value matching `name` case-insensitively, or null.
+    pub fn header(self: ResponseHead, name: []const u8) ?[]const u8 {
+        for (self.headers) |h| {
+            if (std.ascii.eqlIgnoreCase(h.name, name)) return h.value;
+        }
+        return null;
+    }
+};
+
+/// Parse an HTTP/1.1 response head from `input`, storing headers in `storage`.
+/// Returns null if the head is incomplete, or an error if it is malformed. Used
+/// to run the origin's response through the WAF's response phases before it is
+/// forwarded to the client.
+pub fn parseResponse(input: []const u8, storage: []Header) Error!?ResponseHead {
+    const marker = std.mem.indexOf(u8, input, "\r\n\r\n") orelse return null;
+    const head_len = marker + 4;
+    const head = input[0..marker];
+
+    var lines = std.mem.splitSequence(u8, head, "\r\n");
+    const status_line = lines.next() orelse return error.Malformed;
+
+    // status-line: HTTP-version SP status-code SP [reason-phrase]
+    var tokens = std.mem.splitScalar(u8, status_line, ' ');
+    const version = tokens.next() orelse return error.Malformed;
+    const code = tokens.next() orelse return error.Malformed;
+    const reason = tokens.rest(); // remainder, may be empty or contain spaces
+    if (!std.mem.startsWith(u8, version, "HTTP/")) return error.Malformed;
+    if (code.len != 3) return error.Malformed;
+    const status = std.fmt.parseInt(u16, code, 10) catch return error.Malformed;
+    if (status < 100 or status > 599) return error.Malformed;
+
+    var count: usize = 0;
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.Malformed;
+        if (colon == 0) return error.Malformed;
+        if (count == storage.len) return error.TooManyHeaders;
+        storage[count] = .{
+            .name = line[0..colon],
+            .value = std.mem.trim(u8, line[colon + 1 ..], " \t"),
+        };
+        count += 1;
+    }
+
+    return .{
+        .version = version,
+        .status = status,
+        .reason = reason,
+        .headers = storage[0..count],
+        .head_len = head_len,
+    };
+}
+
 // ---- tests --------------------------------------------------------------
 
 test "parses a well-formed request head" {
@@ -149,6 +213,16 @@ test "random bytes never crash the parser and yield only borrowed slices" {
                 else => random.int(u8),
             };
         }
+        // The response parser must be just as crash-proof over the same bytes.
+        if (parseResponse(buffer[0..len], &storage) catch null) |response| {
+            try std.testing.expect(response.head_len <= len);
+            try std.testing.expect(withinBuffer(response.version, buffer[0..len]));
+            try std.testing.expect(withinBuffer(response.reason, buffer[0..len]));
+            for (response.headers) |field| {
+                try std.testing.expect(withinBuffer(field.name, buffer[0..len]));
+                try std.testing.expect(withinBuffer(field.value, buffer[0..len]));
+            }
+        }
         const result = parse(buffer[0..len], &storage) catch continue;
         const head = result orelse continue;
         // Every returned slice must point inside the input buffer, and the head
@@ -161,6 +235,35 @@ test "random bytes never crash the parser and yield only borrowed slices" {
         try std.testing.expect(withinBuffer(head.method, buffer[0..len]));
         try std.testing.expect(withinBuffer(head.target, buffer[0..len]));
     }
+}
+
+test "parses a well-formed response head" {
+    var storage: [16]Header = undefined;
+    const input =
+        "HTTP/1.1 200 OK\r\n" ++
+        "Content-Type: text/html\r\n" ++
+        "Content-Length: 5\r\n" ++
+        "\r\n" ++
+        "hello";
+    const head = (try parseResponse(input, &storage)).?;
+    try std.testing.expectEqualStrings("HTTP/1.1", head.version);
+    try std.testing.expectEqual(@as(u16, 200), head.status);
+    try std.testing.expectEqualStrings("OK", head.reason);
+    try std.testing.expectEqual(@as(usize, 2), head.headers.len);
+    try std.testing.expectEqualStrings("text/html", head.header("content-type").?);
+    try std.testing.expectEqualStrings("hello", input[head.head_len..]);
+}
+
+test "response head: incomplete, malformed, and multi-word reason" {
+    var storage: [8]Header = undefined;
+    try std.testing.expect((try parseResponse("HTTP/1.1 200 OK\r\n", &storage)) == null);
+    try std.testing.expectError(error.Malformed, parseResponse("HTTP/1.1 xxx OK\r\n\r\n", &storage)); // non-numeric code
+    try std.testing.expectError(error.Malformed, parseResponse("HTTP/1.1 99 OK\r\n\r\n", &storage)); // code not 3 digits
+    try std.testing.expectError(error.Malformed, parseResponse("FTP/1.1 200 OK\r\n\r\n", &storage)); // bad version
+    // A multi-word reason phrase is preserved verbatim.
+    const head = (try parseResponse("HTTP/1.1 404 Not Found\r\n\r\n", &storage)).?;
+    try std.testing.expectEqual(@as(u16, 404), head.status);
+    try std.testing.expectEqualStrings("Not Found", head.reason);
 }
 
 fn withinBuffer(slice: []const u8, buffer: []const u8) bool {
