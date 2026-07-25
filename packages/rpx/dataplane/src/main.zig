@@ -20,7 +20,12 @@ const std = @import("std");
 const http = @import("http");
 const build_options = @import("build_options");
 const waf_engine = @import("waf_hook");
+const tls_hook = @import("tls_hook");
 const net = std.Io.net;
+
+/// True once a TLS cert/key has been loaded; every accepted connection is then
+/// TLS-terminated before HTTP handling. Set once in `main`, read-only after.
+var tls_active: bool = false;
 
 const BUF_SIZE: usize = 64 * 1024;
 /// Cap on the request-head bytes we buffer for inspection before forwarding.
@@ -60,6 +65,23 @@ pub fn main(init: std.process.Init) !void {
         if (!waf_engine.init(rules, data_dir)) fatal("rules failed to compile (run `zig-waf validate` for diagnostics)");
     }
 
+    // Optional TLS termination: `--tls-cert <abs.pem> --tls-key <abs.pem>` (only
+    // meaningful in a -Dtls build). When both are present every connection is
+    // TLS-terminated before HTTP handling; the upstream stays plaintext.
+    if (build_options.has_tls) {
+        var scan = std.process.Args.Iterator.init(init.minimal.args);
+        var cert_path: ?[]const u8 = null;
+        var key_path: ?[]const u8 = null;
+        while (scan.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--tls-cert")) cert_path = scan.next();
+            if (std.mem.eql(u8, arg, "--tls-key")) key_path = scan.next();
+        }
+        if (cert_path) |cert| if (key_path) |key| {
+            if (!tls_hook.init(io, cert, key)) fatal("cannot load the TLS certificate/key (need absolute PEM paths)");
+            tls_active = true;
+        };
+    }
+
     upstream_addr = net.IpAddress.parse(up_host, up_port) catch fatal("invalid upstream host (expected an IP literal)");
 
     var listen_addr = net.IpAddress.parse(bind_host, listen_port) catch fatal("invalid bind host");
@@ -93,6 +115,53 @@ fn fatal(comptime msg: []const u8) noreturn {
     std.process.exit(1);
 }
 
+/// The client side of a connection: a plaintext socket, or a terminated-TLS
+/// session over it. Both present a `readSome`/`writeAll` byte interface, so the
+/// HTTP handling is identical whether or not TLS is in use. (The upstream side
+/// is always a plaintext `net.Stream`.)
+const Client = union(enum) {
+    plain: net.Stream,
+    secure: *tls_hook.Session,
+
+    /// Read up to `buf.len` bytes; 0 on EOF or error.
+    fn readSome(self: Client, io: std.Io, buf: []u8) usize {
+        switch (self) {
+            .plain => |stream| {
+                var vec: [1][]u8 = .{buf};
+                return stream.read(io, &vec) catch 0;
+            },
+            .secure => |session| return session.readSome(io, buf),
+        }
+    }
+
+    /// Write all of `bytes`; false on error.
+    fn writeAll(self: Client, io: std.Io, bytes: []const u8) bool {
+        switch (self) {
+            .plain => |stream| {
+                var out = stream.writer(io, &.{});
+                out.interface.writeAll(bytes) catch return false;
+                return true;
+            },
+            .secure => |session| return session.writeAll(io, bytes),
+        }
+    }
+
+    /// Half-close the send side (plaintext) — TLS sends close_notify on deinit.
+    fn shutdownSend(self: Client, io: std.Io) void {
+        switch (self) {
+            .plain => |stream| stream.shutdown(io, .send) catch {},
+            .secure => {},
+        }
+    }
+
+    fn deinit(self: Client, io: std.Io) void {
+        switch (self) {
+            .plain => {}, // the raw socket is closed by handleConn's defer
+            .secure => |session| session.deinit(io),
+        }
+    }
+};
+
 /// Proxy one client connection. In a non-WAF build this is a transparent
 /// bidirectional pump. In a -Dwaf build it is an HTTP/1.1 request loop: every
 /// request on the connection (not just the first) is inspected through the WAF's
@@ -100,20 +169,28 @@ fn fatal(comptime msg: []const u8) noreturn {
 /// keep-alive follow-ups cannot bypass the WAF. When a message is framed in a
 /// way we cannot delimit (chunked, close-delimited, oversize, upgrade), we
 /// forward what we have and fall back to a transparent pump for the remainder.
-fn handleConn(io: std.Io, client: net.Stream) void {
-    defer client.close(io);
+fn handleConn(io: std.Io, raw_client: net.Stream) void {
+    defer raw_client.close(io);
     const upstream = upstream_addr.connect(io, .{ .mode = .stream }) catch return;
     defer upstream.close(io);
+
+    // The real client IP/port must come from the raw socket, before any TLS wrap.
+    var address_buf: [64]u8 = undefined;
+    const peer: ?Peer = if (build_options.has_waf) peerAddress(raw_client, &address_buf) else null;
+
+    // Terminate TLS when a cert is configured, else serve plaintext. A failed
+    // handshake drops the connection.
+    const client: Client = if (tls_active)
+        .{ .secure = tls_hook.accept(io, raw_client) orelse return }
+    else
+        .{ .plain = raw_client };
+    defer client.deinit(io);
 
     if (!build_options.has_waf) {
         pumpBoth(io, client, upstream);
         return;
     }
 
-    // Resolve the real client IP/port once per connection for REMOTE_ADDR /
-    // REMOTE_PORT. IPv6 peers fall back to a placeholder.
-    var address_buf: [64]u8 = undefined;
-    const peer: ?Peer = peerAddress(client, &address_buf);
     const client_address = if (peer) |p| p.address else "127.0.0.1";
     const client_port: u16 = if (peer) |p| p.port else 1;
 
@@ -131,13 +208,40 @@ fn handleConn(io: std.Io, client: net.Stream) void {
     };
 }
 
-/// Pump both directions of a connection concurrently until each side closes.
-fn pumpBoth(io: std.Io, client: net.Stream, upstream: net.Stream) void {
+/// Pump both directions concurrently until each side closes. The client side may
+/// be plaintext or TLS; the upstream side is always plaintext.
+fn pumpBoth(io: std.Io, client: Client, upstream: net.Stream) void {
     var group: std.Io.Group = .init;
     defer group.cancel(io);
-    group.async(io, pump, .{ io, client, upstream });
-    pump(io, upstream, client);
+    group.async(io, pumpClientToUpstream, .{ io, client, upstream });
+    pumpUpstreamToClient(io, upstream, client);
     group.await(io) catch {};
+}
+
+fn pumpUpstreamToClient(io: std.Io, upstream: net.Stream, client: Client) void {
+    var buf: [BUF_SIZE]u8 = undefined;
+    while (true) {
+        var vec: [1][]u8 = .{&buf};
+        const n = upstream.read(io, &vec) catch return;
+        if (n == 0) {
+            client.shutdownSend(io);
+            return;
+        }
+        if (!client.writeAll(io, buf[0..n])) return;
+    }
+}
+
+fn pumpClientToUpstream(io: std.Io, client: Client, upstream: net.Stream) void {
+    var buf: [BUF_SIZE]u8 = undefined;
+    var out = upstream.writer(io, &.{});
+    while (true) {
+        const n = client.readSome(io, &buf);
+        if (n == 0) {
+            upstream.shutdown(io, .send) catch {};
+            return;
+        }
+        out.interface.writeAll(buf[0..n]) catch return;
+    }
 }
 
 const Exchange = enum {
@@ -154,7 +258,7 @@ const Exchange = enum {
 /// are borrowed from the caller and reused across exchanges.
 fn handleExchange(
     io: std.Io,
-    client: net.Stream,
+    client: Client,
     upstream: net.Stream,
     peer: ?Peer,
     client_address: []const u8,
@@ -201,7 +305,7 @@ fn handleExchange(
     // --- response (reuses head_buf / storage / body_buf) ---
     const resp_prefix = readResponseHead(io, upstream, head_buf, storage);
     const resp_head = resp_prefix.head orelse {
-        _ = forwardAll(io, client, resp_prefix.bytes);
+        _ = client.writeAll(io, resp_prefix.bytes);
         return .stream;
     };
 
@@ -222,7 +326,7 @@ fn handleExchange(
     }
 
     const resp_wants_close = wantsClose(resp_head.header("connection"), resp_head.version);
-    if (!forwardAll(io, client, resp_forward)) return .close;
+    if (!client.writeAll(io, resp_forward)) return .close;
 
     if (!resp_delimited) return .stream; // chunked / close-framed body — pump the rest
     if (req_wants_close or resp_wants_close) return .close;
@@ -291,7 +395,7 @@ const HeadPrefix = struct {
 /// Read from `client` until the HTTP request head is complete, parsing it. On
 /// a malformed head, an oversize head, or EOF-before-head, returns the bytes
 /// read with a null head so the caller forwards them transparently.
-fn readRequestHead(io: std.Io, client: net.Stream, buf: []u8, storage: []http.Header) HeadPrefix {
+fn readRequestHead(io: std.Io, client: Client, buf: []u8, storage: []http.Header) HeadPrefix {
     var filled: usize = 0;
     while (filled < buf.len) {
         if (http.parse(buf[0..filled], storage)) |maybe_head| {
@@ -299,8 +403,7 @@ fn readRequestHead(io: std.Io, client: net.Stream, buf: []u8, storage: []http.He
         } else |_| {
             return .{ .bytes = buf[0..filled], .head = null }; // malformed
         }
-        var vec: [1][]u8 = .{buf[filled..]};
-        const n = client.read(io, &vec) catch return .{ .bytes = buf[0..filled], .head = null };
+        const n = client.readSome(io, buf[filled..]);
         if (n == 0) return .{ .bytes = buf[0..filled], .head = null }; // EOF before head
         filled += n;
     }
@@ -318,7 +421,7 @@ const Buffered = struct {
 /// inspect phase 2, returning the head+body to forward and the body to inspect.
 /// Returns null when there is no declared body or it is too large to buffer, in
 /// which case the caller forwards `prefix_bytes` and streams the body uninspected.
-fn readBody(io: std.Io, client: net.Stream, head: http.RequestHead, prefix_bytes: []const u8, buf: []u8) ?Buffered {
+fn readBody(io: std.Io, client: Client, head: http.RequestHead, prefix_bytes: []const u8, buf: []u8) ?Buffered {
     const content_length = contentLength(head) orelse return null;
     if (content_length == 0) return null;
     const wire_total = head.head_len + content_length;
@@ -327,8 +430,7 @@ fn readBody(io: std.Io, client: net.Stream, head: http.RequestHead, prefix_bytes
     @memcpy(buf[0..prefix_bytes.len], prefix_bytes);
     var filled = prefix_bytes.len;
     while (filled < wire_total) {
-        var vec: [1][]u8 = .{buf[filled..wire_total]};
-        const n = client.read(io, &vec) catch break;
+        const n = client.readSome(io, buf[filled..wire_total]);
         if (n == 0) break; // client closed early — inspect what we have
         filled += n;
     }
@@ -431,7 +533,7 @@ fn peerAddress(stream: net.Stream, buf: []u8) ?Peer {
 
 /// Write a minimal 403 response to a blocked client. Best-effort — errors are
 /// ignored since the connection is being dropped anyway.
-fn sendForbidden(io: std.Io, client: net.Stream) void {
+fn sendForbidden(io: std.Io, client: Client) void {
     const response =
         "HTTP/1.1 403 Forbidden\r\n" ++
         "Content-Type: text/plain\r\n" ++
@@ -439,27 +541,7 @@ fn sendForbidden(io: std.Io, client: net.Stream) void {
         "Connection: close\r\n" ++
         "\r\n" ++
         "Forbidden\n";
-    var writer = client.writer(io, &.{});
-    writer.interface.writeAll(response) catch {};
-}
-
-/// Move bytes from `src` to `dst` until EOF, then half-close `dst`'s send side
-/// so the peer observes the end of the stream. A read/write error tears the
-/// direction down; the connection's `defer close` cleans up the sockets.
-fn pump(io: std.Io, src: net.Stream, dst: net.Stream) void {
-    var buf: [BUF_SIZE]u8 = undefined;
-    // An empty writer buffer makes writes go straight through to the socket
-    // (no second copy), which is what a proxy wants.
-    var writer = dst.writer(io, &.{});
-    while (true) {
-        var vec: [1][]u8 = .{&buf};
-        const n = src.read(io, &vec) catch return;
-        if (n == 0) {
-            dst.shutdown(io, .send) catch {};
-            return;
-        }
-        writer.interface.writeAll(buf[0..n]) catch return;
-    }
+    _ = client.writeAll(io, response);
 }
 
 // ---- tests --------------------------------------------------------------

@@ -101,16 +101,37 @@ Content-Length-framed and within the 128 KB cap, its body are buffered and run
 through the response-headers and response-body phases (e.g. CRS data-leakage
 rules), replacing the response with `403` on an enforced intervention. Larger,
 chunked, or close-framed bodies stream through with only their head inspected.
-This covers the first request on a connection; keep-alive follow-ups are pumped
-through.
+**Every** request on a keep-alive connection is inspected (each gets a fresh WAF
+transaction), so follow-up requests cannot bypass the WAF; a message we cannot
+delimit (chunked, close-framed, oversize, or an `Upgrade`/WebSocket tunnel)
+falls back to a transparent pump for the remainder. The real client address is
+passed to the engine (`REMOTE_ADDR`/`REMOTE_PORT`, so `@ipMatch`/RBL rules work)
+and `X-Forwarded-For`/`-Proto` are added to the forwarded request.
+
+## TLS termination
+
+Build with `-Dtls=/path/to/zig-tls` (a pure-Zig TLS 1.2/1.3 stack) and pass
+`--tls-cert <abs.pem> --tls-key <abs.pem>` to terminate TLS at the dataplane:
+each connection is decrypted, run through the WAF (and HTTP handling) exactly as
+plaintext, and forwarded to the plaintext upstream. The key is ECDSA P-256.
+
+```bash
+zig build -Dwaf=/path/to/zig-waf -Dtls=/path/to/zig-tls -Doptimize=ReleaseFast
+./zig-out/bin/rpx-dataplane 8443 127.0.0.1 3000 0.0.0.0 rules.conf \
+  --tls-cert /etc/rpx/cert.pem --tls-key /etc/rpx/key.pem
+```
+
+Now `https://…?q=attack` is decrypted, blocked with `403`, and never reaches the
+origin. Without `-Dtls` the dataplane is plaintext-only (no TLS dependency).
+IPv6 clients currently fall back to a placeholder `REMOTE_ADDR`.
 
 ## Roadmap
 
 1. **TCP pump on `std.Io`.** *(here — builds, runs, validated end-to-end)*
 2. **io_uring backend** (`std.Io.Evented`) for the single-thread Linux loop.
 3. **HTTP/1.1 parse** for host routing, `X-Forwarded-*`, and the zig-waf
-   inspection hook; then HTTP/2 and WebSocket.
-4. **TLS termination** (and kTLS, so encrypted bodies can still offload).
+   inspection hook. *(done — response inspection, keep-alive, XFF, REMOTE_ADDR)*
+4. **TLS termination** via zig-tls. *(done — `-Dtls`; see above)* kTLS next.
 5. Bun↔dataplane handoff hardening (config reload via SIGHUP, like cluster mode).
 
 ## Status
