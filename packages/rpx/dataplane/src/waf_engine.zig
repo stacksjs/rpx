@@ -31,10 +31,11 @@ pub fn init(rules: []const u8) bool {
     return true;
 }
 
-/// Run `head` through the request-headers phase; true means an enforced
-/// intervention fired and the caller should block. Fails open (returns false)
-/// on any ABI error so a WAF hiccup never takes the proxy down.
-pub fn inspect(head: http.RequestHead) bool {
+/// Run `head` (and `body`, which may be empty) through the request-headers and
+/// request-body phases; true means an enforced intervention fired and the caller
+/// should block. Fails open (returns false) on any ABI error so a WAF hiccup
+/// never takes the proxy down.
+pub fn inspect(head: http.RequestHead, body: []const u8) bool {
     const waf = handle orelse return false;
     var tx: ?*c.zig_waf_transaction_t = null;
     if (c.zig_waf_transaction_create(waf, &tx) != c.ZIG_WAF_OK) return false;
@@ -47,12 +48,26 @@ pub fn inspect(head: http.RequestHead) bool {
     for (head.headers) |field| {
         _ = c.zig_waf_transaction_add_request_header(tx, field.name.ptr, field.name.len, field.value.ptr, field.value.len);
     }
+
+    // Phase 1: request headers (query args, headers).
     _ = c.zig_waf_transaction_process_request_headers(tx);
     _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_REQUEST_HEADERS);
+    if (blocked(tx)) return true;
 
+    // Phase 2: request body (ARGS_POST / JSON / multipart / XML).
+    if (body.len != 0) {
+        _ = c.zig_waf_transaction_write_request_body(tx, body.ptr, body.len);
+    }
+    _ = c.zig_waf_transaction_process_request_body(tx);
+    _ = c.zig_waf_transaction_evaluate_phase(tx, c.ZIG_WAF_PHASE_REQUEST_BODY);
+    return blocked(tx);
+}
+
+/// Whether the transaction has an enforced pending intervention.
+fn blocked(tx: ?*c.zig_waf_transaction_t) bool {
     var decision: c.zig_waf_intervention_t = std.mem.zeroes(c.zig_waf_intervention_t);
     decision.struct_size = @sizeOf(c.zig_waf_intervention_t);
     decision.abi_version = c.ZIG_WAF_ABI_VERSION;
-    // OK means an intervention exists; NOT_FOUND means the request is allowed.
+    // OK means an intervention exists; NOT_FOUND means allowed so far.
     return c.zig_waf_transaction_intervention(tx, &decision) == c.ZIG_WAF_OK and decision.enforced != 0;
 }

@@ -26,6 +26,10 @@ const BUF_SIZE: usize = 64 * 1024;
 /// Cap on the request-head bytes we buffer for inspection before forwarding.
 const HEAD_BUF_SIZE: usize = 16 * 1024;
 const MAX_HEADERS: usize = 128;
+/// Request bodies up to this size are buffered for WAF phase-2 inspection;
+/// larger bodies stream through uninspected. Zero in a non-WAF build so the
+/// plain proxy carries no extra per-connection buffer.
+const BODY_CAP: usize = if (build_options.has_waf) 128 * 1024 else 0;
 
 /// The upstream every accepted connection is proxied to. Set once in `main`;
 /// read-only thereafter, so sharing it across connection tasks is safe.
@@ -101,21 +105,31 @@ fn handleConn(io: std.Io, client: net.Stream) void {
     var header_storage: [MAX_HEADERS]http.Header = undefined;
     const prefix = readRequestHead(io, client, &head_buf, &header_storage);
 
-    // WAF inspection: run the parsed head through the engine and, on an
-    // enforced intervention, reply 403 and drop the connection instead of
-    // forwarding. A no-op unless this is a -Dwaf build.
+    // WAF inspection: run the parsed head (and, in a -Dwaf build, the buffered
+    // request body) through the engine and, on an enforced intervention, reply
+    // 403 and drop instead of forwarding. Everything below is a no-op in a
+    // non-WAF build.
+    var request_buf: [HEAD_BUF_SIZE + BODY_CAP]u8 = undefined;
+    var forward: []const u8 = prefix.bytes;
     if (prefix.head) |head| {
-        if (waf_engine.inspect(head)) {
+        var body: []const u8 = &.{};
+        if (build_options.has_waf) {
+            if (readBody(io, client, head, prefix.bytes, &request_buf)) |buffered| {
+                forward = buffered.forward; // head + full body, contiguous
+                body = buffered.body;
+            }
+        }
+        if (waf_engine.inspect(head, body)) {
             sendForbidden(io, client);
             return;
         }
     }
 
-    // Forward whatever we buffered (the head plus any body bytes that arrived
-    // with it), then pump both directions for the remainder.
-    if (prefix.bytes.len != 0) {
+    // Forward what we buffered (head, plus the body when we read it), then pump
+    // both directions for the remainder.
+    if (forward.len != 0) {
         var out = upstream.writer(io, &.{});
-        out.interface.writeAll(prefix.bytes) catch return;
+        out.interface.writeAll(forward) catch return;
     }
 
     var group: std.Io.Group = .init;
@@ -151,6 +165,39 @@ fn readRequestHead(io: std.Io, client: net.Stream, buf: []u8, storage: []http.He
         filled += n;
     }
     return .{ .bytes = buf[0..filled], .head = null }; // head larger than the buffer
+}
+
+const Buffered = struct {
+    /// The head plus the full body, contiguous — forward this to the upstream.
+    forward: []const u8,
+    /// Just the body portion — feed this to the WAF's request-body phase.
+    body: []const u8,
+};
+
+/// Buffer the request body (bounded by Content-Length and `buf`) so the WAF can
+/// inspect phase 2, returning the head+body to forward and the body to inspect.
+/// Returns null when there is no declared body or it is too large to buffer, in
+/// which case the caller forwards `prefix_bytes` and streams the body uninspected.
+fn readBody(io: std.Io, client: net.Stream, head: http.RequestHead, prefix_bytes: []const u8, buf: []u8) ?Buffered {
+    const content_length = contentLength(head) orelse return null;
+    if (content_length == 0) return null;
+    const wire_total = head.head_len + content_length;
+    if (wire_total > buf.len) return null; // too large — stream it uninspected
+
+    @memcpy(buf[0..prefix_bytes.len], prefix_bytes);
+    var filled = prefix_bytes.len;
+    while (filled < wire_total) {
+        var vec: [1][]u8 = .{buf[filled..wire_total]};
+        const n = client.read(io, &vec) catch break;
+        if (n == 0) break; // client closed early — inspect what we have
+        filled += n;
+    }
+    return .{ .forward = buf[0..filled], .body = buf[head.head_len..filled] };
+}
+
+fn contentLength(head: http.RequestHead) ?usize {
+    const value = head.header("content-length") orelse return null;
+    return std.fmt.parseInt(usize, std.mem.trim(u8, value, " \t"), 10) catch null;
 }
 
 /// Write a minimal 403 response to a blocked client. Best-effort — errors are

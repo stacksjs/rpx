@@ -90,8 +90,12 @@ Now `?q=attack` (matched by a `SecRule ARGS "@rx attack" "...,deny"`) returns
 the dataplane builds as a plain proxy with **zero** zig-waf dependency (the
 inspection hook compiles to a no-op), so `zig build` / `zig build test` need no
 zig-waf checkout. The compiled rule plan is immutable, so evaluating it from
-many connection tasks concurrently is safe. Inspection currently covers the
-request-headers phase of the first request on a connection.
+many connection tasks concurrently is safe. Inspection covers the
+request-headers phase (query args, headers) and the request-body phase (a
+Content-Length body up to 128 KB is buffered and run through the body
+processors — URL-encoded / JSON / multipart / XML — into `ARGS_POST` etc.);
+larger bodies stream through uninspected. This covers the first request on a
+connection; keep-alive follow-ups are pumped through.
 
 ## Roadmap
 

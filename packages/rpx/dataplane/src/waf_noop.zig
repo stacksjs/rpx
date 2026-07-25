@@ -8,6 +8,6 @@ pub fn init(_: []const u8) bool {
     return false;
 }
 
-pub fn inspect(_: http.RequestHead) bool {
+pub fn inspect(_: http.RequestHead, _: []const u8) bool {
     return false;
 }
