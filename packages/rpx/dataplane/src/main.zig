@@ -54,7 +54,10 @@ pub fn main(init: std.process.Init) !void {
         const rules = std.Io.Dir.cwd().readFileAlloc(io, path, init.gpa, .limited(16 * 1024 * 1024)) catch
             fatal("cannot read the rules file");
         defer init.gpa.free(rules);
-        if (!waf_engine.init(rules)) fatal("rules failed to compile (run `zig-waf validate` for diagnostics)");
+        // Data files referenced by @pmFromFile resolve relative to the rules
+        // file's directory (SecDataDir semantics).
+        const data_dir = std.fs.path.dirname(path) orelse ".";
+        if (!waf_engine.init(rules, data_dir)) fatal("rules failed to compile (run `zig-waf validate` for diagnostics)");
     }
 
     upstream_addr = net.IpAddress.parse(up_host, up_port) catch fatal("invalid upstream host (expected an IP literal)");

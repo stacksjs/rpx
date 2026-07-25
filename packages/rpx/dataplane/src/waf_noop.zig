@@ -4,7 +4,7 @@
 
 const http = @import("http");
 
-pub fn init(_: []const u8) bool {
+pub fn init(_: []const u8, _: []const u8) bool {
     return false;
 }
 

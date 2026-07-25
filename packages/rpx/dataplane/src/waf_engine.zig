@@ -15,9 +15,10 @@ const c = @import("waf_c");
 /// The shared, rules-loaded WAF; built once in `init`.
 var handle: ?*c.zig_waf_t = null;
 
-/// Compile `rules` (a SecLang config) and stand up the WAF. Returns false on a
-/// parse/compile error.
-pub fn init(rules: []const u8) bool {
+/// Compile `rules` (a SecLang config) and stand up the WAF, resolving any
+/// `@pmFromFile` / `@ipMatchFromFile` data files against `data_dir` (the rules
+/// file's directory). Returns false on a parse/compile error.
+pub fn init(rules: []const u8, data_dir: []const u8) bool {
     var config: c.zig_waf_config_t = std.mem.zeroes(c.zig_waf_config_t);
     config.struct_size = @sizeOf(c.zig_waf_config_t);
     config.abi_version = c.ZIG_WAF_ABI_VERSION;
@@ -28,7 +29,7 @@ pub fn init(rules: []const u8) bool {
     config.max_request_body_bytes = 1024 * 1024;
     config.max_response_body_bytes = 1024 * 1024;
     var created: ?*c.zig_waf_t = null;
-    if (c.zig_waf_create_with_rules(&config, rules.ptr, rules.len, &created) != c.ZIG_WAF_OK) return false;
+    if (c.zig_waf_create_with_rules_at(&config, rules.ptr, rules.len, data_dir.ptr, data_dir.len, &created) != c.ZIG_WAF_OK) return false;
     handle = created;
     return true;
 }
