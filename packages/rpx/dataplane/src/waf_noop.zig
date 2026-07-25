@@ -10,7 +10,7 @@ pub fn init(_: []const u8, _: []const u8) bool {
 
 /// Mirror of `waf_engine.Inspector` with inert methods.
 pub const Inspector = struct {
-    pub fn begin() Inspector {
+    pub fn begin(_: []const u8, _: u16) Inspector {
         return .{};
     }
 

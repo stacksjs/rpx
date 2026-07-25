@@ -102,7 +102,13 @@ fn handleConn(io: std.Io, client: net.Stream) void {
     const upstream = upstream_addr.connect(io, .{ .mode = .stream }) catch return;
     defer upstream.close(io);
 
-    var inspector = waf_engine.Inspector.begin();
+    // Resolve the real client IP/port for the WAF's REMOTE_ADDR / REMOTE_PORT
+    // (only needed in a -Dwaf build). IPv6 peers fall back to a placeholder.
+    var address_buf: [64]u8 = undefined;
+    const peer: ?Peer = if (build_options.has_waf) peerAddress(client, &address_buf) else null;
+    const client_address = if (peer) |p| p.address else "127.0.0.1";
+    const client_port: u16 = if (peer) |p| p.port else 1;
+    var inspector = waf_engine.Inspector.begin(client_address, client_port);
     defer inspector.deinit();
 
     // Buffer and parse the request head before forwarding — this is where the
@@ -297,6 +303,23 @@ fn readResponseBody(io: std.Io, upstream: net.Stream, head: http.ResponseHead, p
 fn contentLengthResponse(head: http.ResponseHead) ?usize {
     const value = head.header("content-length") orelse return null;
     return std.fmt.parseInt(usize, std.mem.trim(u8, value, " \t"), 10) catch null;
+}
+
+const Peer = struct { address: []const u8, port: u16 };
+
+/// The connected peer's IPv4 address (`a.b.c.d`, formatted into `buf`) and port,
+/// for the WAF's REMOTE_ADDR / REMOTE_PORT. Returns null for an IPv6 peer or on
+/// error, so the caller falls back to a placeholder; canonical IPv6 formatting
+/// is a follow-up.
+fn peerAddress(stream: net.Stream, buf: []u8) ?Peer {
+    var storage: std.posix.sockaddr.storage = undefined;
+    var len: std.posix.socklen_t = @sizeOf(@TypeOf(storage));
+    std.posix.getpeername(stream.socket.handle, @ptrCast(&storage), &len) catch return null;
+    if (storage.family != std.posix.AF.INET) return null;
+    const in: *const std.posix.sockaddr.in = @ptrCast(@alignCast(&storage));
+    const octets: [4]u8 = @bitCast(in.addr);
+    const address = std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}", .{ octets[0], octets[1], octets[2], octets[3] }) catch return null;
+    return .{ .address = address, .port = std.mem.bigToNative(u16, in.port) };
 }
 
 /// Write a minimal 403 response to a blocked client. Best-effort — errors are

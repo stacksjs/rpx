@@ -43,14 +43,16 @@ pub const Inspector = struct {
     tx: ?*c.zig_waf_transaction_t,
 
     /// Begin inspecting a connection: create a transaction and record the
-    /// (loopback-placeholder) connection endpoints. Returns an inert inspector
-    /// when the WAF is disabled or a transaction cannot be created.
-    pub fn begin() Inspector {
+    /// connection endpoints, using `client_address` for the WAF's REMOTE_ADDR
+    /// (so @ipMatch / RBL / rate-limit rules see the real client). Returns an
+    /// inert inspector when the WAF is disabled or a transaction cannot be
+    /// created.
+    pub fn begin(client_address: []const u8, client_port: u16) Inspector {
         const waf = handle orelse return .{ .tx = null };
         var tx: ?*c.zig_waf_transaction_t = null;
         if (c.zig_waf_transaction_create(waf, &tx) != c.ZIG_WAF_OK) return .{ .tx = null };
-        const loopback = "127.0.0.1";
-        _ = c.zig_waf_transaction_process_connection(tx, loopback, loopback.len, 1, loopback, loopback.len, 80);
+        const server = "127.0.0.1";
+        _ = c.zig_waf_transaction_process_connection(tx, client_address.ptr, client_address.len, client_port, server, server.len, 80);
         return .{ .tx = tx };
     }
 
