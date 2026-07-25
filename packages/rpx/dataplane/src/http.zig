@@ -126,3 +126,46 @@ test "a request with no headers parses" {
     try std.testing.expectEqualStrings("DELETE", head.method);
     try std.testing.expectEqual(@as(usize, 0), head.headers.len);
 }
+
+test "random bytes never crash the parser and yield only borrowed slices" {
+    var prng = std.Random.DefaultPrng.init(0x4777_9A55_3F1C);
+    const random = prng.random();
+    var buffer: [512]u8 = undefined;
+    var storage: [64]Header = undefined;
+    var iteration: usize = 0;
+    while (iteration < 5000) : (iteration += 1) {
+        const len = random.uintLessThan(usize, buffer.len + 1);
+        for (buffer[0..len]) |*byte| {
+            // Bias toward request-line and header-framing bytes.
+            byte.* = switch (random.uintLessThan(u8, 10)) {
+                0 => ' ',
+                1 => ':',
+                2 => '\r',
+                3 => '\n',
+                4 => '/',
+                5 => 'G',
+                6 => 'H',
+                7 => 'T',
+                else => random.int(u8),
+            };
+        }
+        const result = parse(buffer[0..len], &storage) catch continue;
+        const head = result orelse continue;
+        // Every returned slice must point inside the input buffer, and the head
+        // length must be within it.
+        try std.testing.expect(head.head_len <= len);
+        for (head.headers) |field| {
+            try std.testing.expect(withinBuffer(field.name, buffer[0..len]));
+            try std.testing.expect(withinBuffer(field.value, buffer[0..len]));
+        }
+        try std.testing.expect(withinBuffer(head.method, buffer[0..len]));
+        try std.testing.expect(withinBuffer(head.target, buffer[0..len]));
+    }
+}
+
+fn withinBuffer(slice: []const u8, buffer: []const u8) bool {
+    if (slice.len == 0) return true;
+    const start = @intFromPtr(slice.ptr);
+    const base = @intFromPtr(buffer.ptr);
+    return start >= base and start + slice.len <= base + buffer.len;
+}
