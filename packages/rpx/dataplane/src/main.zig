@@ -1,43 +1,63 @@
-//! rpx dataplane (prototype): a native reverse-proxy hot path.
+//! rpx dataplane: a native reverse-proxy hot path.
 //!
 //! Thesis: Bun's proxy is body-bound because every byte is copied through JS
-//! userspace + GC (~3x behind nginx on HTML). For *proxying*, nginx also copies
-//! through userspace — so a no-GC, no-per-request-alloc native proxy should match
-//! nginx, and on Linux `splice()` (kernel→kernel, zero-copy) goes *past* it,
-//! since we then move bytes nginx still copies.
+//! userspace + GC (~3x behind nginx on HTML). A no-GC, no-per-request-alloc
+//! native proxy should match nginx and crush Bun.
 //!
-//! This v0 is a transparent 1:1 TCP proxy (each client connection gets its own
-//! upstream connection) driven by a single-threaded non-blocking `poll()` loop.
-//! Run N copies with SO_REUSEPORT for multi-core (the bench does this, like it
-//! does for the Bun workers). Plaintext only; the Bun control plane owns TLS,
-//! certs, routing, /etc/hosts, DNS — the dataplane just moves bytes fast.
+//! A transparent 1:1 TCP proxy: each client connection gets its own upstream
+//! connection, and bytes are pumped in both directions. Plaintext only; the Bun
+//! control plane owns TLS, certs, routing, /etc/hosts, and DNS — the dataplane
+//! just moves bytes fast.
 //!
-//! Data movement is abstracted behind `Direction`: a userspace copy everywhere
-//! (portable, runs on macOS), and `splice()` via a pipe on Linux (the path that
-//! beats nginx). Select with `-Doptimize=ReleaseFast` for real numbers.
+//! Built on Zig's `std.Io`: one lightweight task per connection (and one per
+//! direction), multiplexed cooperatively by the `Io` backend. The default
+//! backend is a thread pool (`std.Io.Threaded`, multi-core for free); swapping
+//! it for `std.Io.Evented` gives the single-thread io_uring loop on Linux. This
+//! replaces the old hand-rolled non-blocking `poll()` loop and its `splice()`
+//! path (the new `std.Io` exposes no socket→socket splice; file→socket offload
+//! lives on `Stream.Writer.sendFile`).
 const std = @import("std");
-const builtin = @import("builtin");
-const posix = std.posix;
+const net = std.Io.net;
 
-const use_splice = builtin.os.tag == .linux;
 const BUF_SIZE: usize = 64 * 1024;
-const MAX_CONNS: usize = 4096;
 
-var upstream_addr: std.net.Address = undefined;
+/// The upstream every accepted connection is proxied to. Set once in `main`;
+/// read-only thereafter, so sharing it across connection tasks is safe.
+var upstream_addr: net.IpAddress = undefined;
 
-pub fn main() !void {
-    var args = std.process.args();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next(); // argv[0]
-    const listen_port = parsePort(args.next()) orelse fatal("usage: rpx-dataplane <listenPort> <upstreamHost> <upstreamPort>");
+    const listen_port = parsePort(args.next()) orelse
+        fatal("usage: rpx-dataplane <listenPort> <upstreamHost> <upstreamPort> [bindHost]");
     const up_host = args.next() orelse fatal("missing upstream host");
     const up_port = parsePort(args.next()) orelse fatal("missing upstream port");
+    // Optional bind host; default to every interface (a real front-end). Pass
+    // 127.0.0.1 to restrict to loopback (what the local bench uses).
+    const bind_host = args.next() orelse "0.0.0.0";
 
-    upstream_addr = try resolve(up_host, up_port);
+    upstream_addr = net.IpAddress.parse(up_host, up_port) catch fatal("invalid upstream host (expected an IP literal)");
 
-    const listen_fd = try openListener(listen_port);
-    defer posix.close(listen_fd);
+    var listen_addr = net.IpAddress.parse(bind_host, listen_port) catch fatal("invalid bind host");
+    var server = listen_addr.listen(io, .{ .reuse_address = true }) catch fatal("listen failed");
+    defer server.deinit(io);
 
-    try eventLoop(listen_fd);
+    // Every connection handler is a task in this group; cancelling the group on
+    // shutdown tears the in-flight connections down.
+    var group: std.Io.Group = .init;
+    defer group.cancel(io);
+
+    while (true) {
+        const client = server.accept(io) catch |err| switch (err) {
+            error.Canceled => return err,
+            else => continue, // transient accept error — keep serving
+        };
+        group.concurrent(io, handleConn, .{ io, client }) catch {
+            // Out of concurrency capacity: drop this connection rather than block.
+            client.close(io);
+        };
+    }
 }
 
 fn parsePort(s: ?[]const u8) ?u16 {
@@ -50,297 +70,57 @@ fn fatal(comptime msg: []const u8) noreturn {
     std.process.exit(1);
 }
 
-fn resolve(host: []const u8, port: u16) !std.net.Address {
-    // The bench always points at 127.0.0.1; parse it directly (no resolver dep).
-    return std.net.Address.parseIp(host, port) catch blk: {
-        const list = try std.net.getAddressList(std.heap.page_allocator, host, port);
-        defer list.deinit();
-        if (list.addrs.len == 0) return error.UnknownHost;
-        break :blk list.addrs[0];
-    };
+/// Proxy one client connection: open the upstream, then pump both directions
+/// concurrently until each side closes.
+fn handleConn(io: std.Io, client: net.Stream) void {
+    defer client.close(io);
+    const upstream = upstream_addr.connect(io, .{ .mode = .stream }) catch return;
+    defer upstream.close(io);
+
+    // One task pumps client→upstream while this fiber pumps upstream→client;
+    // half-closes propagate independently (a slow response won't stall the
+    // request side).
+    var group: std.Io.Group = .init;
+    defer group.cancel(io);
+    group.async(io, pump, .{ io, client, upstream });
+    pump(io, upstream, client);
+    group.await(io) catch {};
 }
 
-fn openListener(port: u16) !posix.fd_t {
-    const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, port);
-    const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, posix.IPPROTO.TCP);
-    errdefer posix.close(fd);
-    try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
-    // SO_REUSEPORT: kernel load-balances accepted connections across the N copies
-    // the bench spawns — the same multi-core model nginx/rpx use.
-    try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
-    try posix.bind(fd, &addr.any, addr.getOsSockLen());
-    try posix.listen(fd, 1024);
-    return fd;
-}
-
-/// One half of a connection: move bytes from `src` to `dst`. Userspace copy
-/// everywhere; on Linux a pipe + `splice()` makes it zero-copy (kernel→kernel).
-const Direction = struct {
-    src: posix.fd_t,
-    dst: posix.fd_t,
-    src_eof: bool = false,
-    done: bool = false, // src_eof AND everything in flight has been written
-
-    // copy path
-    buf: if (use_splice) void else []u8 = if (use_splice) {} else undefined,
-    len: usize = 0,
-    off: usize = 0,
-
-    // splice path
-    pipe_r: if (use_splice) posix.fd_t else void = if (use_splice) -1 else {},
-    pipe_w: if (use_splice) posix.fd_t else void = if (use_splice) -1 else {},
-    in_pipe: usize = 0,
-
-    fn init(self: *Direction, alloc: std.mem.Allocator) !void {
-        if (use_splice) {
-            const fds = try posix.pipe();
-            self.pipe_r = fds[0];
-            self.pipe_w = fds[1];
-        } else {
-            self.buf = try alloc.alloc(u8, BUF_SIZE);
-        }
-    }
-
-    fn deinit(self: *Direction, alloc: std.mem.Allocator) void {
-        if (use_splice) {
-            if (self.pipe_r != -1) posix.close(self.pipe_r);
-            if (self.pipe_w != -1) posix.close(self.pipe_w);
-        } else {
-            alloc.free(self.buf);
-        }
-    }
-
-    /// Bytes buffered/in-flight, waiting to be written to `dst`.
-    fn pending(self: *const Direction) usize {
-        return if (use_splice) self.in_pipe else self.len - self.off;
-    }
-
-    /// Room to read more from `src` (don't read until what we have is written).
-    fn wantRead(self: *const Direction) bool {
-        return !self.src_eof and self.pending() == 0;
-    }
-
-    fn wantWrite(self: *const Direction) bool {
-        return self.pending() > 0;
-    }
-
-    /// `src` is readable: pull bytes in. Returns false on hard error.
-    fn onReadable(self: *Direction) bool {
-        if (use_splice) {
-            // socket → pipe (kernel buffer), no userspace copy.
-            const n = linuxSplice(self.src, self.pipe_w, BUF_SIZE) catch |e| {
-                return e == error.WouldBlock;
-            };
-            if (n == 0) {
-                self.markEof();
-            } else {
-                self.in_pipe += n;
-            }
-            return true;
-        } else {
-            const n = posix.read(self.src, self.buf) catch |e| {
-                return e == error.WouldBlock;
-            };
-            if (n == 0) {
-                self.markEof();
-            } else {
-                self.len = n;
-                self.off = 0;
-            }
-            return true;
-        }
-    }
-
-    /// `dst` is writable: push buffered bytes out. Returns false on hard error.
-    fn onWritable(self: *Direction) bool {
-        if (use_splice) {
-            const n = linuxSplice(self.pipe_r, self.dst, self.in_pipe) catch |e| {
-                return e == error.WouldBlock;
-            };
-            self.in_pipe -= n;
-        } else {
-            const n = posix.write(self.dst, self.buf[self.off..self.len]) catch |e| {
-                return e == error.WouldBlock;
-            };
-            self.off += n;
-            if (self.off >= self.len) {
-                self.len = 0;
-                self.off = 0;
-            }
-        }
-        // Source already hit EOF and we've now drained everything → propagate the
-        // half-close downstream so the peer sees the end of the response.
-        if (self.src_eof and self.pending() == 0 and !self.done) {
-            self.done = true;
-            posix.shutdown(self.dst, .send) catch {};
-        }
-        return true;
-    }
-
-    fn markEof(self: *Direction) void {
-        self.src_eof = true;
-        if (self.pending() == 0 and !self.done) {
-            self.done = true;
-            posix.shutdown(self.dst, .send) catch {};
-        }
-    }
-};
-
-const Conn = struct {
-    client: posix.fd_t,
-    upstream: posix.fd_t,
-    c2u: Direction, // client → upstream
-    u2c: Direction, // upstream → client
-
-    fn finished(self: *const Conn) bool {
-        return self.c2u.done and self.u2c.done;
-    }
-};
-
-fn linuxSplice(from: posix.fd_t, to: posix.fd_t, max: usize) !usize {
-    const SPLICE_F_MOVE: usize = 1;
-    const SPLICE_F_NONBLOCK: usize = 2;
-    const rc = std.os.linux.syscall6(
-        .splice,
-        @as(usize, @bitCast(@as(isize, from))),
-        0,
-        @as(usize, @bitCast(@as(isize, to))),
-        0,
-        max,
-        SPLICE_F_MOVE | SPLICE_F_NONBLOCK,
-    );
-    const signed: isize = @bitCast(rc);
-    if (signed >= 0) return @intCast(signed);
-    const err: posix.E = @enumFromInt(@as(usize, @bitCast(-signed)));
-    return switch (err) {
-        .AGAIN => error.WouldBlock,
-        else => error.SpliceFailed,
-    };
-}
-
-fn eventLoop(listen_fd: posix.fd_t) !void {
-    const alloc = std.heap.page_allocator;
-    var conns: [MAX_CONNS]?*Conn = .{null} ** MAX_CONNS;
-    var n_conns: usize = 0;
-
-    // pollfds: listener + up to 2 fds per connection.
-    var pollfds: [1 + MAX_CONNS * 2]posix.pollfd = undefined;
-    // Map each pollfd slot (beyond the listener) back to its conn + which fd.
-    var slot_conn: [MAX_CONNS * 2]usize = undefined;
-    var slot_is_client: [MAX_CONNS * 2]bool = undefined;
-
+/// Move bytes from `src` to `dst` until EOF, then half-close `dst`'s send side
+/// so the peer observes the end of the stream. A read/write error tears the
+/// direction down; the connection's `defer close` cleans up the sockets.
+fn pump(io: std.Io, src: net.Stream, dst: net.Stream) void {
+    var buf: [BUF_SIZE]u8 = undefined;
+    // An empty writer buffer makes writes go straight through to the socket
+    // (no second copy), which is what a proxy wants.
+    var writer = dst.writer(io, &.{});
     while (true) {
-        // Build the pollfd set for this iteration.
-        pollfds[0] = .{ .fd = listen_fd, .events = posix.POLL.IN, .revents = 0 };
-        var nfds: usize = 1;
-        for (conns, 0..) |maybe, ci| {
-            const c = maybe orelse continue;
-            var cev: i16 = 0;
-            var uev: i16 = 0;
-            if (c.c2u.wantRead()) cev |= posix.POLL.IN; // read from client
-            if (c.u2c.wantWrite()) cev |= posix.POLL.OUT; // write to client
-            if (c.u2c.wantRead()) uev |= posix.POLL.IN; // read from upstream
-            if (c.c2u.wantWrite()) uev |= posix.POLL.OUT; // write to upstream
-            if (cev != 0) {
-                pollfds[nfds] = .{ .fd = c.client, .events = cev, .revents = 0 };
-                slot_conn[nfds - 1] = ci;
-                slot_is_client[nfds - 1] = true;
-                nfds += 1;
-            }
-            if (uev != 0) {
-                pollfds[nfds] = .{ .fd = c.upstream, .events = uev, .revents = 0 };
-                slot_conn[nfds - 1] = ci;
-                slot_is_client[nfds - 1] = false;
-                nfds += 1;
-            }
+        var vec: [1][]u8 = .{&buf};
+        const n = src.read(io, &vec) catch return;
+        if (n == 0) {
+            dst.shutdown(io, .send) catch {};
+            return;
         }
-
-        _ = posix.poll(pollfds[0..nfds], -1) catch |e| {
-            if (e == error.SignalInterrupt) continue;
-            return e;
-        };
-
-        // Accept new connections.
-        if (pollfds[0].revents & posix.POLL.IN != 0) {
-            while (n_conns < MAX_CONNS) {
-                const cfd = posix.accept(listen_fd, null, null, posix.SOCK.NONBLOCK) catch break;
-                const conn = acceptConn(alloc, cfd) catch {
-                    posix.close(cfd);
-                    continue;
-                };
-                // Park it in the first free slot.
-                for (&conns) |*slot| {
-                    if (slot.* == null) {
-                        slot.* = conn;
-                        n_conns += 1;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Service ready connection fds.
-        var i: usize = 1;
-        while (i < nfds) : (i += 1) {
-            const re = pollfds[i].revents;
-            if (re == 0) continue;
-            const ci = slot_conn[i - 1];
-            const c = conns[ci] orelse continue;
-            const is_client = slot_is_client[i - 1];
-            var ok = true;
-            if (re & (posix.POLL.IN | posix.POLL.HUP) != 0) {
-                ok = if (is_client) c.c2u.onReadable() else c.u2c.onReadable();
-            }
-            if (ok and re & posix.POLL.OUT != 0) {
-                ok = if (is_client) c.u2c.onWritable() else c.c2u.onWritable();
-            }
-            if (!ok or re & posix.POLL.ERR != 0) {
-                closeConn(alloc, &conns, ci, &n_conns);
-                continue;
-            }
-            if (c.finished()) {
-                closeConn(alloc, &conns, ci, &n_conns);
-            }
-        }
+        writer.interface.writeAll(buf[0..n]) catch return;
     }
 }
 
-fn acceptConn(alloc: std.mem.Allocator, client_fd: posix.fd_t) !*Conn {
-    const up_fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, posix.IPPROTO.TCP);
-    errdefer posix.close(up_fd);
-    setNoDelay(client_fd);
-    setNoDelay(up_fd);
-    // Non-blocking connect to a localhost upstream completes ~immediately; treat
-    // EINPROGRESS as success (poll will surface real failures as POLL.ERR).
-    posix.connect(up_fd, &upstream_addr.any, upstream_addr.getOsSockLen()) catch |e| {
-        if (e != error.WouldBlock and e != error.ConnectionPending) return e;
-    };
+// ---- tests --------------------------------------------------------------
 
-    const conn = try alloc.create(Conn);
-    errdefer alloc.destroy(conn);
-    conn.* = .{
-        .client = client_fd,
-        .upstream = up_fd,
-        .c2u = .{ .src = client_fd, .dst = up_fd },
-        .u2c = .{ .src = up_fd, .dst = client_fd },
-    };
-    try conn.c2u.init(alloc);
-    errdefer conn.c2u.deinit(alloc);
-    try conn.u2c.init(alloc);
-    return conn;
+test "parsePort accepts valid ports and rejects the rest" {
+    try std.testing.expectEqual(@as(?u16, 8080), parsePort("8080"));
+    try std.testing.expectEqual(@as(?u16, 1), parsePort("1"));
+    try std.testing.expectEqual(@as(?u16, null), parsePort(null));
+    try std.testing.expectEqual(@as(?u16, null), parsePort("nope"));
+    try std.testing.expectEqual(@as(?u16, null), parsePort("70000")); // > u16
 }
 
-fn closeConn(alloc: std.mem.Allocator, conns: *[MAX_CONNS]?*Conn, ci: usize, n_conns: *usize) void {
-    const c = conns[ci] orelse return;
-    posix.close(c.client);
-    posix.close(c.upstream);
-    c.c2u.deinit(alloc);
-    c.u2c.deinit(alloc);
-    alloc.destroy(c);
-    conns[ci] = null;
-    n_conns.* -= 1;
-}
-
-fn setNoDelay(fd: posix.fd_t) void {
-    posix.setsockopt(fd, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1))) catch {};
+test "IpAddress.parse yields the requested port for v4 and v6 literals" {
+    const v4 = try net.IpAddress.parse("127.0.0.1", 8080);
+    try std.testing.expectEqual(@as(u16, 8080), v4.getPort());
+    const v6 = try net.IpAddress.parse("::1", 443);
+    try std.testing.expectEqual(@as(u16, 443), v6.getPort());
+    // A non-address string is rejected (the exact error is version-specific).
+    if (net.IpAddress.parse("not-an-ip", 80)) |_| return error.ExpectedParseFailure else |_| {}
 }
