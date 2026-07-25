@@ -136,10 +136,12 @@ fn handleConn(io: std.Io, client: net.Stream) void {
         }
     }
 
-    // Forward what we buffered (head, plus the body when we read it) to origin.
+    // Forward what we buffered (head, plus the body when we read it) to origin,
+    // injecting X-Forwarded-For / -Proto for a parsed request with a known IPv4
+    // client (WAF build only; the plain build stays a transparent pump).
     if (forward.len != 0) {
         var out = upstream.writer(io, &.{});
-        out.interface.writeAll(forward) catch return;
+        forwardRequest(&out.interface, forward, if (build_options.has_waf) prefix.head else null, peer) catch return;
     }
 
     // Pump client→upstream in the background (further request bytes / keep-alive)
@@ -303,6 +305,25 @@ fn readResponseBody(io: std.Io, upstream: net.Stream, head: http.ResponseHead, p
 fn contentLengthResponse(head: http.ResponseHead) ?usize {
     const value = head.header("content-length") orelse return null;
     return std.fmt.parseInt(usize, std.mem.trim(u8, value, " \t"), 10) catch null;
+}
+
+/// Forward the buffered request to the origin, inserting `X-Forwarded-For` and
+/// `X-Forwarded-Proto` just before the head's blank line when the request head
+/// was parsed and the client's IPv4 address is known. Otherwise the bytes are
+/// forwarded verbatim. (Client-supplied XFF is not yet stripped — follow-up.)
+fn forwardRequest(out: anytype, forward: []const u8, head: ?http.RequestHead, peer: ?Peer) !void {
+    if (head) |h| if (peer) |p| {
+        var xff_buffer: [96]u8 = undefined;
+        const xff = std.fmt.bufPrint(&xff_buffer, "X-Forwarded-For: {s}\r\nX-Forwarded-Proto: http\r\n", .{p.address}) catch "";
+        const split = h.head_len -| 2; // just before the head's terminating blank line
+        if (xff.len != 0 and split >= 4 and split <= forward.len) {
+            try out.writeAll(forward[0..split]);
+            try out.writeAll(xff);
+            try out.writeAll(forward[split..]);
+            return;
+        }
+    };
+    try out.writeAll(forward);
 }
 
 const Peer = struct { address: []const u8, port: u16 };
