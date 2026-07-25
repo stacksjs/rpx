@@ -232,7 +232,17 @@ export class OnDemandCertManager {
         method: 'http-01',
         http01Store: this.http01Store,
         email: this.config.email,
-        staging: this.config.staging,
+        // Materialize our own default instead of forwarding `undefined`.
+        // `OnDemandTlsConfig.staging` documents a `false` default (real,
+        // trusted certs), but tlsx's `obtainCertificate` selects production
+        // ONLY on an explicit `staging === false` and otherwise falls back to
+        // the staging directory. Passing `undefined` through therefore
+        // inverted rpx's contract: every auto-issued cert was a Let's Encrypt
+        // *staging* cert, which chains to an untrusted root, so browsers and
+        // API clients reject the domain with no error surfaced anywhere (the
+        // issuance itself "succeeds"). Collapse it here — the default lives
+        // with the config that documents it.
+        staging: this.config.staging ?? false,
       })
       await this.persist(host, result.fullChainPem, result.keyPem)
       const entry: SniTlsEntry = { serverName: host, cert: result.fullChainPem, key: result.keyPem }

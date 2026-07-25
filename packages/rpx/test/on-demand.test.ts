@@ -80,6 +80,41 @@ describe('OnDemandCertManager.ensureCert', () => {
     expect(calls.length).toBe(0)
   })
 
+  it('asks for a PRODUCTION cert unless staging is explicitly opted into', async () => {
+    // Regression: `staging` was forwarded to tlsx as `undefined`, and
+    // `obtainCertificate` selects production ONLY on an explicit `false`.
+    // Every auto-issued cert was therefore a staging cert chaining to an
+    // untrusted root — issuance "succeeded" while browsers refused the domain.
+    const seen: (boolean | undefined)[] = []
+    const issuer: CertIssuer = async (opts) => {
+      seen.push(opts.staging)
+      return {
+        certPem: 'c',
+        keyPem: 'k',
+        chainPem: '',
+        fullChainPem: 'fc',
+        accountKeyPem: 'a',
+        notAfter: new Date(Date.now() + 90 * 86_400_000),
+      }
+    }
+
+    const unset = new OnDemandCertManager({
+      config: { enabled: true, allowedSuffixes: ['example.com'] },
+      certsDir: dir,
+      issuer,
+    })
+    expect(await unset.ensureCert('a.example.com')).toBe(true)
+    expect(seen).toEqual([false])
+
+    const optedIn = new OnDemandCertManager({
+      config: { enabled: true, allowedSuffixes: ['example.com'], staging: true },
+      certsDir: dir,
+      issuer,
+    })
+    expect(await optedIn.ensureCert('b.example.com')).toBe(true)
+    expect(seen).toEqual([false, true])
+  })
+
   it('issues for an allowedSuffixes-approved host and adds it to the SNI set', async () => {
     const { issuer, calls } = fakeIssuer()
     const added: SniTlsEntry[][] = []
