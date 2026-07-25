@@ -93,104 +93,190 @@ fn fatal(comptime msg: []const u8) noreturn {
     std.process.exit(1);
 }
 
-/// Proxy one client connection: inspect the request (and, in a -Dwaf build, the
-/// origin response) through the WAF, then pump both directions until each side
-/// closes. One `Inspector` (one WAF transaction) spans the request and response
-/// phases so anomaly scores accumulate across them.
+/// Proxy one client connection. In a non-WAF build this is a transparent
+/// bidirectional pump. In a -Dwaf build it is an HTTP/1.1 request loop: every
+/// request on the connection (not just the first) is inspected through the WAF's
+/// request phases, and every origin response through the response phases, so
+/// keep-alive follow-ups cannot bypass the WAF. When a message is framed in a
+/// way we cannot delimit (chunked, close-delimited, oversize, upgrade), we
+/// forward what we have and fall back to a transparent pump for the remainder.
 fn handleConn(io: std.Io, client: net.Stream) void {
     defer client.close(io);
     const upstream = upstream_addr.connect(io, .{ .mode = .stream }) catch return;
     defer upstream.close(io);
 
-    // Resolve the real client IP/port for the WAF's REMOTE_ADDR / REMOTE_PORT
-    // (only needed in a -Dwaf build). IPv6 peers fall back to a placeholder.
+    if (!build_options.has_waf) {
+        pumpBoth(io, client, upstream);
+        return;
+    }
+
+    // Resolve the real client IP/port once per connection for REMOTE_ADDR /
+    // REMOTE_PORT. IPv6 peers fall back to a placeholder.
     var address_buf: [64]u8 = undefined;
-    const peer: ?Peer = if (build_options.has_waf) peerAddress(client, &address_buf) else null;
+    const peer: ?Peer = peerAddress(client, &address_buf);
     const client_address = if (peer) |p| p.address else "127.0.0.1";
     const client_port: u16 = if (peer) |p| p.port else 1;
-    var inspector = waf_engine.Inspector.begin(client_address, client_port);
-    defer inspector.deinit();
 
-    // Buffer and parse the request head before forwarding — this is where the
-    // WAF request phases (1-2) run. We inspect the first request head on the
-    // connection; keep-alive follow-ups are pumped through.
+    // One head buffer, header table, and body buffer, reused for the request and
+    // then the response of each exchange (the request is forwarded before the
+    // response is read), keeping per-connection stack flat.
     var head_buf: [HEAD_BUF_SIZE]u8 = undefined;
     var header_storage: [MAX_HEADERS]http.Header = undefined;
-    const prefix = readRequestHead(io, client, &head_buf, &header_storage);
+    var body_buf: [HEAD_BUF_SIZE + BODY_CAP]u8 = undefined;
 
-    // On an enforced request-phase intervention, reply 403 and drop instead of
-    // forwarding. Everything below is a no-op in a non-WAF build.
-    var request_buf: [HEAD_BUF_SIZE + BODY_CAP]u8 = undefined;
-    var forward: []const u8 = prefix.bytes;
-    if (prefix.head) |head| {
-        var body: []const u8 = &.{};
-        if (build_options.has_waf) {
-            if (readBody(io, client, head, prefix.bytes, &request_buf)) |buffered| {
-                forward = buffered.forward; // head + full body, contiguous
-                body = buffered.body;
-            }
-        }
-        if (inspector.inspectRequest(head, body)) {
-            sendForbidden(io, client);
-            return;
-        }
-    }
+    while (true) switch (handleExchange(io, client, upstream, peer, client_address, client_port, &head_buf, &header_storage, &body_buf)) {
+        .keep_alive => continue,
+        .close => return,
+        .stream => return pumpBoth(io, client, upstream),
+    };
+}
 
-    // Forward what we buffered (head, plus the body when we read it) to origin,
-    // injecting X-Forwarded-For / -Proto for a parsed request with a known IPv4
-    // client (WAF build only; the plain build stays a transparent pump).
-    if (forward.len != 0) {
-        var out = upstream.writer(io, &.{});
-        forwardRequest(&out.interface, forward, if (build_options.has_waf) prefix.head else null, peer) catch return;
-    }
-
-    // Pump client→upstream in the background (further request bytes / keep-alive)
-    // while we handle the origin→client direction with response inspection.
+/// Pump both directions of a connection concurrently until each side closes.
+fn pumpBoth(io: std.Io, client: net.Stream, upstream: net.Stream) void {
     var group: std.Io.Group = .init;
     defer group.cancel(io);
     group.async(io, pump, .{ io, client, upstream });
-    if (build_options.has_waf and prefix.head != null) {
-        // Reuse the request buffers — the request has already been forwarded.
-        inspectResponse(io, upstream, client, &inspector, &head_buf, &header_storage, &request_buf);
-    } else {
-        pump(io, upstream, client);
-    }
+    pump(io, upstream, client);
     group.await(io) catch {};
 }
 
-/// Read the origin response head (and a bounded, Content-Length-framed body),
-/// run it through the WAF response phases (3-4), and either forward it to the
-/// client or — on an enforced intervention (e.g. CRS data-leakage rules) —
-/// replace it with a 403. Chunked / close-framed / oversize responses stream
-/// through with only their head inspected. `buf` (the already-forwarded request
-/// buffer) is reused to keep per-connection stack flat.
-fn inspectResponse(
+const Exchange = enum {
+    /// The connection may carry another request — loop.
+    keep_alive,
+    /// The connection is done (EOF, a `Connection: close`, or a block).
+    close,
+    /// This message could not be delimited (chunked/close-framed/oversize/
+    /// upgrade); forward the remainder as a transparent pump.
+    stream,
+};
+
+/// Handle one request/response exchange with a fresh WAF transaction. Buffers
+/// are borrowed from the caller and reused across exchanges.
+fn handleExchange(
     io: std.Io,
-    upstream: net.Stream,
     client: net.Stream,
-    inspector: *waf_engine.Inspector,
+    upstream: net.Stream,
+    peer: ?Peer,
+    client_address: []const u8,
+    client_port: u16,
     head_buf: []u8,
     storage: []http.Header,
-    buf: []u8,
-) void {
-    const prefix = readResponseHead(io, upstream, head_buf, storage);
-    var forward: []const u8 = prefix.bytes;
-    if (prefix.head) |head| {
-        var body: []const u8 = &.{};
-        if (readResponseBody(io, upstream, head, prefix.bytes, buf)) |buffered| {
-            forward = buffered.forward;
-            body = buffered.body;
-        }
-        if (inspector.inspectResponse(head, body)) {
-            sendForbidden(io, client);
-            return;
-        }
+    body_buf: []u8,
+) Exchange {
+    var inspector = waf_engine.Inspector.begin(client_address, client_port);
+    defer inspector.deinit();
+
+    // --- request ---
+    const req_prefix = readRequestHead(io, client, head_buf, storage);
+    if (req_prefix.bytes.len == 0) return .close; // clean EOF between requests
+    const req_head = req_prefix.head orelse {
+        _ = forwardAll(io, upstream, req_prefix.bytes);
+        return .stream; // unparsable head — forward transparently
+    };
+
+    var req_forward: []const u8 = req_prefix.bytes;
+    var req_body: []const u8 = &.{};
+    var req_body_buffered = false;
+    if (readBody(io, client, req_head, req_prefix.bytes, body_buf)) |buffered| {
+        req_forward = buffered.forward;
+        req_body = buffered.body;
+        req_body_buffered = true;
     }
-    if (forward.len != 0) {
-        var out = client.writer(io, &.{});
-        out.interface.writeAll(forward) catch return;
+
+    if (inspector.inspectRequest(req_head, req_body)) {
+        sendForbidden(io, client);
+        return .close;
     }
-    pump(io, upstream, client);
+
+    // Snapshot what we need from the request head before its buffers are reused.
+    const req_wants_close = wantsClose(req_head.header("connection"), req_head.version);
+    const req_streams = isUpgrade(req_head) or (!req_body_buffered and requestHasBody(req_head));
+
+    {
+        var out = upstream.writer(io, &.{});
+        forwardRequest(&out.interface, req_forward, req_head, peer) catch return .close;
+    }
+    if (req_streams) return .stream; // request body we couldn't buffer — pump the rest
+
+    // --- response (reuses head_buf / storage / body_buf) ---
+    const resp_prefix = readResponseHead(io, upstream, head_buf, storage);
+    const resp_head = resp_prefix.head orelse {
+        _ = forwardAll(io, client, resp_prefix.bytes);
+        return .stream;
+    };
+
+    var resp_forward: []const u8 = resp_prefix.bytes;
+    var resp_body: []const u8 = &.{};
+    var resp_delimited = false;
+    if (readResponseBody(io, upstream, resp_head, resp_prefix.bytes, body_buf)) |buffered| {
+        resp_forward = buffered.forward;
+        resp_body = buffered.body;
+        resp_delimited = true;
+    } else if (responseIsBodyless(resp_head)) {
+        resp_delimited = true; // 204/304/1xx or Content-Length: 0 — head is all
+    }
+
+    if (inspector.inspectResponse(resp_head, resp_body)) {
+        sendForbidden(io, client);
+        return .close;
+    }
+
+    const resp_wants_close = wantsClose(resp_head.header("connection"), resp_head.version);
+    if (!forwardAll(io, client, resp_forward)) return .close;
+
+    if (!resp_delimited) return .stream; // chunked / close-framed body — pump the rest
+    if (req_wants_close or resp_wants_close) return .close;
+    return .keep_alive;
+}
+
+/// Write all of `bytes` to `stream`; returns false on a write error.
+fn forwardAll(io: std.Io, stream: net.Stream, bytes: []const u8) bool {
+    if (bytes.len == 0) return true;
+    var out = stream.writer(io, &.{});
+    out.interface.writeAll(bytes) catch return false;
+    return true;
+}
+
+/// Whether the request declares a body (Content-Length > 0 or Transfer-Encoding).
+fn requestHasBody(head: http.RequestHead) bool {
+    if (contentLength(head)) |length| return length > 0;
+    return head.header("transfer-encoding") != null;
+}
+
+/// Whether the request is an HTTP upgrade (WebSocket etc.) — bytes after the
+/// head are an opaque tunnel, so we stop parsing and pump.
+fn isUpgrade(head: http.RequestHead) bool {
+    if (head.header("upgrade") != null) return true;
+    if (head.header("connection")) |value| return containsTokenIgnoreCase(value, "upgrade");
+    return false;
+}
+
+/// A response that carries no body regardless of headers, so its head fully
+/// delimits it: 1xx, 204, and 304, or an explicit Content-Length of 0.
+fn responseIsBodyless(head: http.ResponseHead) bool {
+    if (head.status == 204 or head.status == 304 or (head.status >= 100 and head.status < 200)) return true;
+    if (contentLengthResponse(head)) |length| return length == 0;
+    return false;
+}
+
+/// Resolve HTTP keep-alive: HTTP/1.1 persists unless `Connection: close`;
+/// HTTP/1.0 (and anything else) closes unless `Connection: keep-alive`.
+fn wantsClose(connection: ?[]const u8, version: []const u8) bool {
+    if (connection) |value| {
+        if (containsTokenIgnoreCase(value, "close")) return true;
+        if (containsTokenIgnoreCase(value, "keep-alive")) return false;
+    }
+    return !std.mem.eql(u8, version, "HTTP/1.1");
+}
+
+/// Case-insensitive substring search (for short header values).
+fn containsTokenIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0 or needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
 }
 
 const HeadPrefix = struct {
