@@ -17,9 +17,13 @@
 //! path (the new `std.Io` exposes no socket→socket splice; file→socket offload
 //! lives on `Stream.Writer.sendFile`).
 const std = @import("std");
+const http = @import("http.zig");
 const net = std.Io.net;
 
 const BUF_SIZE: usize = 64 * 1024;
+/// Cap on the request-head bytes we buffer for inspection before forwarding.
+const HEAD_BUF_SIZE: usize = 16 * 1024;
+const MAX_HEADERS: usize = 128;
 
 /// The upstream every accepted connection is proxied to. Set once in `main`;
 /// read-only thereafter, so sharing it across connection tasks is safe.
@@ -77,14 +81,57 @@ fn handleConn(io: std.Io, client: net.Stream) void {
     const upstream = upstream_addr.connect(io, .{ .mode = .stream }) catch return;
     defer upstream.close(io);
 
-    // One task pumps client→upstream while this fiber pumps upstream→client;
-    // half-closes propagate independently (a slow response won't stall the
-    // request side).
+    // Buffer and parse the request head before forwarding — this is where a WAF
+    // inspection hook runs (feed head.method/target/headers through the engine
+    // and block on an intervention). We inspect the first request head on the
+    // connection; keep-alive follow-ups are pumped through.
+    var head_buf: [HEAD_BUF_SIZE]u8 = undefined;
+    var header_storage: [MAX_HEADERS]http.Header = undefined;
+    const prefix = readRequestHead(io, client, &head_buf, &header_storage);
+    // TODO(zig-waf): if prefix.head, run it through the C connector ABI and, on
+    // an intervention, reply to `client` with the block response and return
+    // instead of forwarding.
+
+    // Forward whatever we buffered (the head plus any body bytes that arrived
+    // with it), then pump both directions for the remainder.
+    if (prefix.bytes.len != 0) {
+        var out = upstream.writer(io, &.{});
+        out.interface.writeAll(prefix.bytes) catch return;
+    }
+
     var group: std.Io.Group = .init;
     defer group.cancel(io);
     group.async(io, pump, .{ io, client, upstream });
     pump(io, upstream, client);
     group.await(io) catch {};
+}
+
+const HeadPrefix = struct {
+    /// The bytes read from the client so far (the head, plus any body prefix
+    /// that arrived in the same read). Already destined for the upstream.
+    bytes: []u8,
+    /// The parsed request head, or null if EOF/oversize/malformed intervened
+    /// (in which case the bytes are forwarded transparently).
+    head: ?http.RequestHead,
+};
+
+/// Read from `client` until the HTTP request head is complete, parsing it. On
+/// a malformed head, an oversize head, or EOF-before-head, returns the bytes
+/// read with a null head so the caller forwards them transparently.
+fn readRequestHead(io: std.Io, client: net.Stream, buf: []u8, storage: []http.Header) HeadPrefix {
+    var filled: usize = 0;
+    while (filled < buf.len) {
+        if (http.parse(buf[0..filled], storage)) |maybe_head| {
+            if (maybe_head) |head| return .{ .bytes = buf[0..filled], .head = head };
+        } else |_| {
+            return .{ .bytes = buf[0..filled], .head = null }; // malformed
+        }
+        var vec: [1][]u8 = .{buf[filled..]};
+        const n = client.read(io, &vec) catch return .{ .bytes = buf[0..filled], .head = null };
+        if (n == 0) return .{ .bytes = buf[0..filled], .head = null }; // EOF before head
+        filled += n;
+    }
+    return .{ .bytes = buf[0..filled], .head = null }; // head larger than the buffer
 }
 
 /// Move bytes from `src` to `dst` until EOF, then half-close `dst`'s send side
@@ -107,6 +154,10 @@ fn pump(io: std.Io, src: net.Stream, dst: net.Stream) void {
 }
 
 // ---- tests --------------------------------------------------------------
+
+test {
+    _ = @import("http.zig");
+}
 
 test "parsePort accepts valid ports and rejects the rest" {
     try std.testing.expectEqual(@as(?u16, 8080), parsePort("8080"));
