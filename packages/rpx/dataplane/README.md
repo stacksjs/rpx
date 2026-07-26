@@ -121,7 +121,7 @@ zig build -Dwaf=/path/to/zig-waf -Dtls=/path/to/zig-tls -Doptimize=ReleaseFast
   --tls-cert /etc/rpx/cert.pem --tls-key /etc/rpx/key.pem
 ```
 
-Now `https://…?q=attack` is decrypted, blocked with `403`, and never reaches the
+Now `<https://…?q=attack>` is decrypted, blocked with `403`, and never reaches the
 origin. Without `-Dtls` the dataplane is plaintext-only (no TLS dependency).
 IPv6 clients currently fall back to a placeholder `REMOTE_ADDR`.
 
