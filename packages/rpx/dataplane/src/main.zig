@@ -576,19 +576,51 @@ fn writeHeadWithoutForwardingHeaders(out: anytype, head: []const u8) !void {
 
 const Peer = struct { address: []const u8, port: u16 };
 
-/// The connected peer's IPv4 address (`a.b.c.d`, formatted into `buf`) and port,
-/// for the WAF's REMOTE_ADDR / REMOTE_PORT. Returns null for an IPv6 peer or on
-/// error, so the caller falls back to a placeholder; canonical IPv6 formatting
-/// is a follow-up.
+/// The connected peer's address (formatted into `buf`) and port, for the WAF's
+/// REMOTE_ADDR / REMOTE_PORT. IPv4 as a dotted quad, IPv6 in canonical text, and
+/// an IPv4-mapped IPv6 address unmapped to the dotted quad it actually is.
+/// Returns null only for an address family no rule can match, so the caller falls
+/// back to a placeholder.
 fn peerAddress(stream: net.Stream, buf: []u8) ?Peer {
     var storage: std.posix.sockaddr.storage = undefined;
     var len: std.posix.socklen_t = @sizeOf(@TypeOf(storage));
     std.posix.getpeername(stream.socket.handle, @ptrCast(&storage), &len) catch return null;
-    if (storage.family != std.posix.AF.INET) return null;
-    const in: *const std.posix.sockaddr.in = @ptrCast(@alignCast(&storage));
-    const octets: [4]u8 = @bitCast(in.addr);
-    const address = std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}", .{ octets[0], octets[1], octets[2], octets[3] }) catch return null;
-    return .{ .address = address, .port = std.mem.bigToNative(u16, in.port) };
+    switch (storage.family) {
+        std.posix.AF.INET => {
+            const in: *const std.posix.sockaddr.in = @ptrCast(@alignCast(&storage));
+            const octets: [4]u8 = @bitCast(in.addr);
+            return .{
+                .address = formatIp4(buf, octets) orelse return null,
+                .port = std.mem.bigToNative(u16, in.port),
+            };
+        },
+        std.posix.AF.INET6 => {
+            const in6: *const std.posix.sockaddr.in6 = @ptrCast(@alignCast(&storage));
+            const port = std.mem.bigToNative(u16, in6.port);
+            // An IPv4 client reaching a dual-stack listener arrives as
+            // ::ffff:a.b.c.d. Reporting that form would break every IPv4 rule the
+            // operator wrote — an `@ipMatch 10.0.0.0/8` allowlist silently stops
+            // matching the hosts it was written for — so it is unmapped back to the
+            // dotted quad it actually is.
+            if (std.mem.eql(u8, in6.addr[0..12], &[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff })) {
+                const octets: [4]u8 = in6.addr[12..16].*;
+                return .{ .address = formatIp4(buf, octets) orelse return null, .port = port };
+            }
+            // Canonical IPv6 text, via the standard library's formatter, so the
+            // zero-run compression matches what an operator writes in a rule.
+            // Deliberately without brackets or a port: REMOTE_ADDR is an address.
+            const unresolved: net.Ip6Address.Unresolved = .{ .bytes = in6.addr, .interface_name = null };
+            const address = std.fmt.bufPrint(buf, "{f}", .{unresolved}) catch return null;
+            return .{ .address = address, .port = port };
+        },
+        else => return null, // a unix socket has no address a rule can match
+    }
+}
+
+fn formatIp4(buf: []u8, octets: [4]u8) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}", .{
+        octets[0], octets[1], octets[2], octets[3],
+    }) catch null;
 }
 
 /// Write a minimal 403 response to a blocked client. Best-effort — errors are
