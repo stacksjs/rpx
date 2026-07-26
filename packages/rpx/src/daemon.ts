@@ -1058,6 +1058,16 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
   const watcher = watchRegistry(entries => rebuild(entries), { dir: registryDir, verbose })
   const onHup = (): void => { reloadTls().catch(() => {}) }
   process.on('SIGHUP', onHup)
+  // `stop()` must never throw while tearing down. The listener API is not
+  // guaranteed to still be there — an embedder (or another test in the same
+  // process) can replace `process` with a stub that has `on` but not
+  // `removeListener`/`off`, and an exception here abandons the rest of the
+  // teardown: the watcher stays open and the :443 listener is never drained.
+  const detachHup = (): void => {
+    const remove = (process as Partial<NodeJS.Process>).removeListener ?? (process as Partial<NodeJS.Process>).off
+    if (typeof remove === 'function')
+      remove.call(process, 'SIGHUP', onHup)
+  }
 
   let resolveDone!: () => void
   const done = new Promise<void>((r) => { resolveDone = r })
@@ -1065,7 +1075,7 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
     if (stopped)
       return done
     stopped = true
-    process.off('SIGHUP', onHup)
+    detachHup()
     watcher.close()
     httpsServer.stop(false)
     pruneRegistryUpstreamPools(new Set())
