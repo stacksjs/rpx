@@ -80,6 +80,41 @@ describe('OnDemandCertManager.ensureCert', () => {
     expect(calls.length).toBe(0)
   })
 
+  it('registers ONE ACME account and reuses it across hosts and restarts', async () => {
+    // Regression: no account key was passed, so every host registered a fresh
+    // ACME account. Let's Encrypt caps new registrations at 10 per IP per 3
+    // hours, so a gateway fronting more than ten on-demand hostnames stopped
+    // being able to issue at all — visible only as a TLS handshake serving the
+    // fallback certificate.
+    const seen: (string | undefined)[] = []
+    const issuer: CertIssuer = async (opts) => {
+      seen.push(opts.accountKeyPem)
+      return {
+        certPem: 'c',
+        keyPem: 'k',
+        chainPem: '',
+        fullChainPem: 'fc',
+        accountKeyPem: 'ACCOUNT-KEY-1',
+        notAfter: new Date(Date.now() + 90 * 86_400_000),
+      }
+    }
+
+    const cfg = { enabled: true, allowedSuffixes: ['example.com'] }
+    const m = new OnDemandCertManager({ config: cfg, certsDir: dir, issuer })
+    expect(await m.ensureCert('a.example.com')).toBe(true)
+    expect(await m.ensureCert('b.example.com')).toBe(true)
+
+    // First call has nothing to reuse; the second must carry the saved account.
+    expect(seen).toEqual([undefined, 'ACCOUNT-KEY-1'])
+    expect(await fsp.readFile(path.join(dir, 'acme-account.key'), 'utf8')).toBe('ACCOUNT-KEY-1')
+
+    // A fresh manager (process restart) adopts the account off disk instead of
+    // registering another one.
+    const restarted = new OnDemandCertManager({ config: cfg, certsDir: dir, issuer })
+    expect(await restarted.ensureCert('c.example.com')).toBe(true)
+    expect(seen[2]).toBe('ACCOUNT-KEY-1')
+  })
+
   it('asks for a PRODUCTION cert unless staging is explicitly opted into', async () => {
     // Regression: `staging` was forwarded to tlsx as `undefined`, and
     // `obtainCertificate` selects production ONLY on an explicit `false`.

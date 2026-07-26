@@ -60,6 +60,13 @@ export interface OnDemandCertManagerOptions {
   negativeCacheMs?: number
 }
 
+/**
+ * Filename of the shared ACME account key inside `certsDir`. Matches the
+ * default `tlsx acme:issue --account-key` path so the CLI and the gateway
+ * share ONE registered account rather than two.
+ */
+const ACCOUNT_KEY_FILE = 'acme-account.key'
+
 const DEFAULT_NEGATIVE_CACHE_MS = 60_000
 /**
  * Hard ceiling on the negative-cache map. An attacker can hit `:80` with endless
@@ -114,6 +121,15 @@ export class OnDemandCertManager {
   private readonly inFlight = new Map<string, Promise<boolean>>()
   /** host → epoch-ms until which we refuse to retry after a failure. */
   private readonly negativeCache = new Map<string, number>()
+  /**
+   * The ACME account key, shared by every issuance and persisted beside the
+   * certs. Without one, each host registers a NEW ACME account, and Let's
+   * Encrypt caps new registrations at 10 per IP per 3 hours — so a gateway
+   * fronting more than ten on-demand hostnames stops being able to issue at
+   * all, with the failure surfacing only as a TLS handshake that serves the
+   * fallback certificate.
+   */
+  private accountKeyPem?: string
 
   constructor(opts: OnDemandCertManagerOptions) {
     this.config = opts.config
@@ -227,11 +243,13 @@ export class OnDemandCertManager {
 
     try {
       debugLog('on-demand', `issuing cert for ${host} (staging=${this.config.staging ?? false})`, this.verbose)
+      this.accountKeyPem ??= await this.loadAccountKey()
       const result = await this.issuer({
         domains: [host],
         method: 'http-01',
         http01Store: this.http01Store,
         email: this.config.email,
+        accountKeyPem: this.accountKeyPem,
         // Materialize our own default instead of forwarding `undefined`.
         // `OnDemandTlsConfig.staging` documents a `false` default (real,
         // trusted certs), but tlsx's `obtainCertificate` selects production
@@ -244,6 +262,7 @@ export class OnDemandCertManager {
         // with the config that documents it.
         staging: this.config.staging ?? false,
       })
+      await this.saveAccountKey(result.accountKeyPem)
       await this.persist(host, result.fullChainPem, result.keyPem)
       const entry: SniTlsEntry = { serverName: host, cert: result.fullChainPem, key: result.keyPem }
       this.certs.set(host, entry)
@@ -311,5 +330,33 @@ export class OnDemandCertManager {
       fsp.writeFile(certPath, certPem, 'utf8'),
       fsp.writeFile(keyPath, keyPem, { encoding: 'utf8', mode: 0o600 }),
     ])
+  }
+
+  /** Where the shared ACME account key lives, beside the issued certs. */
+  private get accountKeyPath(): string {
+    return path.join(this.certsDir, ACCOUNT_KEY_FILE)
+  }
+
+  /**
+   * Read the ACME account key written by a previous run (or by `tlsx acme:issue`,
+   * which defaults to the same filename in the same directory), so a gateway
+   * restart does not start registering fresh accounts again.
+   */
+  private async loadAccountKey(): Promise<string | undefined> {
+    try {
+      return await fsp.readFile(this.accountKeyPath, 'utf8')
+    }
+    catch {
+      return undefined
+    }
+  }
+
+  /** Persist the account key the first time ACME hands us one. */
+  private async saveAccountKey(pem: string | undefined): Promise<void> {
+    if (!pem || this.accountKeyPem === pem)
+      return
+    this.accountKeyPem = pem
+    await fsp.mkdir(this.certsDir, { recursive: true }).catch(() => {})
+    await fsp.writeFile(this.accountKeyPath, pem, { encoding: 'utf8', mode: 0o600 }).catch(() => {})
   }
 }
