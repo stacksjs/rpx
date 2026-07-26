@@ -495,23 +495,83 @@ fn contentLengthResponse(head: http.ResponseHead) ?usize {
     return std.fmt.parseInt(usize, std.mem.trim(u8, value, " \t"), 10) catch null;
 }
 
-/// Forward the buffered request to the origin, inserting `X-Forwarded-For` and
-/// `X-Forwarded-Proto` just before the head's blank line when the request head
-/// was parsed and the client's IPv4 address is known. Otherwise the bytes are
-/// forwarded verbatim. (Client-supplied XFF is not yet stripped — follow-up.)
+/// Forward the buffered request to the origin with `X-Forwarded-For` and
+/// `X-Forwarded-Proto` set to what this proxy observed.
+///
+/// Any client-supplied forwarding headers are **dropped**, not appended to. The
+/// origin cannot tell which hop wrote which value in a comma-joined list, so
+/// appending would let a client prepend an address of its choosing and have the
+/// origin read it as the client address — spoofing whatever the origin does with
+/// it: rate limits, geo rules, audit records, allowlists. The proxy is the only
+/// party that knows who actually connected, so its observation replaces the
+/// claim rather than joining it.
+///
+/// This proxy does not (yet) support being deployed behind another trusted
+/// proxy. Doing that safely needs a configured list of trusted hops, and in its
+/// absence the safe behaviour is to trust nothing forwarded.
+///
+/// When the head could not be parsed or the peer is unknown, the bytes are
+/// forwarded verbatim — including any client XFF, since without a parsed head
+/// there is no reliable way to remove it. That combination cannot be reached
+/// from the inspection path, which requires a parsed head.
 fn forwardRequest(out: anytype, forward: []const u8, head: ?http.RequestHead, peer: ?Peer) !void {
     if (head) |h| if (peer) |p| {
         var xff_buffer: [96]u8 = undefined;
-        const xff = std.fmt.bufPrint(&xff_buffer, "X-Forwarded-For: {s}\r\nX-Forwarded-Proto: http\r\n", .{p.address}) catch "";
-        const split = h.head_len -| 2; // just before the head's terminating blank line
-        if (xff.len != 0 and split >= 4 and split <= forward.len) {
-            try out.writeAll(forward[0..split]);
+        const xff = std.fmt.bufPrint(
+            &xff_buffer,
+            "X-Forwarded-For: {s}\r\nX-Forwarded-Proto: http\r\n",
+            .{p.address},
+        ) catch "";
+        if (xff.len != 0 and h.head_len >= 4 and h.head_len <= forward.len) {
+            try writeHeadWithoutForwardingHeaders(out, forward[0..h.head_len]);
             try out.writeAll(xff);
-            try out.writeAll(forward[split..]);
+            try out.writeAll("\r\n"); // the head's terminating blank line
+            try out.writeAll(forward[h.head_len..]);
             return;
         }
     };
     try out.writeAll(forward);
+}
+
+/// Header names a client must not be able to dictate, because the origin reads
+/// them as statements by the proxy about who connected.
+const stripped_request_headers = [_][]const u8{
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-real-ip",
+};
+
+/// Copy `head` (request line + headers, through its terminating blank line)
+/// to `out`, omitting the forwarding headers and the blank line itself.
+///
+/// Splitting on CRLF is safe here because the head has already been parsed as
+/// well-formed: a header line cannot contain a bare CR or LF.
+fn writeHeadWithoutForwardingHeaders(out: anytype, head: []const u8) !void {
+    var remaining = head;
+    var first = true;
+    while (remaining.len != 0) {
+        const line_end = std.mem.indexOf(u8, remaining, "\r\n") orelse remaining.len;
+        const line = remaining[0..line_end];
+        remaining = remaining[@min(line_end + 2, remaining.len)..];
+        if (line.len == 0) break; // the blank line; the caller writes its own
+
+        // The request line is never a header, so it is never a candidate for
+        // stripping — a target containing a colon must not be mistaken for one.
+        const strip = !first and blk: {
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse break :blk false;
+            const name = std.mem.trim(u8, line[0..colon], " \t");
+            for (stripped_request_headers) |candidate| {
+                if (std.ascii.eqlIgnoreCase(name, candidate)) break :blk true;
+            }
+            break :blk false;
+        };
+        first = false;
+        if (strip) continue;
+        try out.writeAll(line);
+        try out.writeAll("\r\n");
+    }
 }
 
 const Peer = struct { address: []const u8, port: u16 };
@@ -561,4 +621,69 @@ test "IpAddress.parse yields the requested port for v4 and v6 literals" {
     try std.testing.expectEqual(@as(u16, 443), v6.getPort());
     // A non-address string is rejected (the exact error is version-specific).
     if (net.IpAddress.parse("not-an-ip", 80)) |_| return error.ExpectedParseFailure else |_| {}
+}
+
+test "forwarding replaces client-supplied forwarding headers rather than appending" {
+    // A client that sends its own X-Forwarded-For is trying to tell the origin who
+    // it is. The origin cannot tell which hop wrote which entry of a comma-joined
+    // list, so appending would let the client's claim be read as the client address
+    // and spoof whatever depends on it: rate limits, geo rules, allowlists, audit.
+    const request =
+        "GET /admin HTTP/1.1\r\n" ++
+        "Host: example.com\r\n" ++
+        "X-Forwarded-For: 10.0.0.1\r\n" ++
+        "x-real-ip: 10.0.0.2\r\n" ++
+        "X-Forwarded-Proto: https\r\n" ++
+        "User-Agent: curl/8.4.0\r\n" ++
+        "\r\n";
+
+    var storage: [16]http.Header = undefined;
+    const head = (try http.parse(request, &storage)).?;
+
+    var buffer: [1024]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try forwardRequest(&writer, request, head, .{ .address = "203.0.113.9", .port = 51234 });
+
+    const forwarded = writer.buffered();
+    // What the proxy observed is what the origin sees, exactly once.
+    try std.testing.expect(std.mem.indexOf(u8, forwarded, "X-Forwarded-For: 203.0.113.9\r\n") != null);
+    try std.testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, forwarded, "10.0.0.1"));
+    try std.testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, forwarded, "10.0.0.2"));
+    // The client's protocol claim goes too: "https" from a plaintext hop is a lie
+    // the origin might use to decide a cookie is safe to set.
+    try std.testing.expect(std.mem.indexOf(u8, forwarded, "X-Forwarded-Proto: http\r\n") != null);
+    try std.testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, forwarded, "https"));
+
+    // Everything else survives untouched, including the request line and the blank
+    // line that ends the head.
+    try std.testing.expect(std.mem.startsWith(u8, forwarded, "GET /admin HTTP/1.1\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, forwarded, "Host: example.com\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, forwarded, "User-Agent: curl/8.4.0\r\n") != null);
+    try std.testing.expect(std.mem.endsWith(u8, forwarded, "\r\n\r\n"));
+    // Exactly one blank line: a second would end the head early and turn the rest
+    // into a body the origin might parse as another request.
+    try std.testing.expectEqual(@as(?usize, forwarded.len - 4), std.mem.indexOf(u8, forwarded, "\r\n\r\n"));
+}
+
+test "a body is forwarded unchanged, and a target containing a colon is not a header" {
+    const request =
+        "POST /a:b?x=1 HTTP/1.1\r\n" ++
+        "Host: example.com\r\n" ++
+        "Content-Length: 5\r\n" ++
+        "\r\n" ++
+        "hello";
+
+    var storage: [16]http.Header = undefined;
+    const head = (try http.parse(request, &storage)).?;
+
+    var buffer: [1024]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try forwardRequest(&writer, request, head, .{ .address = "203.0.113.9", .port = 51234 });
+    const out = struct { items: []const u8 }{ .items = writer.buffered() };
+
+    // The request line survives even though it contains a colon, which a naive
+    // header split would treat as a header name and could strip.
+    try std.testing.expect(std.mem.startsWith(u8, out.items, "POST /a:b?x=1 HTTP/1.1\r\n"));
+    try std.testing.expect(std.mem.endsWith(u8, out.items, "\r\n\r\nhello"));
+    try std.testing.expect(std.mem.indexOf(u8, out.items, "Content-Length: 5\r\n") != null);
 }
