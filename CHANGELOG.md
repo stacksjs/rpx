@@ -1,5 +1,42 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.33...v0.11.34)
+
+## 🚀 Features
+
+- **dataplane**: terminate TLS via zig-tls ([94867d9](https://github.com/stacksjs/rpx/commit/94867d9)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: inspect every request on a keep-alive connection ([e96635c](https://github.com/stacksjs/rpx/commit/e96635c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: inject X-Forwarded-For and -Proto headers ([cdb69c0](https://github.com/stacksjs/rpx/commit/cdb69c0)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: give the WAF the real client IP for REMOTE_ADDR ([e59dc5c](https://github.com/stacksjs/rpx/commit/e59dc5c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: load @pmFromFile data files via the data dir ([31b56cc](https://github.com/stacksjs/rpx/commit/31b56cc)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: inspect origin responses through the WAF ([d3e2846](https://github.com/stacksjs/rpx/commit/d3e2846)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: inspect the request body through the WAF (phase 2) ([e6b8401](https://github.com/stacksjs/rpx/commit/e6b8401)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: inspect requests through zig-waf over the C ABI ([9a613d5](https://github.com/stacksjs/rpx/commit/9a613d5)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: parse the HTTP/1.1 request head before forwarding ([526f7c7](https://github.com/stacksjs/rpx/commit/526f7c7)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: port the reverse-proxy hot path to std.Io ([c320507](https://github.com/stacksjs/rpx/commit/c320507)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **daemon**: never throw while detaching the SIGHUP handler ([fa95647](https://github.com/stacksjs/rpx/commit/fa95647)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **on-demand**: share one ACME account across every issued host ([285e0a6](https://github.com/stacksjs/rpx/commit/285e0a6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **on-demand**: issue trusted certs by default, not LE staging ([172ee05](https://github.com/stacksjs/rpx/commit/172ee05)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- link the community as stacksjs.com/discord ([7c427b8](https://github.com/stacksjs/rpx/commit/7c427b8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- **dataplane**: fuzz the HTTP request-head parser ([e649526](https://github.com/stacksjs/rpx/commit/e649526)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.34 ([f7c6880](https://github.com/stacksjs/rpx/commit/f7c6880)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.32...v0.11.33)
 
 ## 🧹 Chores
