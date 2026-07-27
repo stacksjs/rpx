@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.35...v0.11.36)
+
+## 🐛 Bug Fixes
+
+- **tls**: restart supervised gateways after issuance ([059f750](https://github.com/stacksjs/rpx/commit/059f750)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cli**: publish a valid executable entrypoint ([5f0500c](https://github.com/stacksjs/rpx/commit/5f0500c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.36 ([ec4199f](https://github.com/stacksjs/rpx/commit/ec4199f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.34...v0.11.35)
 
 ## 🐛 Bug Fixes
