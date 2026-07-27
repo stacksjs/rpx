@@ -30,9 +30,9 @@ import {
 } from '../src/registry'
 import { startProxies, startProxy } from '../src/start'
 import { isMultiProxyConfig } from '../src/utils'
+import { version } from '../src/version'
 
 const cli = new CLI('rpx')
-const version = '0.12.0'
 
 // Define CLI options interface to match our core types
 interface CLIOptions {

@@ -33,9 +33,9 @@ import type { SniTlsEntry } from './sni'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { resolveStaticRoute } from './static-files'
 import { debugLog, getSudoPassword, safeStringify, shouldReusePort } from './utils'
+import { version } from './version'
 
 const processManager = new ProcessManager()
-const version = '0.12.0'
 // Create a global port manager for coordinating port usage
 const globalPortManager = new DefaultPortManager('0.0.0.0')
 
