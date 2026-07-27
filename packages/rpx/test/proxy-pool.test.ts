@@ -389,6 +389,38 @@ describe('proxyViaPool', () => {
     }
   })
 
+  it('treats downstream cancellation during a chunk header as expected teardown', async () => {
+    const server = Bun.listen<undefined>({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {},
+        // Send one chunk without its trailing CRLF. The proxy pull waits for
+        // framing while the downstream health probe cancels the response body.
+        data(sock) { sock.write('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello') },
+      },
+    })
+    const hp = `127.0.0.1:${server.port}`
+    try {
+      const res = await proxyViaPool({
+        hostPort: hp,
+        method: 'GET',
+        path: '/',
+        reqHeaders: new Headers(),
+        forwardedHost: 'x',
+        body: null,
+        maxPerHost: 1,
+      })
+      const reader = res.body!.getReader()
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe('hello')
+      await reader.cancel()
+      await Bun.sleep(20)
+    }
+    finally {
+      server.stop(true)
+    }
+  })
+
   it('reclaims a stuck checked-out connection when RPX_CHECKOUT_IDLE_MS is set', async () => {
     // Upstream promises 1000 body bytes but only ever sends 10, then goes silent —
     // the response stream parks, holding the only pooled slot.

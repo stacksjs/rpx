@@ -1070,6 +1070,7 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
   conn.streamingBody = true // enable read backpressure for the decoded body
   let remaining = 0 // bytes left in the current chunk
   let needTrailerCrlf = false // consume the CRLF after a chunk's data
+  let cancelled = false
 
   // Read the next CRLF-terminated line starting at conn.pos (chunk-size / trailer).
   async function readLine(): Promise<string> {
@@ -1093,55 +1094,67 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
-      for (;;) {
-        if (remaining > 0) {
-          if (conn.len === conn.pos) {
-            if (conn.closed) {
-              pool.destroy(conn)
-              controller.error(new Error('upstream closed mid-chunk'))
-              return
+      try {
+        for (;;) {
+          if (remaining > 0) {
+            if (conn.len === conn.pos) {
+              if (conn.closed) {
+                pool.destroy(conn)
+                controller.error(new Error('upstream closed mid-chunk'))
+                return
+              }
+              await conn.waitForData(conn.len)
+              continue
             }
-            await conn.waitForData(conn.len)
-            continue
+            const take = Math.min(remaining, conn.len - conn.pos)
+            controller.enqueue(conn.buf.slice(conn.pos, conn.pos + take))
+            conn.pos += take
+            remaining -= take
+            conn.resumeIfDrained() // reader kept up — un-pause the upstream
+            if (remaining === 0)
+              needTrailerCrlf = true
+            return
           }
-          const take = Math.min(remaining, conn.len - conn.pos)
-          controller.enqueue(conn.buf.slice(conn.pos, conn.pos + take))
-          conn.pos += take
-          remaining -= take
-          conn.resumeIfDrained() // reader kept up — un-pause the upstream
-          if (remaining === 0)
-            needTrailerCrlf = true
-          return
-        }
-        if (needTrailerCrlf) {
-          await readLine() // the empty CRLF closing the chunk data
-          needTrailerCrlf = false
-        }
-        const sizeLine = await readLine()
-        const semi = sizeLine.indexOf(';')
-        const size = Number.parseInt(semi === -1 ? sizeLine : sizeLine.slice(0, semi), 16)
-        // A non-hex / negative chunk size would make `remaining` NaN and spin the
-        // pull loop forever (NaN !== 0). Reject it as a framing error.
-        if (!Number.isInteger(size) || size < 0) {
-          pool.destroy(conn)
-          controller.error(new Error('upstream sent malformed chunk size'))
-          return
-        }
-        if (size === 0) {
-          // Consume optional trailers up to the final blank line.
-          for (;;) {
-            const t = await readLine()
-            if (t === '')
-              break
+          if (needTrailerCrlf) {
+            await readLine() // the empty CRLF closing the chunk data
+            needTrailerCrlf = false
           }
-          finishConn(pool, conn, closeConn)
-          controller.close()
-          return
+          const sizeLine = await readLine()
+          const semi = sizeLine.indexOf(';')
+          const size = Number.parseInt(semi === -1 ? sizeLine : sizeLine.slice(0, semi), 16)
+          // A non-hex / negative chunk size would make `remaining` NaN and spin the
+          // pull loop forever (NaN !== 0). Reject it as a framing error.
+          if (!Number.isInteger(size) || size < 0) {
+            pool.destroy(conn)
+            controller.error(new Error('upstream sent malformed chunk size'))
+            return
+          }
+          if (size === 0) {
+            // Consume optional trailers up to the final blank line.
+            for (;;) {
+              const t = await readLine()
+              if (t === '')
+                break
+            }
+            finishConn(pool, conn, closeConn)
+            controller.close()
+            return
+          }
+          remaining = size
         }
-        remaining = size
+      }
+      catch (error) {
+        pool.destroy(conn)
+        // A downstream health probe commonly cancels after reading headers.
+        // Its cancel closes the upstream while a pull is already waiting for
+        // the next chunk header. That is expected teardown, not an upstream
+        // framing failure, and must not surface as an unhandled stack trace.
+        if (!cancelled)
+          controller.error(error)
       }
     },
     cancel() {
+      cancelled = true
       pool.destroy(conn)
     },
   })
