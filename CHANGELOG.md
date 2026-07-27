@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.34...v0.11.35)
+
+## 🐛 Bug Fixes
+
+- **proxy**: handle canceled chunk streams ([ed628f6](https://github.com/stacksjs/rpx/commit/ed628f6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: report IPv6 and IPv4-mapped peers as REMOTE_ADDR ([fe5dcd2](https://github.com/stacksjs/rpx/commit/fe5dcd2)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dataplane**: replace client-supplied forwarding headers, never append ([8feea7d](https://github.com/stacksjs/rpx/commit/8feea7d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- **dataplane**: wrap a bare URL for the markdown linter ([83c8435](https://github.com/stacksjs/rpx/commit/83c8435)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.35 ([97e74f5](https://github.com/stacksjs/rpx/commit/97e74f5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.33...v0.11.34)
 
 ## 🚀 Features
