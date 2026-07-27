@@ -359,6 +359,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
         forwardedHost: hostname,
         originOverride,
         body: req.body,
+        signal: req.signal,
       })
       if (pool)
         markSuccess(pool, upstream)

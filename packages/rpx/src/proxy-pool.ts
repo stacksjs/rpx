@@ -760,6 +760,8 @@ export interface PoolRequest {
   originOverride?: string
   /** Request body stream, or null. */
   body: ReadableStream<Uint8Array> | null
+  /** Downstream disconnect signal. Cancels any checked-out upstream stream. */
+  signal?: AbortSignal
   /** Max idle connections kept per upstream. */
   maxPerHost?: number
 }
@@ -844,7 +846,7 @@ export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
       const written = conn.socket!.write(payload)
       if (written < payload.length)
         await conn.writeAll(payload.subarray(written))
-      return await readResponse(pool, conn, isHead)
+      return await readResponse(pool, conn, isHead, reqOpts.signal)
     }
     catch (err) {
       // A reused (non-fresh) connection that goes STALE on a non-idempotent method
@@ -883,7 +885,12 @@ async function waitForHead(conn: Conn): Promise<number> {
 }
 
 /** Read the response head + body from `conn`, returning a streaming Response. */
-async function readResponse(pool: UpstreamPool, conn: Conn, isHead: boolean): Promise<Response> {
+async function readResponse(
+  pool: UpstreamPool,
+  conn: Conn,
+  isHead: boolean,
+  signal?: AbortSignal,
+): Promise<Response> {
   // Skip any interim 1xx responses (e.g. an unsolicited `103 Early Hints`); they
   // are header-only and precede the real response on the same connection. (`101`
   // can't occur here — we decline upgrades up front.)
@@ -915,7 +922,10 @@ async function readResponse(pool: UpstreamPool, conn: Conn, isHead: boolean): Pr
   }
 
   if (head.chunked)
-    return new Response(chunkedStream(pool, conn, head.closeConn), { status: head.status, headers: responseHeaders })
+    return new Response(chunkedStream(pool, conn, head.closeConn, signal), {
+      status: head.status,
+      headers: responseHeaders,
+    })
 
   if (head.contentLength >= 0) {
     // Fast path: the whole body is already buffered — hand back bytes directly,
@@ -1066,11 +1076,28 @@ function untilCloseStream(conn: Conn): ReadableStream<Uint8Array> {
  * re-frames the outgoing response to the client, so we hand it the dechunked
  * payload (with `transfer-encoding` already stripped from the headers).
  */
-function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): ReadableStream<Uint8Array> {
+function chunkedStream(
+  pool: UpstreamPool,
+  conn: Conn,
+  closeConn: boolean,
+  signal?: AbortSignal,
+): ReadableStream<Uint8Array> {
   conn.streamingBody = true // enable read backpressure for the decoded body
   let remaining = 0 // bytes left in the current chunk
   let needTrailerCrlf = false // consume the CRLF after a chunk's data
   let cancelled = false
+  let downstreamController: ReadableStreamDefaultController<Uint8Array> | undefined
+
+  const cleanupSignal = (): void => signal?.removeEventListener('abort', abortDownstream)
+  const abortDownstream = (): void => {
+    if (cancelled) return
+    cancelled = true
+    pool.destroy(conn)
+    try {
+      downstreamController?.close()
+    }
+    catch {}
+  }
 
   // Read the next CRLF-terminated line starting at conn.pos (chunk-size / trailer).
   async function readLine(): Promise<string> {
@@ -1093,6 +1120,13 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
   }
 
   return new ReadableStream<Uint8Array>({
+    start(controller) {
+      downstreamController = controller
+      if (signal?.aborted)
+        abortDownstream()
+      else
+        signal?.addEventListener('abort', abortDownstream, { once: true })
+    },
     async pull(controller) {
       try {
         for (;;) {
@@ -1137,6 +1171,7 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
                 break
             }
             finishConn(pool, conn, closeConn)
+            cleanupSignal()
             controller.close()
             return
           }
@@ -1145,6 +1180,7 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
       }
       catch (error) {
         pool.destroy(conn)
+        cleanupSignal()
         // A downstream health probe commonly cancels after reading headers.
         // Its cancel closes the upstream while a pull is already waiting for
         // the next chunk header. That is expected teardown, not an upstream
@@ -1155,6 +1191,7 @@ function chunkedStream(pool: UpstreamPool, conn: Conn, closeConn: boolean): Read
     },
     cancel() {
       cancelled = true
+      cleanupSignal()
       pool.destroy(conn)
     },
   })

@@ -421,6 +421,39 @@ describe('proxyViaPool', () => {
     }
   })
 
+  it('releases a chunked upstream when the downstream request aborts', async () => {
+    const server = Bun.listen<undefined>({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {},
+        data(sock) { sock.write('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello') },
+      },
+    })
+    const hp = `127.0.0.1:${server.port}`
+    const controller = new AbortController()
+    try {
+      const res = await proxyViaPool({
+        hostPort: hp,
+        method: 'GET',
+        path: '/',
+        reqHeaders: new Headers(),
+        forwardedHost: 'x',
+        body: null,
+        maxPerHost: 1,
+        signal: controller.signal,
+      })
+      const reader = res.body!.getReader()
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe('hello')
+      const pending = reader.read()
+      controller.abort()
+      expect((await pending).done).toBe(true)
+    }
+    finally {
+      server.stop(true)
+    }
+  })
+
   it('reclaims a stuck checked-out connection when RPX_CHECKOUT_IDLE_MS is set', async () => {
     // Upstream promises 1000 body bytes but only ever sends 10, then goes silent —
     // the response stream parks, holding the only pooled slot.
