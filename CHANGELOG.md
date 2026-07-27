@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.38...v0.11.39)
+
+## 🐛 Bug Fixes
+
+- **proxy**: tolerate clean chunk boundary closes ([853e4a0](https://github.com/stacksjs/rpx/commit/853e4a0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.39 ([24c9a7b](https://github.com/stacksjs/rpx/commit/24c9a7b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.37...v0.11.38)
 
 ## 🐛 Bug Fixes
