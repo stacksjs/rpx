@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import type { BaseProxyConfig, OnDemandSitesConfig, ProxyOption, StartOptions } from '../src/types'
 import { dirname, join } from 'node:path'
 import * as process from 'node:process'

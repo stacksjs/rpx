@@ -1,5 +1,5 @@
 import { dts } from 'bun-plugin-dtsx'
-import { chmod } from 'node:fs/promises'
+import { chmod, readFile } from 'node:fs/promises'
 
 console.log('Building...')
 
@@ -21,6 +21,11 @@ await Bun.build({
   minify: true,
   banner: '#!/usr/bin/env bun',
 })
+
+const cliOutput = await readFile('./dist/bin/cli.js', 'utf8')
+const shebangs = cliOutput.match(/^#!.*$/gm) ?? []
+if (!cliOutput.startsWith('#!/usr/bin/env bun\n') || shebangs.length !== 1)
+  throw new Error(`Built rpx CLI must contain exactly one first-line Bun shebang; found ${shebangs.length}.`)
 
 await chmod('./dist/bin/cli.js', 0o755)
 
