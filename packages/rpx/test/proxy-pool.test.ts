@@ -421,6 +421,35 @@ describe('proxyViaPool', () => {
     }
   })
 
+  it('accepts connection close at an empty next-chunk boundary', async () => {
+    const server = Bun.listen<undefined>({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: {
+        open() {},
+        data(sock) {
+          sock.end('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n')
+        },
+      },
+    })
+    const hp = `127.0.0.1:${server.port}`
+    try {
+      const res = await proxyViaPool({
+        hostPort: hp,
+        method: 'GET',
+        path: '/',
+        reqHeaders: new Headers(),
+        forwardedHost: 'x',
+        body: null,
+        maxPerHost: 1,
+      })
+      expect(await res.text()).toBe('hello')
+    }
+    finally {
+      server.stop(true)
+    }
+  })
+
   it('releases a chunked upstream when the downstream request aborts', async () => {
     const server = Bun.listen<undefined>({
       hostname: '127.0.0.1',

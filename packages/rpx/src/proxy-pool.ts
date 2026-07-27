@@ -1100,7 +1100,9 @@ function chunkedStream(
   }
 
   // Read the next CRLF-terminated line starting at conn.pos (chunk-size / trailer).
-  async function readLine(): Promise<string> {
+  async function readLine(allowCleanEof: true): Promise<string | null>
+  async function readLine(allowCleanEof?: false): Promise<string>
+  async function readLine(allowCleanEof = false): Promise<string | null> {
     for (;;) {
       for (let i = conn.pos; i + 1 < conn.len; i++) {
         if (conn.buf[i] === 13 && conn.buf[i + 1] === 10) {
@@ -1109,8 +1111,11 @@ function chunkedStream(
           return line
         }
       }
-      if (conn.closed)
+      if (conn.closed) {
+        if (allowCleanEof && conn.pos === conn.len)
+          return null
         throw new Error('upstream closed mid-chunk-header')
+      }
       // Bound the chunk-size/trailer line: an upstream that never sends CRLF here
       // would otherwise grow `buf` unbounded (the header cap only covers the head).
       if (conn.len - conn.pos > MAX_HEADER_BYTES)
@@ -1153,7 +1158,13 @@ function chunkedStream(
             await readLine() // the empty CRLF closing the chunk data
             needTrailerCrlf = false
           }
-          const sizeLine = await readLine()
+          const sizeLine = await readLine(true)
+          if (sizeLine === null) {
+            pool.destroy(conn)
+            cleanupSignal()
+            controller.close()
+            return
+          }
           const semi = sizeLine.indexOf(';')
           const size = Number.parseInt(semi === -1 ? sizeLine : sizeLine.slice(0, semi), 16)
           // A non-hex / negative chunk size would make `remaining` NaN and spin the
