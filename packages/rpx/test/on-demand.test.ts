@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { isLikelyHostname, matchesAllowedSuffix, OnDemandCertManager } from '../src/on-demand'
+import {
+  isLikelyHostname,
+  matchesAllowedSuffix,
+  OnDemandCertManager,
+  resolveCertificateReloadStrategy,
+} from '../src/on-demand'
 
 /** A fake issuer that returns deterministic PEMs and records calls. */
 function fakeIssuer(): { issuer: CertIssuer, calls: string[][] } {
@@ -57,6 +62,21 @@ describe('isLikelyHostname', () => {
     expect(isLikelyHostname('example.com:443')).toBe(false)
     expect(isLikelyHostname('example.com/x')).toBe(false)
     expect(isLikelyHostname('')).toBe(false)
+  })
+})
+
+describe('resolveCertificateReloadStrategy', () => {
+  it('restarts under systemd and rebinds local foreground processes', () => {
+    expect(resolveCertificateReloadStrategy({ INVOCATION_ID: 'systemd-unit' })).toBe('restart')
+    expect(resolveCertificateReloadStrategy({})).toBe('rebind')
+  })
+
+  it('honors an explicit strategy override', () => {
+    expect(resolveCertificateReloadStrategy({
+      INVOCATION_ID: 'systemd-unit',
+      RPX_TLS_RELOAD_STRATEGY: 'rebind',
+    })).toBe('rebind')
+    expect(resolveCertificateReloadStrategy({ RPX_TLS_RELOAD_STRATEGY: 'restart' })).toBe('restart')
   })
 })
 

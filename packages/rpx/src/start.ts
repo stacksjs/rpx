@@ -30,7 +30,7 @@ import { isWildcardPattern } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
 import { buildSniTlsConfig, withLowMemoryTls } from './sni'
 import type { SniTlsEntry } from './sni'
-import { OnDemandCertManager } from './on-demand'
+import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { resolveStaticRoute } from './static-files'
 import { debugLog, getSudoPassword, safeStringify, shouldReusePort } from './utils'
 
@@ -1188,7 +1188,15 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           certsDir: onDemandCfg.certsDir ?? mergedOptions.productionCerts?.certsDir ?? path.join(os.homedir(), '.stacks', 'rpx', 'on-demand-certs'),
           initial: productionTlsConfig,
           verbose,
-          onCertAdded: (entries) => { void rebuildSharedTls(entries) },
+          onCertAdded: (entries) => {
+            if (resolveCertificateReloadStrategy() === 'restart') {
+              debugLog('on-demand', 'certificate installed; restarting supervised gateway to reload TLS', verbose)
+              setTimeout(() => process.kill(process.pid, 'SIGTERM'), 10).unref()
+            }
+            else {
+              void rebuildSharedTls(entries)
+            }
+          },
         })
       : null
 

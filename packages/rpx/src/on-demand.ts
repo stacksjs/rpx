@@ -8,7 +8,7 @@
  * Bun.serve has **no working `SNICallback`**, and `server.reload({ tls })` does
  * **NOT** update certificates at runtime. So rpx cannot mint a cert *during* the
  * TLS handshake (the way Caddy's on-demand TLS does). Instead this manager
- * implements on-demand as **ask-gated issuance + listener recreate**:
+ * implements on-demand as **ask-gated issuance + TLS process reload**:
  *
  *   - rpx serves the ACME `http-01` challenge from its own `:80` listener (same
  *     process, so the challenge token is reachable the instant we register it).
@@ -17,8 +17,8 @@
  *     via {@link OnDemandCertManager.ensureCert} (e.g. a tunnel server
  *     pre-warming a subdomain's cert at registration time).
  *   - once a cert is issued it's written to `certsDir` and added to the live SNI
- *     set; the manager then asks its host to rebuild the `:443` listener so the
- *     new cert is actually served (a sub-second `server.stop()` + re-`Bun.serve`).
+ *     set. Supervised production gateways restart cleanly from the persisted
+ *     PEMs; local foreground gateways use a sub-second listener recreate.
  *
  * Concurrency: per-host in-flight de-dupe means N concurrent `ensureCert(host)`
  * calls drive exactly one ACME order. Failures are logged and negatively cached
@@ -31,6 +31,23 @@ import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
 import { defaultHttp01Store, obtainCertificate } from '@stacksjs/tlsx'
 import { debugLog } from './utils'
+
+export type CertificateReloadStrategy = 'rebind' | 'restart'
+
+/**
+ * Bun cannot hot-reload TLS. A local foreground process can recreate its
+ * listener, while a supervised production process should restart after the
+ * certificate is persisted and let its supervisor bring it back with the new
+ * SNI set. This avoids a Bun 1.3.x Linux crash in stop-and-rebind.
+ */
+export function resolveCertificateReloadStrategy(
+  env: Record<string, string | undefined> = process.env,
+): CertificateReloadStrategy {
+  const explicit = env.RPX_TLS_RELOAD_STRATEGY?.trim().toLowerCase()
+  if (explicit === 'restart' || explicit === 'rebind')
+    return explicit
+  return env.INVOCATION_ID ? 'restart' : 'rebind'
+}
 
 /**
  * The issuance function the manager calls. Defaults to tlsx's

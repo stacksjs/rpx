@@ -40,7 +40,7 @@ import { readAcmeChallenge } from './acme-challenge'
 import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
 import { buildSniTlsConfig, withLowMemoryTls } from './sni'
-import { OnDemandCertManager } from './on-demand'
+import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { createSiteResolver } from './site-resolver'
 import { SiteSupervisor } from './site-supervisor'
 import type { SiteSnapshot } from './site-supervisor'
@@ -668,8 +668,17 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
         certsDir: onDemandCfg.certsDir ?? opts.productionCerts?.certsDir ?? path.join(rpxDir, 'on-demand-certs'),
         initial: sniTls,
         verbose,
-        // A new cert was issued/adopted — rebuild :443 with the augmented set.
-        onCertAdded: (entries) => { void rebuildTls(entries) },
+        // A supervised production process restarts after the PEM is safely on
+        // disk. Local foreground use keeps the sub-second in-process rebind.
+        onCertAdded: (entries) => {
+          if (resolveCertificateReloadStrategy() === 'restart') {
+            debugLog('on-demand', 'certificate installed; restarting supervised gateway to reload TLS', verbose)
+            setTimeout(() => process.kill(process.pid, 'SIGTERM'), 10).unref()
+          }
+          else {
+            void rebuildTls(entries)
+          }
+        },
       })
     : null
 
@@ -1146,7 +1155,15 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
         certsDir: onDemandCfg.certsDir ?? opts.productionCerts?.certsDir ?? path.join(rpxDir, 'on-demand-certs'),
         initial: sniTls,
         verbose,
-        onCertAdded: entries => { void publishSni(entries) },
+        onCertAdded: (entries) => {
+          if (resolveCertificateReloadStrategy() === 'restart') {
+            debugLog('on-demand', 'certificate installed; restarting supervised gateway to reload TLS', verbose)
+            setTimeout(() => process.kill(process.pid, 'SIGTERM'), 10).unref()
+          }
+          else {
+            void publishSni(entries)
+          }
+        },
       })
     : null
 
