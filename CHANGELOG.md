@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.37...v0.11.38)
+
+## 🐛 Bug Fixes
+
+- **proxy**: release upstreams on client abort ([e52f8cb](https://github.com/stacksjs/rpx/commit/e52f8cb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.38 ([bedbd6c](https://github.com/stacksjs/rpx/commit/bedbd6c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.36...v0.11.37)
 
 ## 🐛 Bug Fixes
