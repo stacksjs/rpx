@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.36...v0.11.37)
+
+## 🐛 Bug Fixes
+
+- **cli**: report the installed package version ([860ef39](https://github.com/stacksjs/rpx/commit/860ef39)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.37 ([04a43db](https://github.com/stacksjs/rpx/commit/04a43db)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.35...v0.11.36)
 
 ## 🐛 Bug Fixes
