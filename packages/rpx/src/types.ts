@@ -212,6 +212,15 @@ export interface ProductionTlsConfig {
    * `_wildcard.<apex>.key` is registered under server name `*.<apex>`.
    */
   certsDir?: string
+  /**
+   * Optional allowlist for certificates discovered through {@link certsDir}.
+   * Explicit {@link domains} entries are always retained.
+   *
+   * Shared hosts often keep unrelated mail and retired-site PEMs in the same
+   * directory. Restricting discovery to routed server names avoids creating
+   * unused OpenSSL SNI contexts for every one of those files.
+   */
+  certsDirServerNames?: string[]
 }
 
 /**

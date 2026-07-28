@@ -629,13 +629,16 @@ class UpstreamPool {
 const pools = new Map<string, UpstreamPool>()
 
 /** Get (or create) the pool for `host:port`. */
-function poolFor(hostPort: string, maxPerHost: number): UpstreamPool {
+function poolFor(hostPort: string, maxPerHost?: number): UpstreamPool {
   let pool = pools.get(hostPort)
   if (!pool) {
     const idx = hostPort.lastIndexOf(':')
     const host = idx === -1 ? hostPort : hostPort.slice(0, idx)
     const port = idx === -1 ? 80 : Number(hostPort.slice(idx + 1))
-    pool = new UpstreamPool(host, port, maxPerHost, hostPort)
+    // Resolve the environment-backed default only when a new upstream appears.
+    // The old call site parsed process.env on every proxied request even though
+    // an existing pool cannot change its connection cap.
+    pool = new UpstreamPool(host, port, maxPerHost ?? maxTotalConns(), hostPort)
     pools.set(hostPort, pool)
   }
   return pool
@@ -805,7 +808,7 @@ export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
     payload.set(head)
     payload.set(bodyBytes, head.length)
   }
-  const pool = poolFor(hostPort, reqOpts.maxPerHost ?? maxTotalConns())
+  const pool = poolFor(hostPort, reqOpts.maxPerHost)
 
   // Transparent retry on STALE. STALE means the upstream closed the socket
   // before sending any response byte (and, for a write-time close, possibly

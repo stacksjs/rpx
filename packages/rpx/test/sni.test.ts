@@ -76,6 +76,31 @@ describe('buildSniTlsConfig', () => {
     expect(api?.key).toBe('EXPLICIT-KEY')
   })
 
+  it('loads only allowlisted certsDir server names while retaining explicit domains', async () => {
+    await writePair('routed.example.com')
+    await writePair('mail.example.com')
+    const explicitCertPath = path.join(dir, 'explicit.crt')
+    const explicitKeyPath = path.join(dir, 'explicit.key')
+    await fsp.writeFile(explicitCertPath, 'EXPLICIT-CERT')
+    await fsp.writeFile(explicitKeyPath, 'EXPLICIT-KEY')
+
+    const entries = await buildSniTlsConfig({
+      certsDir: dir,
+      certsDirServerNames: ['routed.example.com'],
+      domains: {
+        'explicit.example.com': {
+          certPath: explicitCertPath,
+          keyPath: explicitKeyPath,
+        },
+      },
+    })
+
+    expect(entries.map(entry => entry.serverName).sort()).toEqual([
+      'explicit.example.com',
+      'routed.example.com',
+    ])
+  })
+
   it('returns an empty array when nothing is usable', async () => {
     const entries = await buildSniTlsConfig({ certsDir: path.join(dir, 'does-not-exist') })
     expect(entries).toEqual([])

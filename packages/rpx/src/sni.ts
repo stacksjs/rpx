@@ -71,6 +71,9 @@ async function readPair(serverName: string, certPath: string, keyPath: string, v
  */
 export async function buildSniTlsConfig(cfg: ProductionTlsConfig, verbose?: boolean): Promise<SniTlsEntry[]> {
   const bySrvName = new Map<string, DomainCert>()
+  const discoveredServerNames = cfg.certsDirServerNames
+    ? new Set(cfg.certsDirServerNames)
+    : undefined
 
   if (cfg.certsDir) {
     let names: string[] = []
@@ -83,6 +86,8 @@ export async function buildSniTlsConfig(cfg: ProductionTlsConfig, verbose?: bool
     for (const name of names) {
       const serverName = serverNameFromCertFilename(name)
       if (!serverName)
+        continue
+      if (discoveredServerNames && !discoveredServerNames.has(serverName))
         continue
       const base = name.slice(0, -'.crt'.length)
       bySrvName.set(serverName, {
