@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.42...v0.11.43)
+
+## 📦 Build System
+
+- use Bun production mode ([edbd4f6](https://github.com/stacksjs/rpx/commit/edbd4f6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.43 ([18ab8d7](https://github.com/stacksjs/rpx/commit/18ab8d7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.40...v0.11.41)
 
 ## 🐛 Bug Fixes
