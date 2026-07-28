@@ -9,6 +9,9 @@ await Bun.build({
   format: 'esm',
   target: 'node',
   minify: true,
+  define: {
+    'process.env.NODE_ENV': '"production"',
+  },
   splitting: true,
   plugins: [dts()],
 })
@@ -19,6 +22,9 @@ await Bun.build({
   format: 'esm',
   target: 'node',
   minify: true,
+  define: {
+    'process.env.NODE_ENV': '"production"',
+  },
   banner: '#!/usr/bin/env bun',
 })
 
