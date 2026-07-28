@@ -527,7 +527,21 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const registryDir = opts.registryDir ?? path.join(rpxDir, 'registry.d')
   const httpsPort = opts.httpsPort ?? 443
   const httpPort = opts.httpPort ?? 80
-  const hostname = opts.hostname ?? '0.0.0.0'
+  /*
+   * Dual-stack by default.
+   *
+   * `0.0.0.0` is IPv4 only, so a site behind rpx was unreachable from an
+   * IPv6-only client even on a box with a global v6 address — and the failure
+   * is invisible from anywhere with working IPv4: the operator can open the
+   * site, the visitor cannot. `::` accepts both families on Linux (v6only is
+   * off by default), and `serveDualStack` falls back to `0.0.0.0` on a host
+   * without IPv6 rather than refusing to start.
+   *
+   * An explicit `hostname` from the caller is left exactly as given: someone
+   * who asked to bind one address meant it.
+   */
+  const hostname = opts.hostname ?? '::'
+  const hostnameIsDefault = opts.hostname == null
   const gcIntervalMs = opts.gcIntervalMs ?? DEFAULT_GC_INTERVAL_MS
 
   // A spawned cluster worker (RPX_DAEMON_WORKER=1) serves :443 only and is
@@ -696,9 +710,31 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     })
   }
 
+  /**
+   * Bind, falling back to IPv4 when the host has no IPv6.
+   *
+   * Only when the address was our own dual-stack default; an operator's
+   * explicit choice is never second-guessed.
+   */
+  function serveDualStack(options: Parameters<typeof Bun.serve>[0]): ReturnType<typeof Bun.serve> {
+    try {
+      return Bun.serve(options)
+    }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const unsupported = /EAFNOSUPPORT|EADDRNOTAVAIL|address family/i.test(message)
+
+      if (!hostnameIsDefault || (options as { hostname?: string }).hostname !== '::' || !unsupported)
+        throw error
+
+      debugLog('daemon', `no IPv6 on this host (${message}); binding 0.0.0.0`, opts.verbose)
+      return Bun.serve({ ...options, hostname: '0.0.0.0' } as Parameters<typeof Bun.serve>[0])
+    }
+  }
+
   /** (Re)create the :443 listener. Factored so on-demand can rebuild it. */
   function serveHttps(entries: Array<{ serverName: string, cert: string, key: string }>): ReturnType<typeof Bun.serve> {
-    return Bun.serve({
+    return serveDualStack({
       port: httpsPort,
       hostname,
       // Opt-in (RPX_REUSE_PORT): multi-instance :443 sharing on Linux. Off by
@@ -792,7 +828,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
 
   let httpServer: ReturnType<typeof Bun.serve> | null = null
   if (httpPort > 0) {
-    httpServer = Bun.serve({
+    httpServer = serveDualStack({
       port: httpPort,
       hostname,
       fetch(req: Request) {
