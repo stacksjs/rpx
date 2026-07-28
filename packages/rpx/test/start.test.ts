@@ -173,3 +173,33 @@ describe('start', () => {
     })
   })
 })
+
+/**
+ * Every listener has to bind the same family set. The gateway used to hard-code
+ * `0.0.0.0` here while another path bound `::`, so :80 answered IPv6 and :443
+ * did not — a site that looked healthy to anyone with IPv4 and was unreachable
+ * for an IPv6-only visitor, with nothing in the log to say so.
+ */
+describe('bindHostname', () => {
+  it('prefers dual-stack on a host with IPv6', async () => {
+    const { bindHostname } = await import('../src/start')
+    const previous = process.env.RPX_BIND_HOSTNAME
+    delete process.env.RPX_BIND_HOSTNAME
+
+    // CI runners and dev machines both have a loopback ::1 at minimum.
+    expect(['::', '0.0.0.0']).toContain(bindHostname())
+
+    if (previous) process.env.RPX_BIND_HOSTNAME = previous
+  })
+
+  it('lets an operator pin one address', async () => {
+    const { bindHostname } = await import('../src/start')
+    const previous = process.env.RPX_BIND_HOSTNAME
+    process.env.RPX_BIND_HOSTNAME = '127.0.0.1'
+
+    expect(bindHostname()).toBe('127.0.0.1')
+
+    if (previous) process.env.RPX_BIND_HOSTNAME = previous
+    else delete process.env.RPX_BIND_HOSTNAME
+  })
+})

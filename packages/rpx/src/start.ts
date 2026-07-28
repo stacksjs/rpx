@@ -540,7 +540,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   const { from, originalFrom, to, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
   const httpPort = 80
   const httpsPort = 443
-  const hostname = '0.0.0.0'
+  const hostname = bindHostname()
   // Use the global port manager if not provided
   const portManager = options.portManager || globalPortManager
 
@@ -1415,6 +1415,37 @@ export async function collectRouteEntries(
 }
 
 /**
+ * The address the listeners bind.
+ *
+ * `::` on a host with IPv6, `0.0.0.0` where there is none. Checked once and
+ * cached: the answer cannot change while the process runs, and a listener that
+ * guessed differently from its siblings would serve one family on one port and
+ * both on another — which is exactly the shape of bug this replaced.
+ *
+ * `RPX_BIND_HOSTNAME` overrides both, for an operator who wants one address.
+ */
+let cachedBindHostname: string | null = null
+
+export function bindHostname(): string {
+  if (process.env.RPX_BIND_HOSTNAME)
+    return process.env.RPX_BIND_HOSTNAME
+
+  if (cachedBindHostname)
+    return cachedBindHostname
+
+  try {
+    const interfaces = Object.values(os.networkInterfaces()).flat()
+    const hasIpv6 = interfaces.some(entry => entry && entry.family === 'IPv6')
+    cachedBindHostname = hasIpv6 ? '::' : '0.0.0.0'
+  }
+  catch {
+    cachedBindHostname = '0.0.0.0'
+  }
+
+  return cachedBindHostname
+}
+
+/**
  * Create a single shared `Bun.serve` listener that routes every request by
  * `Host` header (and path) to the right upstream. When `sslConfig` is provided
  * the listener terminates TLS; otherwise it serves plain HTTP (single-port HTTP
@@ -1442,7 +1473,14 @@ export function createSharedProxyServer(opts: {
   try {
     const bunServer = Bun.serve({
       port: listenPort,
-      hostname: '0.0.0.0',
+      /*
+       * Dual-stack. `0.0.0.0` is IPv4 only, so every site behind this listener
+       * was unreachable from an IPv6-only client even on a host with a global
+       * v6 address — and invisibly so, because anyone with working IPv4 (the
+       * operator, every monitor) sees a healthy site. `::` accepts both
+       * families on Linux; `bindHostname()` falls back where it cannot.
+       */
+      hostname: bindHostname(),
       // Opt-in (RPX_REUSE_PORT): lets multiple rpx instances share the port for
       // multi-core scaling on Linux. Off by default — see shouldReusePort().
       reusePort: shouldReusePort(),
