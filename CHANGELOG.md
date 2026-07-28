@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.40...v0.11.41)
+
+## 🐛 Bug Fixes
+
+- **start**: bind the gateway listeners dual-stack too ([a836e3c](https://github.com/stacksjs/rpx/commit/a836e3c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.41 ([3ec0fd1](https://github.com/stacksjs/rpx/commit/3ec0fd1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.39...v0.11.40)
 
 ## 🐛 Bug Fixes
