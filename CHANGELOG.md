@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.43...v0.11.44)
+
+## 🐛 Bug Fixes
+
+- gate on-demand tls to routable hosts ([3086fba](https://github.com/stacksjs/rpx/commit/3086fba)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.44 ([47da69f](https://github.com/stacksjs/rpx/commit/47da69f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.42...v0.11.43)
 
 ## 📦 Build System
