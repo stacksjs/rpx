@@ -159,4 +159,24 @@ describe('startHttpRedirectServer with on-demand TLS', () => {
     expect(res.status).toBe(301)
     expect(res.headers.get('location')).toBe('https://app.example.com/.well-known/acme-challenge/tok123')
   })
+
+  it('does not kick certificate work for a host the gateway cannot route', async () => {
+    Start.startHttpRedirectServer(
+      false,
+      REDIRECT_PORT,
+      443,
+      undefined,
+      fakeManager,
+      hostname => hostname === 'routable.example.com',
+    )
+
+    kicks.length = 0
+    const unknown = await get('/', 'retired.example.com')
+    expect(unknown.status).toBe(301)
+    expect(kicks).toEqual([])
+
+    const routable = await get('/', 'routable.example.com')
+    expect(routable.status).toBe(301)
+    expect(kicks).toEqual(['routable.example.com'])
+  })
 })

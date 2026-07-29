@@ -26,7 +26,7 @@ import { resolveRedirect } from './redirect'
 import { readAcmeChallenge } from './acme-challenge'
 import { resolveAuth } from './auth'
 import type { ResolvedAuth } from './auth'
-import { isWildcardPattern } from './host-match'
+import { isWildcardPattern, matchesWildcard } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
 import { buildSniTlsConfig, withLowMemoryTls } from './sni'
 import type { SniTlsEntry } from './sni'
@@ -644,7 +644,14 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   }
 }
 
-export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsPort = 443, acmeChallengeWebroot?: string, onDemand?: OnDemandCertManager | null): void {
+export function startHttpRedirectServer(
+  verbose?: boolean,
+  httpPort = 80,
+  httpsPort = 443,
+  acmeChallengeWebroot?: string,
+  onDemand?: OnDemandCertManager | null,
+  shouldEnsureCert?: (hostname: string) => boolean,
+): void {
   debugLog('redirect', `Starting HTTP redirect server on port ${httpPort}`, verbose)
 
   const server = http
@@ -688,7 +695,7 @@ export function startHttpRedirectServer(verbose?: boolean, httpPort = 80, httpsP
       const hostname = rawHost.includes(':') ? rawHost.slice(0, rawHost.indexOf(':')) : rawHost
       // First plaintext hit for an approved-but-uncovered host: kick off
       // issuance so the cert exists for the subsequent HTTPS request.
-      if (onDemand && hostname && !onDemand.hasCert(hostname))
+      if (onDemand && hostname && !onDemand.hasCert(hostname) && (!shouldEnsureCert || shouldEnsureCert(hostname)))
         onDemand.ensureCert(hostname).catch(() => {})
 
       const target = httpsPort === 443 ? hostname : `${hostname}:${httpsPort}`
@@ -1247,7 +1254,11 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     // issuance on the first plaintext hit for an uncovered host.
     const isHttpPortBusy = await isPortInUse(httpPort, '0.0.0.0', verbose)
     if (!isHttpPortBusy) {
-      startHttpRedirectServer(verbose, httpPort, httpsPort, mergedOptions.acmeChallengeWebroot, onDemand)
+      const routeHosts = new Set(routeEntries.map(entry => entry.host))
+      const shouldEnsureCert = (hostname: string): boolean =>
+        routeHosts.has(hostname)
+        || [...routeHosts].some(pattern => matchesWildcard(hostname, pattern))
+      startHttpRedirectServer(verbose, httpPort, httpsPort, mergedOptions.acmeChallengeWebroot, onDemand, shouldEnsureCert)
     }
 
     const isPortBusy = await isPortInUse(httpsPort, '0.0.0.0', verbose)
