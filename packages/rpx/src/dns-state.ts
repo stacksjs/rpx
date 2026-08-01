@@ -88,8 +88,44 @@ export function normalizeDevDomain(raw: string): string | null {
 }
 
 /**
- * macOS resolver basename for a dev domain. Uses the registrable base (last two labels)
- * so `api.postline.test` and `postline.test` share one `/etc/resolver/postline.test` file.
+ * Top-level domains that exist only for development.
+ *
+ * Nothing real resolves under these, so collapsing to the registrable base is
+ * free: taking all of `postline.test` cannot shadow a name anyone else needs.
+ * A public TLD is the opposite case - see `resolverBasenameForDomain`.
+ */
+export const DEV_ONLY_TLDS = new Set([
+  'test',
+  'localhost',
+  'local',
+  'example',
+  'invalid',
+  'internal',
+  'home',
+  'lan',
+])
+
+/**
+ * macOS resolver basename for a dev domain.
+ *
+ * `/etc/resolver/<name>` captures that name **and every subdomain of it**, and a
+ * captured name resolves only through rpx's DNS server. When that server is not
+ * answering, every captured name stops resolving on the machine entirely.
+ *
+ * So the basename is the exact hostname for a real, publicly registered domain.
+ * Collapsing `dashboard.stacksjs.com` to `stacksjs.com` claimed the apex and
+ * with it every sibling - `mail.stacksjs.com`, `www.`, all of them - and when
+ * rpx stopped answering, a mail client pointed at the real, running mail server
+ * simply timed out, because the name no longer resolved. `dig` and `host` kept
+ * working, which is what made it look like a server problem: they query DNS
+ * directly and never consult `/etc/resolver`.
+ *
+ * Under a dev-only TLD the collapse is kept, because that is what makes one
+ * `/etc/resolver/postline.test` serve `api.postline.test` too, and nothing real
+ * can be shadowed there.
+ *
+ * This is the same reasoning that already forbids whole-TLD files like
+ * `/etc/resolver/com`, applied one label further down.
  */
 export function resolverBasenameForDomain(raw: string): string | null {
   const domain = normalizeDevDomain(raw)
@@ -98,7 +134,12 @@ export function resolverBasenameForDomain(raw: string): string | null {
   const parts = domain.split('.')
   if (parts.length < 2)
     return null
-  return parts.slice(-2).join('.')
+
+  const tld = parts[parts.length - 1]!
+  if (DEV_ONLY_TLDS.has(tld))
+    return parts.slice(-2).join('.')
+
+  return domain
 }
 
 export function resolverBasenamesForDomains(domains: string[]): string[] {
