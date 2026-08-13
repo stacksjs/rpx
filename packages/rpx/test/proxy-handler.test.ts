@@ -3,13 +3,61 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { createProxyFetchHandler, stripBasePath } from '../src/proxy-handler'
+import { compressResponseForClient, createProxyFetchHandler, stripBasePath } from '../src/proxy-handler'
 import { resolveStaticRoute } from '../src/static-files'
 
 function req(url: string, headers: Record<string, string> = {}): Request {
   const u = new URL(url)
   return new Request(url, { headers: { host: u.host, ...headers } })
 }
+
+async function decompressGzip(response: Response): Promise<string> {
+  const body = response.body?.pipeThrough(new DecompressionStream('gzip'))
+  return body ? new Response(body).text() : ''
+}
+
+describe('proxy response compression', () => {
+  it('streams large text responses as gzip and repairs representation headers', async () => {
+    const source = '<main>WildLoop</main>'.repeat(500)
+    const response = compressResponseForClient(
+      req('https://site.test/', { 'accept-encoding': 'br, gzip' }),
+      new Response(source, {
+        headers: {
+          'accept-ranges': 'bytes',
+          'content-length': String(source.length),
+          'content-type': 'text/html; charset=utf-8',
+          'etag': '"source"',
+        },
+      }),
+    )
+
+    expect(response.headers.get('content-encoding')).toBe('gzip')
+    expect(response.headers.get('vary')).toBe('Accept-Encoding')
+    expect(response.headers.get('content-length')).toBeNull()
+    expect(response.headers.get('accept-ranges')).toBeNull()
+    expect(response.headers.get('etag')).toBeNull()
+    expect(await decompressGzip(response)).toBe(source)
+  })
+
+  it('respects encoding refusals, no-transform, and small payloads', async () => {
+    const refusing = req('https://site.test/', { 'accept-encoding': 'br, gzip;q=0' })
+    const optedOut = req('https://site.test/', { 'accept-encoding': 'gzip' })
+    const headers = { 'content-type': 'text/html; charset=utf-8' }
+
+    expect(compressResponseForClient(refusing, new Response('x'.repeat(2048), { headers })).headers.get('content-encoding')).toBeNull()
+    expect(compressResponseForClient(optedOut, new Response('x'.repeat(2048), { headers: { ...headers, 'cache-control': 'no-transform' } })).headers.get('content-encoding')).toBeNull()
+    expect(compressResponseForClient(optedOut, new Response('small', { headers: { ...headers, 'content-length': '5' } })).headers.get('content-encoding')).toBeNull()
+  })
+
+  it('does not recompress an encoded upstream response', () => {
+    const request = req('https://site.test/', { 'accept-encoding': 'gzip' })
+    const upstream = new Response('encoded bytes', {
+      headers: { 'content-encoding': 'br', 'content-type': 'text/html' },
+    })
+
+    expect(compressResponseForClient(request, upstream)).toBe(upstream)
+  })
+})
 
 describe('createProxyFetchHandler routing', () => {
   it('404s when no route matches', async () => {

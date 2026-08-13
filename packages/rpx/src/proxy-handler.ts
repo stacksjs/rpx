@@ -152,6 +152,115 @@ const HOP_BY_HOP = new Set([
   'sec-websocket-extensions',
 ])
 
+const COMPRESSIBLE_RESPONSE_TYPES = [
+  'text/',
+  'application/json',
+  'application/javascript',
+  'application/xml',
+  'application/xhtml+xml',
+  'application/rss+xml',
+  'application/atom+xml',
+  'application/manifest+json',
+  'image/svg+xml',
+]
+
+const MIN_COMPRESSION_BYTES = 1024
+
+/**
+ * Whether the client permits gzip. Quality values matter: `gzip;q=0` is an
+ * explicit refusal, even though a substring check would mistake it for
+ * support. A wildcard applies only when gzip was not named directly.
+ */
+function acceptsGzip(header: string | null): boolean {
+  if (!header)
+    return false
+
+  let wildcardQuality: number | null = null
+  for (const rawPart of header.split(',')) {
+    const [rawName, ...parameters] = rawPart.trim().split(';')
+    const name = rawName.trim().toLowerCase()
+    if (name !== 'gzip' && name !== '*')
+      continue
+
+    let quality = 1
+    for (const parameter of parameters) {
+      const match = /^\s*q\s*=\s*([\d.]+)\s*$/i.exec(parameter)
+      if (match)
+        quality = Number.parseFloat(match[1])
+    }
+
+    if (name === 'gzip')
+      return Number.isFinite(quality) && quality > 0
+    wildcardQuality = quality
+  }
+
+  return wildcardQuality !== null && Number.isFinite(wildcardQuality) && wildcardQuality > 0
+}
+
+function addVaryAcceptEncoding(headers: Headers): void {
+  const vary = headers.get('vary')
+  if (!vary) {
+    headers.set('vary', 'Accept-Encoding')
+    return
+  }
+
+  if (!vary.split(',').some(value => value.trim().toLowerCase() === 'accept-encoding'))
+    headers.set('vary', `${vary}, Accept-Encoding`)
+}
+
+/**
+ * Compress an upstream text response at the proxy boundary when the app did
+ * not. This is deliberately streaming: buffering a large server-rendered page
+ * would trade transfer time for a later first byte, while CompressionStream
+ * can start sending gzip output as soon as the upstream produces body chunks.
+ *
+ * Applications that already serve Brotli/gzip pass through untouched. Range
+ * responses and `no-transform` opt-outs are also preserved byte-for-byte.
+ */
+export function compressResponseForClient(request: Request, response: Response): Response {
+  if (
+    request.method === 'HEAD'
+    || response.status === 204
+    || response.status === 206
+    || response.status === 304
+    || !response.body
+    || response.headers.has('content-encoding')
+    || response.headers.get('cache-control')?.toLowerCase().includes('no-transform')
+    || request.headers.has('range')
+    || !acceptsGzip(request.headers.get('accept-encoding'))
+  )
+    return response
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  if (!COMPRESSIBLE_RESPONSE_TYPES.some(type => contentType.startsWith(type)))
+    return response
+
+  const declaredLength = response.headers.get('content-length')
+  if (declaredLength !== null) {
+    const length = Number.parseInt(declaredLength, 10)
+    if (Number.isFinite(length) && length < MIN_COMPRESSION_BYTES)
+      return response
+  }
+
+  const headers = new Headers(response.headers)
+  headers.set('content-encoding', 'gzip')
+  addVaryAcceptEncoding(headers)
+
+  // These describe the original representation and become invalid after the
+  // proxy transforms it. Bun will frame the streaming body for the client.
+  headers.delete('content-length')
+  headers.delete('content-md5')
+  headers.delete('content-digest')
+  headers.delete('accept-ranges')
+  headers.delete('etag')
+
+  return new Response(response.body.pipeThrough(new CompressionStream('gzip')), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
 function extractHostname(req: Request): string {
   const hostHeader = req.headers.get('host') || ''
   // Strip port (`stacks.localhost:443` → `stacks.localhost`) without allocating
@@ -427,7 +536,8 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
   // helper that throws always degrades to a 502 instead of a dropped connection.
   return async (req: Request, server?: ProxyServer): Promise<Response | undefined> => {
     try {
-      return await inner(req, server)
+      const response = await inner(req, server)
+      return response ? compressResponseForClient(req, response) : response
     }
     catch (err) {
       debugLog('request', `Unhandled proxy handler error: ${err}`, verbose)
