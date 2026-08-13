@@ -778,8 +778,13 @@ export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
   const { hostPort, method, path, reqHeaders, forwardedHost, originOverride, body } = reqOpts
   const isHead = method === 'HEAD'
 
-  // Decline anything that needs request-time negotiation or a hijacked socket.
-  if (reqHeaders.get('expect') || reqHeaders.get('upgrade'))
+  // Decline anything that needs request-time negotiation, a hijacked socket,
+  // or a deliberately long-lived response. SSE streams can stay open for an
+  // entire browser session; letting one occupy a slot in the bounded keepalive
+  // pool means enough dashboards/HMR clients eventually starve ordinary page
+  // requests. Bun fetch owns separate connection management for that shape.
+  const accept = reqHeaders.get('accept')?.toLowerCase() ?? ''
+  if (reqHeaders.get('expect') || reqHeaders.get('upgrade') || accept.includes('text/event-stream'))
     throw FALLBACK
 
   // Materialize the request body up-front (keeps retries safe) — but only when

@@ -240,6 +240,10 @@ describe('proxyViaPool', () => {
     await expect(call('GET', '/small', { headers: { upgrade: 'h2c' } })).rejects.toBe(FALLBACK)
   })
 
+  it('keeps event streams out of the bounded keepalive pool', async () => {
+    await expect(call('GET', '/events', { headers: { accept: 'text/event-stream' } })).rejects.toBe(FALLBACK)
+  })
+
   it('declines an unbounded (no Content-Length) streaming upload via FALLBACK without locking the body', async () => {
     const body = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode('x')); c.close() } })
     await expect(call('POST', '/echo', { body })).rejects.toBe(FALLBACK)
