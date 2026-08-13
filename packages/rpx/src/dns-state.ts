@@ -94,7 +94,7 @@ export function normalizeDevDomain(raw: string): string | null {
  * free: taking all of `postline.test` cannot shadow a name anyone else needs.
  * A public TLD is the opposite case - see `resolverBasenameForDomain`.
  */
-export const DEV_ONLY_TLDS = new Set([
+export const DEV_ONLY_TLDS: Set<string> = new Set([
   'test',
   'localhost',
   'local',
