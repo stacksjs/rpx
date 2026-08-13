@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.44...v0.11.45)
+
+## 🐛 Bug Fixes
+
+- **types**: annotate development TLD set ([e46cb2c](https://github.com/stacksjs/rpx/commit/e46cb2c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **dns**: never claim a real apex domain in /etc/resolver ([36d79a2](https://github.com/stacksjs/rpx/commit/36d79a2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ⚡ Performance Improvements
+
+- **proxy**: isolate event streams from the pool ([5af72a6](https://github.com/stacksjs/rpx/commit/5af72a6)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **proxy**: stream gzip at the edge ([0ae0766](https://github.com/stacksjs/rpx/commit/0ae0766)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.45 ([96da206](https://github.com/stacksjs/rpx/commit/96da206)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.43...v0.11.44)
 
 ## 🐛 Bug Fixes
