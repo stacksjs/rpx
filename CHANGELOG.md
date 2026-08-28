@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.45...v0.11.46)
+
+## 🐛 Bug Fixes
+
+- **proxy**: forward the real client IP instead of a hardcoded loopback ([8c5f0ec](https://github.com/stacksjs/rpx/commit/8c5f0ec)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ci**: setup-php 2.37.1, which closes the open advisory ([dc22091](https://github.com/stacksjs/rpx/commit/dc22091)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.46 ([221eb36](https://github.com/stacksjs/rpx/commit/221eb36)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.44...v0.11.45)
 
 ## 🐛 Bug Fixes
