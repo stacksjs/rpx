@@ -147,6 +147,118 @@ describe('createProxyFetchHandler routing', () => {
   })
 })
 
+/**
+ * The client address rpx hands its upstream.
+ *
+ * Every path here wrote a literal `127.0.0.1`, from the first gateway commit
+ * onward, so an upstream behind rpx could not tell two visitors apart by
+ * address. It was invisible because the header was always present and always
+ * well-formed — just always the same. Anything downstream keyed on the client
+ * IP (geo, per-IP rate limits, abuse heuristics) was silently reading a
+ * constant.
+ */
+describe('client address forwarding', () => {
+  /** A ProxyServer whose socket peer is `address`, or which has no peer at all. */
+  function serverWithPeer(address: string | null): ProxyServer {
+    return {
+      upgrade: () => true,
+      requestIP: () => (address === null ? null : { address }),
+    }
+  }
+
+  it('forwards the socket peer to the upstream', async () => {
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: r => new Response(JSON.stringify({
+        xff: r.headers.get('x-forwarded-for'),
+        real: r.headers.get('x-real-ip'),
+      }), { headers: { 'content-type': 'application/json' } }),
+    })
+    try {
+      const handler = createProxyFetchHandler(() => ({ sourceHost: `127.0.0.1:${upstream.port}` }))
+      const res = await handler(req('https://api.test/'), serverWithPeer('198.51.100.42'))
+      expect(await res?.json()).toEqual({ xff: '198.51.100.42', real: '198.51.100.42' })
+    }
+    finally {
+      upstream.stop(true)
+    }
+  })
+
+  it('overrides a client-supplied x-forwarded-for rather than trusting it', async () => {
+    // rpx terminates TLS and is the first hop, so there is no trusted chain to
+    // extend — a client's own header is an unauthenticated claim about itself.
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: r => new Response(r.headers.get('x-forwarded-for') ?? ''),
+    })
+    try {
+      const handler = createProxyFetchHandler(() => ({ sourceHost: `127.0.0.1:${upstream.port}` }))
+      const res = await handler(
+        req('https://api.test/', { 'x-forwarded-for': '9.9.9.9', 'x-real-ip': '9.9.9.9' }),
+        serverWithPeer('198.51.100.42'),
+      )
+      expect(await res?.text()).toBe('198.51.100.42')
+    }
+    finally {
+      upstream.stop(true)
+    }
+  })
+
+  it('refuses an address carrying CRLF instead of writing it into the request head', async () => {
+    // The pooled transport concatenates this value into a serialized HTTP head,
+    // so a CR/LF would inject headers. A real socket address cannot contain one;
+    // this pins that the raw concatenation downstream is safe by construction.
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: r => new Response(JSON.stringify({
+        xff: r.headers.get('x-forwarded-for'),
+        injected: r.headers.get('x-injected'),
+      }), { headers: { 'content-type': 'application/json' } }),
+    })
+    try {
+      const handler = createProxyFetchHandler(() => ({ sourceHost: `127.0.0.1:${upstream.port}` }))
+      const res = await handler(req('https://api.test/'), serverWithPeer('1.2.3.4\r\nx-injected: yes'))
+      expect(await res?.json()).toEqual({ xff: '127.0.0.1', injected: null })
+    }
+    finally {
+      upstream.stop(true)
+    }
+  })
+
+  it('falls back to loopback when there is no peer to name', async () => {
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: r => new Response(r.headers.get('x-forwarded-for') ?? ''),
+    })
+    try {
+      const handler = createProxyFetchHandler(() => ({ sourceHost: `127.0.0.1:${upstream.port}` }))
+      // No server at all (the vite plugin and direct callers), and a server whose
+      // socket has already gone away.
+      expect(await (await handler(req('https://api.test/')))?.text()).toBe('127.0.0.1')
+      expect(await (await handler(req('https://api.test/'), serverWithPeer(null)))?.text()).toBe('127.0.0.1')
+    }
+    finally {
+      upstream.stop(true)
+    }
+  })
+
+  it('carries the peer onto the websocket upgrade too', async () => {
+    const handler = createProxyFetchHandler(() => ({ sourceHost: 'localhost:3002' }))
+    let data: any
+    const res = await handler(req('https://api.test/socket', { upgrade: 'websocket', connection: 'Upgrade' }), {
+      upgrade(_r, opts) { data = opts?.data; return true },
+      requestIP: () => ({ address: '198.51.100.42' }),
+    })
+    expect(res).toBeUndefined()
+    expect(data.forwardHeaders['x-forwarded-for']).toBe('198.51.100.42')
+    expect(data.forwardHeaders['x-real-ip']).toBe('198.51.100.42')
+  })
+})
+
 describe('stripBasePath', () => {
   it('no-ops for the root or unset base', () => {
     expect(stripBasePath('/a/b', '/')).toBe('/a/b')

@@ -104,12 +104,59 @@ export type OnNoRoute = (hostname: string, pathname: string, req: Request) => Pr
 
 export type ProxyFetchHandler = (req: Request, server?: ProxyServer) => Promise<Response | undefined>
 
-/** Minimal shape of the Bun server needed for WebSocket upgrades. */
+/** Minimal shape of the Bun server needed for WebSocket upgrades and peer lookup. */
 export interface ProxyServer {
   // `unknown` data + standard HeadersInit so it structurally accepts Bun's
   // `Server<WebSocketData>` for any data generic (the daemon/start callers
   // parameterize differently) without resorting to `any`.
   upgrade: (req: Request, options?: { data?: unknown, headers?: Bun.HeadersInit }) => boolean
+  /**
+   * The address of the peer on the other end of this request's socket — what
+   * we forward as `x-forwarded-for`. Optional because the handler is also
+   * called directly (tests, the vite plugin) with no server at all.
+   */
+  requestIP?: (req: Request) => { address: string } | null
+}
+
+/**
+ * Loopback, and the value every upstream saw for every visitor before this
+ * existed. Used when there is genuinely no peer to name: a Unix socket, a
+ * connection already closed by the time the handler runs, or a caller that
+ * passed no server.
+ */
+const UNKNOWN_PEER = '127.0.0.1'
+
+/**
+ * The address to forward as `x-forwarded-for`.
+ *
+ * This was a hardcoded `'127.0.0.1'` on all three forwarding paths from the
+ * original gateway commit onward, so every request reached its upstream
+ * claiming to come from loopback and the real client IP was destroyed here.
+ * Nothing downstream could do geo lookups, per-IP rate limiting, or abuse
+ * heuristics — the input simply never arrived.
+ *
+ * `requestIP` reads the socket's peer, so it cannot be spoofed by a header.
+ * That is the whole point: any client-supplied `x-forwarded-for` is dropped by
+ * STRIP_REQUEST before ours is written, which is the correct behaviour for an
+ * edge proxy. We do NOT append to a client-supplied chain — rpx terminates TLS
+ * and is the first hop, so there is no trusted chain to extend.
+ */
+function peerAddress(req: Request, server?: ProxyServer): string {
+  let address: string | undefined
+  try {
+    address = server?.requestIP?.(req)?.address
+  }
+  catch {
+    return UNKNOWN_PEER
+  }
+  if (!address)
+    return UNKNOWN_PEER
+  // The pooled path writes this straight into a serialized HTTP head, so a CR or
+  // LF in it would inject headers. A socket address cannot contain one, which is
+  // exactly why this check is cheap enough to keep: it costs nothing and it means
+  // the raw-string concatenation downstream is safe by construction rather than
+  // by assumption about a Bun internal.
+  return /^[0-9a-f.:]{1,45}$/i.test(address) ? address : UNKNOWN_PEER
 }
 
 /** Data attached to an upgraded client socket so the ws handler can dial upstream. */
@@ -355,6 +402,9 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
   const inner = async (req: Request, server?: ProxyServer): Promise<Response | undefined> => {
     const { pathname, search } = splitPathQuery(req.url)
     const hostname = extractHostname(req)
+    // Resolved once, here: the socket may be gone by the time a fallback or
+    // retry runs, and every forwarding path below must agree on one value.
+    const clientIp = peerAddress(req, server)
 
     let route = getRoute(hostname, pathname)
     if (!route && onNoRoute) {
@@ -414,7 +464,8 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
           forwardHeaders[k] = v
       }
       forwardHeaders.host = targetHost
-      forwardHeaders['x-forwarded-for'] = '127.0.0.1'
+      forwardHeaders['x-forwarded-for'] = clientIp
+      forwardHeaders['x-real-ip'] = clientIp
       forwardHeaders['x-forwarded-proto'] = 'https'
       forwardHeaders['x-forwarded-host'] = hostname
 
@@ -466,6 +517,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
         path: `${targetPath}${search}`,
         reqHeaders: req.headers,
         forwardedHost: hostname,
+        clientIp,
         originOverride,
         body: req.body,
         signal: req.signal,
@@ -496,7 +548,8 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
         try {
           const headers = new Headers(req.headers)
           headers.set('host', targetHost)
-          headers.set('x-forwarded-for', '127.0.0.1')
+          headers.set('x-forwarded-for', clientIp)
+          headers.set('x-real-ip', clientIp)
           headers.set('x-forwarded-proto', 'https')
           headers.set('x-forwarded-host', hostname)
           if (originOverride !== undefined)

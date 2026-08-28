@@ -164,8 +164,15 @@ const decoder = new TextDecoder()
 
 /**
  * Request headers never forwarded verbatim: HTTP/1.1 framing headers (we own the
- * connection lifecycle) plus the `x-forwarded-*` set, which the caller always
- * supplies as overrides — so client-sent copies must not be passed through.
+ * connection lifecycle) plus the `x-forwarded-*`/`x-real-ip` set, which the
+ * caller always supplies as overrides — so client-sent copies must not be
+ * passed through.
+ *
+ * For the two address headers this is a security property, not tidiness. rpx
+ * terminates TLS and is the first hop, so a client-supplied `x-forwarded-for`
+ * is an unauthenticated claim about its own identity. Stripping it and writing
+ * the socket's real peer means an upstream doing per-IP rate limiting or geo
+ * cannot be lied to by adding a header.
  */
 const STRIP_REQUEST = new Set([
   'host',
@@ -176,6 +183,7 @@ const STRIP_REQUEST = new Set([
   'x-forwarded-for',
   'x-forwarded-proto',
   'x-forwarded-host',
+  'x-real-ip',
 ])
 
 /**
@@ -759,6 +767,12 @@ export interface PoolRequest {
   reqHeaders: Headers
   /** Value for the upstream `x-forwarded-host` (the client-facing hostname). */
   forwardedHost: string
+  /**
+   * The socket's peer address, forwarded as `x-forwarded-for` / `x-real-ip`.
+   * Defaults to loopback when the caller cannot name one, which is what every
+   * request unconditionally sent before this was threaded through.
+   */
+  clientIp?: string
   /** When set (changeOrigin), the `origin` header value; also drops the client's. */
   originOverride?: string
   /** Request body stream, or null. */
@@ -775,7 +789,7 @@ export interface PoolRequest {
  * (large/streaming uploads, `Expect`, upgrades) so the caller can use `fetch()`.
  */
 export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
-  const { hostPort, method, path, reqHeaders, forwardedHost, originOverride, body } = reqOpts
+  const { hostPort, method, path, reqHeaders, forwardedHost, clientIp, originOverride, body } = reqOpts
   const isHead = method === 'HEAD'
 
   // Decline anything that needs request-time negotiation, a hijacked socket,
@@ -804,7 +818,7 @@ export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
       throw FALLBACK // exceeded cap while reading (Content-Length under-declared)
   }
 
-  const head = serializeRequest(method, path, reqHeaders, hostPort, forwardedHost, originOverride, bodyBytes)
+  const head = serializeRequest(method, path, reqHeaders, hostPort, forwardedHost, clientIp, originOverride, bodyBytes)
   // Send the head and (buffered) body as one write so the common request is a
   // single syscall with no body-write await.
   let payload = head
@@ -1229,11 +1243,17 @@ function serializeRequest(
   reqHeaders: Headers,
   hostValue: string,
   forwardedHost: string,
+  clientIp: string | undefined,
   originOverride: string | undefined,
   bodyBytes: Uint8Array | null,
 ): Uint8Array {
+  // `x-forwarded-for` was the literal `127.0.0.1` here, so every upstream behind
+  // rpx saw loopback for every visitor and the real address was unrecoverable.
+  // The caller resolves it from the socket (proxy-handler's peerAddress); the
+  // fallback keeps the old value for callers that cannot name a peer.
+  const peer = clientIp || '127.0.0.1'
   let head = `${method} ${path} HTTP/1.1\r\nhost: ${hostValue}\r\n`
-    + `x-forwarded-for: 127.0.0.1\r\nx-forwarded-proto: https\r\n`
+    + `x-forwarded-for: ${peer}\r\nx-real-ip: ${peer}\r\nx-forwarded-proto: https\r\n`
     + `x-forwarded-host: ${forwardedHost}\r\n`
   if (originOverride !== undefined)
     head += `origin: ${originOverride}\r\n`

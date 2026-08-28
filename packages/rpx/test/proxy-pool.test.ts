@@ -118,11 +118,11 @@ afterAll(() => {
   origin.stop(true)
 })
 
-function call(method: string, path: string, opts: { body?: ReadableStream<Uint8Array> | null, headers?: Record<string, string>, originOverride?: string, maxPerHost?: number } = {}) {
+function call(method: string, path: string, opts: { body?: ReadableStream<Uint8Array> | null, headers?: Record<string, string>, originOverride?: string, maxPerHost?: number, clientIp?: string } = {}) {
   const reqHeaders = new Headers()
   for (const [k, v] of Object.entries(opts.headers ?? {}))
     reqHeaders.set(k, v)
-  return proxyViaPool({ hostPort, method, path, reqHeaders, forwardedHost: 'site.test', originOverride: opts.originOverride, body: opts.body ?? null, maxPerHost: opts.maxPerHost })
+  return proxyViaPool({ hostPort, method, path, reqHeaders, forwardedHost: 'site.test', clientIp: opts.clientIp, originOverride: opts.originOverride, body: opts.body ?? null, maxPerHost: opts.maxPerHost })
 }
 
 describe('proxyViaPool', () => {
@@ -172,13 +172,39 @@ describe('proxyViaPool', () => {
 
   it('applies host + x-forwarded-* overrides and strips client copies', async () => {
     const res = await call('GET', '/dump-headers', {
-      headers: { 'x-forwarded-for': '9.9.9.9', 'x-forwarded-host': 'evil.test', 'x-custom': 'keep-me' },
+      clientIp: '203.0.113.7',
+      headers: { 'x-forwarded-for': '9.9.9.9', 'x-real-ip': '9.9.9.9', 'x-forwarded-host': 'evil.test', 'x-custom': 'keep-me' },
     })
     const got = await res.json() as Record<string, string>
     expect(got.host).toBe(hostPort)
-    expect(got['x-forwarded-for']).toBe('127.0.0.1') // override wins, not 9.9.9.9
+    // The caller's resolved peer wins over the client's claim. A client-supplied
+    // x-forwarded-for is an unauthenticated assertion about its own identity, and
+    // an upstream doing per-IP rate limiting must not be lied to by a header.
+    expect(got['x-forwarded-for']).toBe('203.0.113.7')
+    expect(got['x-real-ip']).toBe('203.0.113.7')
     expect(got['x-forwarded-host']).toBe('site.test')
     expect(got['x-custom']).toBe('keep-me') // unrelated client headers pass through
+  })
+
+  it('forwards the real client address, not a hardcoded loopback', async () => {
+    // The bug this replaced: `x-forwarded-for: 127.0.0.1` was a string literal in
+    // the serialized request head, so every upstream behind rpx saw loopback for
+    // every visitor. Geo lookups, per-IP rate limiting and abuse heuristics all
+    // received a constant, and nothing reported it — the header was present and
+    // well-formed, just always the same.
+    const res = await call('GET', '/dump-headers', { clientIp: '198.51.100.42' })
+    const got = await res.json() as Record<string, string>
+    expect(got['x-forwarded-for']).toBe('198.51.100.42')
+    expect(got['x-real-ip']).toBe('198.51.100.42')
+  })
+
+  it('falls back to loopback when the caller cannot name a peer', async () => {
+    // Unix sockets, a connection already closed, or a direct caller with no
+    // server. Old behaviour is the right fallback — but it must be a fallback,
+    // not the only outcome.
+    const res = await call('GET', '/dump-headers')
+    const got = await res.json() as Record<string, string>
+    expect(got['x-forwarded-for']).toBe('127.0.0.1')
   })
 
   it('rewrites the origin header when originOverride is set (changeOrigin) and drops the client copy', async () => {
