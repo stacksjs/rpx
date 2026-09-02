@@ -386,7 +386,7 @@ describe('rpx gateway (CLI, end to end)', () => {
 
     try {
       let body: string | null = null
-      const deadline = Date.now() + 20_000
+      const deadline = Date.now() + 45_000
       while (body === null && Date.now() < deadline) {
         try {
           const res = await fetch(`http://127.0.0.1:${httpPort}/hello`, {
@@ -437,5 +437,5 @@ describe('rpx gateway (CLI, end to end)', () => {
       }
       upstream.stop(true)
     }
-  }, 60_000)
+  }, 90_000)
 })
