@@ -573,6 +573,11 @@ run several independent instances behind your own supervisor (systemd / pm2 / a
 container replica set) sharing `:443`. It's **off by default** so a stray second
 instance still fails loudly with "port in use" rather than silently co-binding.
 
+The other direction, a small box such as a Raspberry Pi, is
+`RPX_WORKERS=1 RPX_REUSE_PORT=0` plus `maxTlsContexts` (default 256) to bound
+the certificates kept in memory; see the
+[environment variable reference](./docs/advanced/configuration.md#low-memory-setting).
+
 ## Testing
 
 ```bash

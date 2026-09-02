@@ -124,6 +124,42 @@ const env = process.env.APP_ENV || 'development'
 export default configs[env]
 ```
 
+## Environment Variable Reference
+
+Runtime switches rpx reads from the environment. None is required; every one
+has a safe default.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `RPX_WORKERS` | `1` | `rpx daemon:start` cluster size. Above `1` a coordinator spawns that many worker processes that share the HTTPS port (Linux; see [performance](/advanced/performance)). |
+| `RPX_REUSE_PORT` | `0` | Set `1` to bind listeners with `SO_REUSEPORT` so several independent rpx instances can share one port behind your own supervisor. Off by default so a stray second instance fails loudly. |
+| `RPX_BIND_HOSTNAME` | dual-stack (`::`, or `0.0.0.0` without IPv6) | Force the listener bind address. |
+| `RPX_VERBOSE` | `true` for gateways | `RPX_VERBOSE=false` silences the gateway's TLS and routing diagnostics. |
+| `RPX_UPSTREAM_TIMEOUT` | off | Seconds of upstream inactivity before a request answers `504`; resets on every byte. |
+| `RPX_MAX_UPSTREAM_CONNS` | `256` | Cap on pooled keep-alive connections per upstream host. |
+| `RPX_MAX_QUEUED` / `RPX_QUEUE_WAIT_MS` | pool defaults | Depth and wait bound of the per-upstream request queue. |
+| `RPX_MAX_WS_PENDING_BYTES` | pool default | Backpressure limit for a proxied WebSocket. |
+| `RPX_TLS_RELOAD_STRATEGY` | `restart` under systemd, else `rebind` | How a freshly issued on-demand certificate goes live. |
+| `RPX_BYPASS_CONNECTION_TEST` | unset | `true` skips the upstream reachability probe on start. |
+| `SUDO_PASSWORD` | unset | Makes trust-store and hosts-file steps non-interactive. |
+
+### Low-memory setting
+
+For a small box (a Raspberry Pi with 4 to 8 GB shared with the apps it fronts)
+run rpx as a single process with a bounded certificate set:
+
+```bash
+RPX_WORKERS=1 RPX_REUSE_PORT=0 rpx gateway --sites-dir /etc/rpx/sites.d --max-tls-contexts 64
+```
+
+`RPX_WORKERS=1` keeps one process (no per-worker heap or duplicated TLS
+contexts), `RPX_REUSE_PORT=0` keeps a second instance from co-binding the port,
+and `maxTlsContexts` (config key, `--max-tls-contexts` on the CLI, default
+`256`) caps how many SNI certificates OpenSSL keeps parsed in memory; the first
+N are kept and a warning names the rest. Every TLS context rpx creates already
+uses OpenSSL's low-memory mode, which releases per-connection buffers as soon
+as they are idle.
+
 ## Programmatic Configuration
 
 ### Dynamic Configuration
