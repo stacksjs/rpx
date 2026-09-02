@@ -25,6 +25,22 @@ jobs:
       - name: Install Dependencies
         run: bun install
 
+      # The release has advertised these five zips since the workflow was
+      # written, but nothing produced them: action-releaser skips missing files
+      # without complaint, so every release shipped an empty downloads section
+      # and no job ever failed. The Linux binaries are what ts-cloud boxes and
+      # the Raspberry Pi gateway download, so they must fail the release loudly
+      # (no continue-on-error) rather than vanish again. Runs BEFORE publish so
+      # a broken build leaves nothing half-released.
+      - name: Compile Linux binaries
+        run: bun run build:binaries linux-x64 linux-arm64
+
+      # Cross-compiling the macOS and Windows binaries pulls those Bun runtimes
+      # from the network; a hiccup there is a warning, not a blocked release.
+      - name: Compile macOS and Windows binaries
+        continue-on-error: true
+        run: bun run build:binaries windows-x64 darwin-x64 darwin-arm64
+
       - name: Publish
         run: pantry publish --npm --access public
         env:

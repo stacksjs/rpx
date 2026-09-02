@@ -83,6 +83,29 @@ jobs:
       - name: Unit Test
         run: bun run test
 
+  # The gateway ships as a prebuilt linux-arm64 binary (Raspberry Pi and other
+  # aarch64 boxes), so the suite runs once under arm64 emulation. Kept as its
+  # own job so the native x64 jobs are not slowed by QEMU.
+  test-arm64:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Unit Test (linux/arm64)
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/work" -w /work \
+            oven/bun:1 \
+            sh -c 'uname -m && (command -v openssl >/dev/null || (apt-get update -qq && apt-get install -y -qq openssl >/dev/null)) && bun install && bun test packages/rpx/test'
+
   publish-commit:
     needs: [lint, typecheck, test]
     runs-on: ubuntu-latest
