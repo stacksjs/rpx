@@ -418,8 +418,13 @@ describe('rpx gateway (CLI, end to end)', () => {
       })).rejects.toThrow()
     }
     finally {
-      child.kill('SIGTERM')
-      await new Promise(resolve => child.once('exit', resolve))
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM')
+        await Promise.race([
+          new Promise(resolve => child.once('exit', resolve)),
+          new Promise(resolve => setTimeout(resolve, 5000)),
+        ])
+      }
       upstream.stop(true)
     }
   }, 60_000)
