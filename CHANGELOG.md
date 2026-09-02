@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.50...v0.11.51)
+
+## 🧪 Tests
+
+- **gateway**: report why the spawned CLI never answered ([462dda0](https://github.com/stacksjs/rpx/commit/462dda0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.51 ([f2b891c](https://github.com/stacksjs/rpx/commit/f2b891c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.49...v0.11.50)
 
 ## 🐛 Bug Fixes
