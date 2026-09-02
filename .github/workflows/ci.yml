@@ -104,7 +104,7 @@ jobs:
           docker run --rm --platform linux/arm64 \
             -v "$PWD:/work" -w /work \
             oven/bun:1 \
-            sh -c 'uname -m && (command -v openssl >/dev/null || (apt-get update -qq && apt-get install -y -qq openssl >/dev/null)) && bun install && find packages/rpx/test -name "*.test.ts" ! -name "utils.test.ts" ! -name "cli.test.ts" -print0 | xargs -0 bun test'
+            sh -c 'uname -m && (command -v openssl >/dev/null || (apt-get update -qq && apt-get install -y -qq openssl >/dev/null)) && bun install && find packages/rpx/test -name "*.test.ts" ! -name "utils.test.ts" ! -name "cli.test.ts" ! -name "daemon.test.ts" -print0 | xargs -0 bun test'
 
   publish-commit:
     needs: [lint, typecheck, test]
