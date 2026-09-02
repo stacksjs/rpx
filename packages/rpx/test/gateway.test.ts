@@ -377,8 +377,12 @@ describe('rpx gateway (CLI, end to end)', () => {
       env: { ...process.env, RPX_VERBOSE: 'false', RPX_BIND_HOSTNAME: '127.0.0.1' },
     })
     let output = ''
+    let spawnError: string | null = null
+    let exited: string | null = null
     child.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString() })
     child.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString() })
+    child.on('error', (err: Error) => { spawnError = `${err.name}: ${err.message}` })
+    child.on('exit', (code: number | null, signal: string | null) => { exited = `code=${code} signal=${signal}` })
 
     try {
       let body: string | null = null
@@ -400,7 +404,13 @@ describe('rpx gateway (CLI, end to end)', () => {
         if (body === null)
           await new Promise(resolve => setTimeout(resolve, 100))
       }
-      expect(body, `gateway never served a response. child output:\n${output}`).toBe('gateway-upstream gw.test')
+      const why = [
+        `spawned: ${process.execPath} ${cli}`,
+        spawnError ? `spawn error: ${spawnError}` : 'spawn error: none',
+        exited ? `child exited early: ${exited}` : 'child still running',
+        `child output: ${output || '(nothing)'}`,
+      ].join('\n')
+      expect(body, `gateway never served a response.\n${why}`).toBe('gateway-upstream gw.test')
 
       const redirected = await fetch(`http://127.0.0.1:${httpPort}/deep?x=1`, { headers: { host: 'www.gw.test' }, redirect: 'manual', signal: AbortSignal.timeout(5000) })
       expect(redirected.status).toBe(301)
