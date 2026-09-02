@@ -374,7 +374,7 @@ describe('rpx gateway (CLI, end to end)', () => {
     const cli = path.join(import.meta.dir, '..', 'bin', 'cli.ts')
     const child = spawn(process.execPath, [cli, 'gateway', '--sites-dir', sitesDir, '--no-https', '--http-port', String(httpPort), '--https-port', String(httpPort + 1)], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, RPX_VERBOSE: 'false' },
+      env: { ...process.env, RPX_VERBOSE: 'false', RPX_BIND_HOSTNAME: '127.0.0.1' },
     })
     let output = ''
     child.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString() })
@@ -405,8 +405,13 @@ describe('rpx gateway (CLI, end to end)', () => {
       const miss = await fetch(`http://127.0.0.1:${httpPort}/`, { headers: { host: 'other.test' } })
       expect(miss.status).toBe(404)
 
-      // Nothing on the HTTPS port.
-      await expect(fetch(`https://127.0.0.1:${httpPort + 1}/`, { tls: { rejectUnauthorized: false } })).rejects.toThrow()
+      // Nothing on the HTTPS port. Bounded, so a host that blackholes the
+      // connection instead of refusing it fails the assertion rather than the
+      // whole test file's timeout.
+      await expect(fetch(`https://127.0.0.1:${httpPort + 1}/`, {
+        tls: { rejectUnauthorized: false },
+        signal: AbortSignal.timeout(5000),
+      })).rejects.toThrow()
     }
     finally {
       child.kill('SIGTERM')
