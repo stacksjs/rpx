@@ -354,6 +354,24 @@ async function freePort(): Promise<number> {
 }
 
 describe('rpx gateway (CLI, end to end)', () => {
+  it('starts and prints its help', async () => {
+    const cli = path.join(import.meta.dir, '..', 'bin', 'cli.ts')
+    const child = spawn(process.execPath, [cli, '--help'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let output = ''
+    child.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString() })
+    child.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString() })
+
+    const exit = await Promise.race([
+      new Promise<string>(resolve => child.once('exit', (code, signal) => resolve(`code=${code} signal=${signal}`))),
+      new Promise<string>(resolve => setTimeout(() => resolve('still running after 45s'), 45_000)),
+    ])
+
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill('SIGKILL')
+
+    expect(output, `rpx --help produced nothing (${exit})`).toContain('gateway')
+  }, 60_000)
+
   it('serves a fragment\'s route over plain HTTP with --no-https on the given port', async () => {
     const upstream = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: req => new Response(`gateway-upstream ${req.headers.get('x-forwarded-host')}`) })
     const httpPort = await freePort()
