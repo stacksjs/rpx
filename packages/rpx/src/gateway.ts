@@ -250,9 +250,23 @@ export async function resolveGatewayOptions(options: GatewayOptions = {}): Promi
  * refused and logged); the process then serves until SIGINT / SIGTERM.
  */
 export async function startGateway(options: GatewayOptions = {}): Promise<void> {
+  const sitesDir = options.sitesDir ?? DEFAULT_GATEWAY_SITES_DIR
   const resolved = await resolveGatewayOptions(options)
   const proxies = 'proxies' in resolved && Array.isArray(resolved.proxies) ? resolved.proxies : []
   if (proxies.length === 0 && !options.localCa)
-    console.warn(`[rpx gateway] no routes found under ${options.sitesDir ?? DEFAULT_GATEWAY_SITES_DIR}; every request will answer 404 until a fragment is deployed`)
-  await startProxies(resolved)
+    console.warn(`[rpx gateway] no routes found under ${sitesDir}; every request will answer 404 until a fragment is deployed`)
+
+  const https = (resolved as { https?: unknown }).https !== false
+  const port = https
+    ? (resolved as { httpsPort?: number }).httpsPort ?? 443
+    : (resolved as { httpPort?: number }).httpPort ?? 80
+  console.error(`[rpx gateway] ${proxies.length} route(s) from ${sitesDir}; listening on :${port} (${https ? 'https' : 'http only'})`)
+
+  try {
+    await startProxies(resolved)
+  }
+  catch (err) {
+    console.error(`[rpx gateway] failed to start: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+    throw err
+  }
 }
