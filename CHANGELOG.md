@@ -1,5 +1,28 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.46...v0.11.47)
+
+## 🚀 Features
+
+- **tls**: serve LAN hosts from a local CA, plus a gateway entry point ([2e7da1a](https://github.com/stacksjs/rpx/commit/2e7da1a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- the local CA, HTTP-only serving and the gateway command ([35319cd](https://github.com/stacksjs/rpx/commit/35319cd)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🤖 Continuous Integration
+
+- **release**: compile the platform binaries the release advertises ([380a8fb](https://github.com/stacksjs/rpx/commit/380a8fb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.47 ([f2ca52a](https://github.com/stacksjs/rpx/commit/f2ca52a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **deps**: tlsx 0.13.19, for the Linux trust store and CA export ([0b99432](https://github.com/stacksjs/rpx/commit/0b99432)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.45...v0.11.46)
 
 ## 🐛 Bug Fixes
