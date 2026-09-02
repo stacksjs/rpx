@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.47...v0.11.48)
+
+## 🐛 Bug Fixes
+
+- **ci**: pin the gateway test's bind address, and scope the arm64 job ([c81002a](https://github.com/stacksjs/rpx/commit/c81002a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.48 ([277dd2a](https://github.com/stacksjs/rpx/commit/277dd2a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.46...v0.11.47)
 
 ## 🚀 Features
