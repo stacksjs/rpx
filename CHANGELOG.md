@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.49...v0.11.50)
+
+## 🐛 Bug Fixes
+
+- **test**: stop the gateway test hiding its own failure in cleanup ([226e02d](https://github.com/stacksjs/rpx/commit/226e02d)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.50 ([c5acd68](https://github.com/stacksjs/rpx/commit/c5acd68)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.48...v0.11.49)
 
 ## 🐛 Bug Fixes
