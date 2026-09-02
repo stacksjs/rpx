@@ -83,6 +83,12 @@ rpx --help
 rpx --version
 ```
 
+To serve a whole box in production, `rpx gateway` merges every per-app fragment
+under a sites directory and serves them on one pair of ports. Its flags, its
+startup output and the Linux limitation are in
+[Gateway mode](/config#gateway-mode); [LAN gateway](/advanced/lan-gateway)
+walks through a box on a private network.
+
 Use `--change-origin` to rewrite the `Origin` header to the upstream target —
 handy when your dev server enforces CORS or same-origin checks. See
 [Configuration](/config#changeorigin) for details.

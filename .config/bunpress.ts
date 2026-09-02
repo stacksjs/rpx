@@ -58,6 +58,7 @@ export default {
         text: 'Advanced',
         items: [
           { text: 'Configuration', link: '/advanced/configuration' },
+          { text: 'LAN Gateway', link: '/advanced/lan-gateway' },
           { text: 'Custom Middleware', link: '/advanced/custom-middleware' },
           { text: 'Performance', link: '/advanced/performance' },
           { text: 'CI/CD Integration', link: '/advanced/ci-cd-integration' },

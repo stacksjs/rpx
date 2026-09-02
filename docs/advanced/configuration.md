@@ -160,6 +160,12 @@ N are kept and a warning names the rest. Every TLS context rpx creates already
 uses OpenSSL's low-memory mode, which releases per-connection buffers as soon
 as they are idle.
 
+On Linux the `rpx` CLI hangs at startup today
+([stacksjs/rpx#2267](https://github.com/stacksjs/rpx/issues/2267)), so run a
+gateway there from a launcher that calls `startGateway` and set the two
+variables above in its service unit. [LAN gateway](/advanced/lan-gateway) walks
+through a full box, certificate authority included.
+
 ## Programmatic Configuration
 
 ### Dynamic Configuration

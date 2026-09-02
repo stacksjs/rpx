@@ -80,6 +80,12 @@ const config: ReverseProxyOptions = {
 export default config
 ```
 
+Then run:
+
+```bash
+./rpx start
+```
+
 ### `changeOrigin`
 
 By default rpx leaves the browser's `Origin` header intact when forwarding to your
@@ -171,15 +177,29 @@ const config: MultiProxyConfig = {
 
 ### `localCa`
 
-LAN production mode. A Raspberry Pi serving `pi-stacks.local` and a private IP
-cannot get a public certificate, so rpx runs its own Root CA under `dir`, mints
-one leaf whose SANs name every `hosts` entry (dNSName) and every `ips` entry
-(iPAddress), and serves it under each host's SNI name AND as the listener's
-default TLS context, so `<https://192.168.1.20/>` (no SNI at all) gets it too.
-The leaf is re-minted when a host or IP is added, or when fewer than
-`renewBeforeDays` remain. Public domains on the same gateway keep their
-on-demand ACME certificates; a host may not appear in both `localCa.hosts` and
-`onDemandTls.allowedSuffixes` (rpx refuses the config).
+LAN production mode: HTTPS for names a public certificate authority can never
+issue for.
+
+A public authority proves control of a name by reaching it. An ACME http-01
+challenge is fetched over the internet, and a dns-01 challenge is read from
+public DNS. Neither reaches `pi-stacks.local` or `192.168.1.20`, because
+nothing on the internet routes to a private network. No public authority can
+issue for these names at all. The only way to serve them over HTTPS is to run
+an authority the clients on that network trust.
+
+That is what `localCa` does. On start rpx loads or creates a Root CA under
+`dir`, mints a single leaf whose SANs name every `hosts` entry (as a dNSName) and
+every `ips` entry (as an iPAddress), registers that leaf under each host's SNI
+name, and installs it as the listener's default TLS context as well. The
+default context is what makes an IP address work: a browser asked for
+`<https://192.168.1.20/>` sends no SNI at all, so without a default the listener
+answers with whatever certificate happens to be first.
+
+Public domains on the same gateway keep their on-demand ACME certificates. A
+host may not appear in both `localCa.hosts` and `onDemandTls.allowedSuffixes`,
+and rpx refuses that configuration on start rather than letting the two flows
+fight over one SNI name. `hosts` takes hostnames only: wildcards are rejected,
+and IP addresses belong in `ips`.
 
 ```ts
 const config: MultiProxyConfig = {
@@ -201,8 +221,30 @@ const config: MultiProxyConfig = {
 }
 ```
 
-Clients trust `dir/rpx-root-ca.crt` once (on the Pi itself `installTrust`
-does it; copy the file to laptops and phones on the LAN).
+Four files live under `dir`:
+
+| File | What it is |
+| --- | --- |
+| `rpx-root-ca.crt` | The Root CA certificate. This is the file every client has to trust. |
+| `rpx-root-ca.key` | The CA private key, written with mode `0600`. It never leaves the box. |
+| `rpx-local-host.crt` | The leaf covering `hosts` and `ips`. |
+| `rpx-local-host.key` | The leaf private key, written with mode `0600`. |
+
+The leaf on disk is re-checked on every start and re-minted when any of these
+is true: a host or IP in the config is missing from its SANs, the key does not
+match the certificate, it was signed by a different CA (a rotated CA orphans
+its leaves), it is not valid yet, or fewer than `renewBeforeDays` remain. A
+restart with an unchanged config touches nothing.
+
+`installTrust: true` runs the tlsx `installCA` step on the box itself, and is
+skipped when the CA is already trusted. It needs root or `sudo`. A trust store
+that cannot be written is a warning, never a failure to start: rpx serves
+either way and tells you to trust `rpx-root-ca.crt` by hand.
+
+Other devices on the network trust the same file. rpx produces the CA;
+[tlsx](https://github.com/stacksjs/tlsx) is what mints and trusts it, and
+`tlsx export-ca` writes it in the form a laptop, phone or Windows machine
+wants.
 
 ### `maxTlsContexts`
 
@@ -211,15 +253,17 @@ parsed certificate and key alive in OpenSSL for the life of the listener, so a
 certs directory full of retired-site PEMs costs real memory on a 4 GB box.
 When the assembled SNI set exceeds the limit, rpx keeps the first N entries
 (a `localCa` leaf always comes first) and logs one warning naming every host
-it dropped. See the [low-memory setting](/advanced/configuration#low-memory-setting)
-for the process-level knobs that go with it.
+it dropped. On a small board pair it with `RPX_WORKERS=1` and
+`RPX_REUSE_PORT=0`, which keep the gateway to one process and stop a second
+instance co-binding the port. See the
+[low-memory setting](/advanced/configuration#low-memory-setting).
 
 ## Gateway mode
 
-`rpx gateway` is the production entry a box runs from the prebuilt binary (the
-linux-x64 and linux-arm64 zips on every release). It merges every per-app
-fragment under a `sites.d` directory (one `<slug>.json` per deploy, the shape
-ts-cloud writes) and serves them on `:80` / `:443`:
+`rpx gateway` is the production entry point. It reads every per-app fragment
+under a `sites.d` directory (one `<slug>.json` per deploy, the shape ts-cloud
+writes), merges them into a single proxy configuration, and serves the result
+on `:80` and `:443`.
 
 ```bash
 rpx gateway --sites-dir /etc/rpx/sites.d
@@ -227,19 +271,94 @@ rpx gateway --sites-dir /etc/rpx/sites.d --no-https --http-port 8080
 rpx gateway --local-ca-dir /etc/rpx/local-ca --local-ca-hosts pi-stacks.local --local-ca-ips 192.168.1.20 --install-trust
 ```
 
-Merge rules (identical to ts-cloud's generated assembler): fragments are read
-in filename order; a malformed fragment is logged and skipped, never dropped
-silently; routes are deduped by `id` (first writer wins); on-demand suffixes
-are unioned and production wins over staging; the last `productionCerts.certsDir`
-wins and `certsDirServerNames` is derived from the routed hosts; the first
-`acmeChallengeWebroot` and the first origin-guard secret win. The same entry is
-available from code as `startGateway({ sitesDir, certsDir, https, localCa })`.
+### Flags
 
-Then run:
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--sites-dir <path>` | `/etc/rpx/sites.d` | Directory of per-app `<slug>.json` fragments. |
+| `--certs-dir <path>` | `/etc/rpx/certs` | Fallback directory of real PEM certificates, used when no fragment names one. |
+| `--no-https` | HTTPS on | Serve plain HTTP on the HTTP port only, and bind nothing on the HTTPS port. |
+| `--http-port <port>` | `80` | Shared HTTP port: the redirect and ACME http-01 listener, or the only listener under `--no-https`. |
+| `--https-port <port>` | `443` | Shared HTTPS port. |
+| `--local-ca-dir <path>` | off | Turns on LAN production mode, and holds the Root CA and its leaf. See [`localCa`](#localca). |
+| `--local-ca-hosts <hosts>` | none | Comma-separated LAN hostnames the leaf must cover, for example `pi-stacks.local`. |
+| `--local-ca-ips <ips>` | none | Comma-separated IP addresses the leaf must cover, for example `192.168.1.20`. |
+| `--install-trust` | off | Install the local Root CA into this box's system trust store on start. Needs root. |
+| `--max-tls-contexts <n>` | `256` | Memory guard: the most SNI certificates the listener keeps live. |
+| `--verbose` | on | Verbose logging. `RPX_VERBOSE=false` turns it off. |
 
-```bash
-./rpx start
+The three local-CA flags each require `--local-ca-dir`, and `--local-ca-dir`
+requires at least one `--local-ca-hosts` entry. Break either rule and the
+command prints `Failed to start rpx gateway: <reason>` and exits with status 1.
+
+### What it prints on startup
+
+Everything below goes to stderr, so `journalctl -u <unit>` captures it. The
+gateway always prints one line naming the route count, the directory they came
+from, the port it bound and the TLS mode:
+
 ```
+[rpx gateway] 7 route(s) from /etc/rpx/sites.d; listening on :443 (https)
+```
+
+That line is the difference between a gateway that came up with no routes and
+one that never came up at all, which look identical from the outside. Three
+other lines matter:
+
+| Line | Means |
+| --- | --- |
+| `[rpx gateway] no routes found under <dir>; every request will answer 404 until a fragment is deployed` | The directory is empty or missing. Not printed when a local CA is configured, since serving that host is reason enough to run. |
+| `[rpx gateway] SKIPPING malformed fragment <file>; its host(s) will 404 until fixed: <error>` | One fragment failed to read or parse. Every other fragment still loads. |
+| `[rpx gateway] failed to start: <error>` | The listeners never bound. The error carries the stack. |
+
+### Merge rules
+
+These are the semantics of ts-cloud's generated assembler, which this command
+replaces. Fragments are read in filename order. A malformed fragment is
+reported and skipped, never dropped in silence. Routes are concatenated and
+deduped by `id` (falling back to `to` plus `path`), the first writer wins, and
+the duplicate is logged with its first owner. `onDemandTls.allowedSuffixes` are
+unioned, the first non-empty `email` wins, and the ACME directory is production
+if any fragment wants production. The last fragment naming
+`productionCerts.certsDir` wins, and `certsDirServerNames` is derived from the
+merged routes' hosts. The first `acmeChallengeWebroot` wins. The first
+origin-guard header and secret win, and hosts are unioned only from fragments
+that agree on both, so a tenant whose secret disagrees stays unguarded rather
+than rejecting all of its own traffic.
+
+### From code
+
+The same entry point is a function, and takes the flags above as options:
+
+```ts
+import { startGateway } from '@stacksjs/rpx'
+
+await startGateway({
+  sitesDir: '/etc/rpx/sites.d',
+  localCa: { dir: '/etc/rpx/local-ca', hosts: ['pi-stacks.local'], ips: ['192.168.1.20'] },
+})
+```
+
+`resolveGatewayOptions(options)` returns the merged `startProxies` options
+without starting anything, which is the way to see what a `sites.d` directory
+actually assembles into.
+
+### Known limitation on Linux
+
+The `rpx` CLI entry point currently hangs at startup on Linux. It produces no
+output and never exits, before it reaches any command, so `rpx gateway` cannot
+be used there yet. This is tracked as
+[stacksjs/rpx#2267](https://github.com/stacksjs/rpx/issues/2267).
+
+The gateway itself is not implicated. The same fragments, host routing and
+HTTP-only serving pass in process on both x64 and arm64. Until the entry point
+is fixed, run a gateway on Linux from a launcher that calls `startGateway`, as
+above, optionally compiled with `bun build --production --compile`. The
+standalone binaries attached to a release are built from the same CLI entry
+point, so confirm `rpx gateway --help` answers before depending on one.
+
+For a walkthrough of a gateway serving a home network, see
+[LAN gateway](/advanced/lan-gateway).
 
 ## Bun Plugin Configuration
 

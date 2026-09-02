@@ -34,6 +34,47 @@ startProxies({
 })
 ```
 
+### `startGateway(options)`
+
+Starts a production gateway: reads every `*.json` fragment under `sitesDir`,
+merges them, and hands the result to `startProxies`. Resolves once the
+listeners are bound, then serves until `SIGINT` or `SIGTERM`. See
+[Gateway mode](/config#gateway-mode).
+
+```ts
+import { startGateway } from '@stacksjs/rpx'
+
+await startGateway({
+  sitesDir: '/etc/rpx/sites.d',
+  localCa: { dir: '/etc/rpx/local-ca', hosts: ['pi-stacks.local'], ips: ['192.168.1.20'] },
+  maxTlsContexts: 64,
+})
+```
+
+### `resolveGatewayOptions(options)`
+
+The same merge without starting anything: returns the `startProxies` options a
+sites directory assembles into. `readGatewayFragments(sitesDir)` and
+`mergeGatewayFragments(fragments)` are the two halves it is built from.
+
+### `ensureLocalCa(config, options?)`
+
+Loads or creates the local Root CA under `config.dir`, then reuses or re-mints
+the LAN leaf covering `hosts` and `ips`. Idempotent. Returns the PEMs, the SNI
+entries, the default TLS context, the expiry, and why the leaf was re-minted.
+See [`localCa`](/config#localca).
+
+```ts
+import { ensureLocalCa } from '@stacksjs/rpx'
+
+const material = await ensureLocalCa({
+  dir: '/etc/rpx/local-ca',
+  hosts: ['pi-stacks.local'],
+  ips: ['192.168.1.20'],
+})
+// material.caCert, material.notAfter, material.renewalReason
+```
+
 ### `cleanup(options)`
 
 Cleans up resources like hosts file entries and certificates.

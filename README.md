@@ -468,6 +468,41 @@ User=root
 Restart=always
 ```
 
+### The gateway entry point
+
+`rpx gateway` serves a whole box. It reads one `<slug>.json` fragment per app
+from a sites directory, merges them into a single configuration, and serves the
+result on `:80` and `:443`, so independent deploys compose instead of
+overwriting each other:
+
+```bash
+rpx gateway --sites-dir /etc/rpx/sites.d
+```
+
+It prints its route count, source directory, port and TLS mode on startup, and
+the reason when it cannot start, so `journalctl` tells a gateway that came up
+with no routes apart from one that never came up. The same entry is
+`startGateway(options)` from the library. On Linux the CLI hangs at startup
+today ([#2267](https://github.com/stacksjs/rpx/issues/2267)), so run it there
+from a launcher that calls `startGateway`. Flags and merge rules:
+[Gateway mode](./docs/config.md#gateway-mode).
+
+### HTTPS on a LAN (local CA)
+
+A host on a private network cannot get a public certificate, because an ACME
+challenge has to reach it and nothing routes there. `localCa` runs a Root CA on
+the box, mints one leaf covering the LAN hostnames and IP addresses you name,
+and serves it per SNI name and as the listener's default context, so an
+IP-literal URL (which sends no SNI) gets it too:
+
+```bash
+rpx gateway --local-ca-dir /etc/rpx/local-ca   --local-ca-hosts pi-stacks.local --local-ca-ips 192.168.1.20 --install-trust
+```
+
+Clients trust `/etc/rpx/local-ca/rpx-root-ca.crt` once. The full walkthrough,
+Raspberry Pi included, is in
+[LAN gateway](./docs/advanced/lan-gateway.md).
+
 ## Benchmarks
 
 rpx ships a reproducible benchmark suite that pits its real request-handling hot
