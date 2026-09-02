@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.48...v0.11.49)
+
+## 🐛 Bug Fixes
+
+- **test**: wait on the clock in the gateway end-to-end test ([ead913f](https://github.com/stacksjs/rpx/commit/ead913f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.49 ([64716e5](https://github.com/stacksjs/rpx/commit/64716e5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.47...v0.11.48)
 
 ## 🐛 Bug Fixes
