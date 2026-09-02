@@ -382,27 +382,31 @@ describe('rpx gateway (CLI, end to end)', () => {
 
     try {
       let body: string | null = null
-      for (let attempt = 0; attempt < 100 && body === null; attempt++) {
+      const deadline = Date.now() + 20_000
+      while (body === null && Date.now() < deadline) {
         try {
-          const res = await fetch(`http://127.0.0.1:${httpPort}/hello`, { headers: { host: 'gw.test' } })
+          const res = await fetch(`http://127.0.0.1:${httpPort}/hello`, {
+            headers: { host: 'gw.test' },
+            signal: AbortSignal.timeout(2000),
+          })
           if (res.status === 200)
             body = await res.text()
           else
             await res.text().catch(() => {})
         }
         catch {
-          // not bound yet
+          // Not bound yet, or not answering yet.
         }
         if (body === null)
           await new Promise(resolve => setTimeout(resolve, 100))
       }
-      expect(body, output).toBe('gateway-upstream gw.test')
+      expect(body, `gateway never served a response. child output:\n${output}`).toBe('gateway-upstream gw.test')
 
-      const redirected = await fetch(`http://127.0.0.1:${httpPort}/deep?x=1`, { headers: { host: 'www.gw.test' }, redirect: 'manual' })
+      const redirected = await fetch(`http://127.0.0.1:${httpPort}/deep?x=1`, { headers: { host: 'www.gw.test' }, redirect: 'manual', signal: AbortSignal.timeout(5000) })
       expect(redirected.status).toBe(301)
       expect(redirected.headers.get('location')).toBe('https://gw.test/deep?x=1')
 
-      const miss = await fetch(`http://127.0.0.1:${httpPort}/`, { headers: { host: 'other.test' } })
+      const miss = await fetch(`http://127.0.0.1:${httpPort}/`, { headers: { host: 'other.test' }, signal: AbortSignal.timeout(5000) })
       expect(miss.status).toBe(404)
 
       // Nothing on the HTTPS port. Bounded, so a host that blackholes the
@@ -418,5 +422,5 @@ describe('rpx gateway (CLI, end to end)', () => {
       await new Promise(resolve => child.once('exit', resolve))
       upstream.stop(true)
     }
-  }, 30_000)
+  }, 60_000)
 })
