@@ -28,6 +28,7 @@ import {
   removeEntry,
   writeEntry,
 } from '../src/registry'
+import { DEFAULT_GATEWAY_CERTS_DIR, DEFAULT_GATEWAY_SITES_DIR, startGateway } from '../src/gateway'
 import { startProxies, startProxy } from '../src/start'
 import { isMultiProxyConfig } from '../src/utils'
 import { version } from '../src/version'
@@ -177,6 +178,82 @@ cli
     }
     catch (err) {
       console.error('Failed to stop all dev servers:', err)
+      process.exit(1)
+    }
+  })
+
+// ---------------------------------------------------------------------------
+// gateway: the production entry a box runs from the prebuilt binary. Merges
+// every per-app fragment under sites.d (what ts-cloud's generated assembler
+// used to do after an on-box `bun build`) and serves :80/:443.
+// ---------------------------------------------------------------------------
+
+interface GatewayCliOptions {
+  sitesDir?: string
+  certsDir?: string
+  https?: boolean
+  httpPort?: number | string
+  httpsPort?: number | string
+  localCaDir?: string
+  localCaHosts?: string
+  localCaIps?: string
+  installTrust?: boolean
+  maxTlsContexts?: number | string
+  verbose?: boolean
+}
+
+function parsePort(value: number | string | undefined): number | undefined {
+  if (value === undefined)
+    return undefined
+  const port = typeof value === 'string' ? Number.parseInt(value, 10) : value
+  if (!Number.isInteger(port) || port < 0 || port > 65535)
+    throw new Error(`invalid port: ${JSON.stringify(value)}`)
+  return port
+}
+
+function parseList(value: string | undefined): string[] {
+  return (value ?? '').split(',').map(entry => entry.trim()).filter(Boolean)
+}
+
+cli
+  .command('gateway', 'Serve every app fragment under a sites.d directory on :80/:443 (production gateway)')
+  .option('--sites-dir <path>', `Directory of per-app <slug>.json fragments (default ${DEFAULT_GATEWAY_SITES_DIR})`)
+  .option('--certs-dir <path>', `Fallback directory of real PEM certs when no fragment names one (default ${DEFAULT_GATEWAY_CERTS_DIR})`)
+  .option('--no-https', 'Serve plain HTTP on the http port only; bind nothing on the https port')
+  .option('--http-port <port>', 'Shared HTTP port: redirect + ACME http-01, or the only listener with --no-https (default 80)')
+  .option('--https-port <port>', 'Shared HTTPS port (default 443)')
+  .option('--local-ca-dir <path>', 'LAN production mode: directory for a local Root CA and its leaf (enables localCa)')
+  .option('--local-ca-hosts <hosts>', 'Comma-separated LAN hostnames the local leaf must cover (e.g. pi-stacks.local)')
+  .option('--local-ca-ips <ips>', 'Comma-separated IP addresses the local leaf must cover (e.g. 192.168.1.20)')
+  .option('--install-trust', 'Install the local Root CA into the system trust store on start (needs root)')
+  .option('--max-tls-contexts <n>', 'Memory guard: most SNI certificates kept live (default 256)')
+  .option('--verbose', 'Enable verbose logging (default on; RPX_VERBOSE=false turns it off)')
+  .example('rpx gateway --sites-dir /etc/rpx/sites.d')
+  .example('rpx gateway --sites-dir /etc/rpx/sites.d --no-https --http-port 8080')
+  .example('rpx gateway --local-ca-dir /etc/rpx/local-ca --local-ca-hosts pi-stacks.local --local-ca-ips 192.168.1.20 --install-trust')
+  .action(async (opts: GatewayCliOptions) => {
+    try {
+      const localCaHosts = parseList(opts.localCaHosts)
+      const localCaIps = parseList(opts.localCaIps)
+      if ((localCaHosts.length > 0 || localCaIps.length > 0 || opts.installTrust) && !opts.localCaDir)
+        throw new Error('--local-ca-hosts / --local-ca-ips / --install-trust need --local-ca-dir')
+      if (opts.localCaDir && localCaHosts.length === 0)
+        throw new Error('--local-ca-dir needs at least one --local-ca-hosts entry')
+      await startGateway({
+        sitesDir: opts.sitesDir ?? DEFAULT_GATEWAY_SITES_DIR,
+        certsDir: opts.certsDir,
+        https: opts.https !== false,
+        httpPort: parsePort(opts.httpPort),
+        httpsPort: parsePort(opts.httpsPort),
+        maxTlsContexts: opts.maxTlsContexts === undefined ? undefined : Number.parseInt(String(opts.maxTlsContexts), 10),
+        localCa: opts.localCaDir
+          ? { dir: opts.localCaDir, hosts: localCaHosts, ips: localCaIps, installTrust: opts.installTrust === true }
+          : undefined,
+        verbose: opts.verbose === undefined ? undefined : opts.verbose,
+      })
+    }
+    catch (err) {
+      console.error(`Failed to start rpx gateway: ${(err as Error).message}`)
       process.exit(1)
     }
   })

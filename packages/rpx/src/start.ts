@@ -28,8 +28,9 @@ import { resolveAuth } from './auth'
 import type { ResolvedAuth } from './auth'
 import { isWildcardPattern, matchesWildcard } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
-import { buildSniTlsConfig, withLowMemoryTls } from './sni'
-import type { SniTlsEntry } from './sni'
+import { buildListenerTls, buildSniTlsConfig, withLowMemoryTls } from './sni'
+import type { DefaultTlsContext, SniTlsEntry } from './sni'
+import { ensureLocalCa, resolveLocalCaConfig } from './local-ca'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { resolveStaticRoute } from './static-files'
 import { debugLog, getSudoPassword, safeStringify, shouldReusePort } from './utils'
@@ -538,8 +539,8 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   debugLog('setup', `Setting up reverse proxy: ${safeStringify(options)}`, options.verbose)
 
   const { from, originalFrom, to, sourceUrl, ssl, verbose, cleanup: cleanupOptions, vitePluginUsage, changeOrigin, cleanUrls } = options
-  const httpPort = 80
-  const httpsPort = 443
+  const httpPort = options.httpPort ?? 80
+  const httpsPort = options.httpsPort ?? 443
   const hostname = bindHostname()
   // Use the global port manager if not provided
   const portManager = options.portManager || globalPortManager
@@ -584,7 +585,7 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
       const isHttpPortBusy = await isPortInUse(httpPort, hostname, verbose)
       if (!isHttpPortBusy) {
         debugLog('setup', 'Starting HTTP redirect server', verbose)
-        startHttpRedirectServer(verbose)
+        startHttpRedirectServer(verbose, httpPort, httpsPort)
         portManager.usedPorts.add(httpPort)
       }
       else {
@@ -865,6 +866,16 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   }
 
   const verbose = getVerbose(mergedOptions)
+  // `https: false` is a first-class shared-mode setting: plain HTTP on
+  // `httpPort` only, nothing bound on the HTTPS port, and no cert work at all,
+  // even when `productionCerts` / `localCa` are also configured (a gateway
+  // started with `--no-https` must not quietly come up on :443).
+  const httpsDisabled = mergedOptions.https === false
+  // Config validation before anything binds or spawns: a host claimed by both
+  // the local CA and a public on-demand set is a contradiction, not a runtime
+  // surprise three requests later.
+  if (mergedOptions.localCa)
+    resolveLocalCaConfig(mergedOptions.localCa, mergedOptions.onDemandTls)
   // Master switch for /etc/hosts management. `hostsManagement: false` (real
   // server with real DNS) or `cleanup: { hosts: false }` disables all hosts
   // reads/writes. Defaults to enabled for backward compatibility.
@@ -1007,8 +1018,12 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   }
 
   let productionTlsConfig: SniTlsEntry[] = []
+  // The cert presented when a client sends no SNI (IP-literal URL) or an
+  // unknown name. Only the LAN local-CA leaf sets one; Bun otherwise falls
+  // back to the first SNI entry.
+  let defaultTls: DefaultTlsContext | null = null
 
-  if (mergedOptions.productionCerts) {
+  if (mergedOptions.productionCerts && !httpsDisabled) {
     productionTlsConfig = await buildSniTlsConfig(mergedOptions.productionCerts, verbose)
     if (productionTlsConfig.length > 0) {
       debugLog(
@@ -1017,6 +1032,23 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
         verbose,
       )
     }
+  }
+
+  // LAN production mode: one local-CA leaf for `localCa.hosts` / `.ips`, served
+  // per SNI name and as the default context. It goes FIRST in the SNI set so
+  // the memory cap (`maxTlsContexts`) can never drop it, and it seeds the
+  // on-demand manager below so a `.local` host is "already covered" and no
+  // ACME order is ever attempted for it.
+  if (mergedOptions.localCa && !httpsDisabled) {
+    const local = await ensureLocalCa(mergedOptions.localCa, { verbose, onDemandTls: mergedOptions.onDemandTls })
+    const localHosts = new Set(local.entries.map(entry => entry.serverName))
+    productionTlsConfig = [...local.entries, ...productionTlsConfig.filter(entry => !localHosts.has(entry.serverName))]
+    defaultTls = local.defaultTls
+    debugLog(
+      'ssl',
+      `Local CA: ${local.leafMinted ? `minted leaf (${local.renewalReason})` : 'reusing leaf'} for ${[...localHosts].join(', ')}; valid until ${local.notAfter.toISOString()}`,
+      verbose,
+    )
   }
 
   // Resolve SSL configuration if HTTPS is enabled and no production SNI set was
@@ -1067,9 +1099,11 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
   // Extract domains for cleanup
   const domains = proxyOptions.map((opt: ProxyOption) => opt.to || 'rpx.localhost')
-  const sslConfig: SharedTlsConfig | null = productionTlsConfig.length > 0
-    ? productionTlsConfig
-    : (mergedOptions._cachedSSLConfig ?? null)
+  const sslConfig: SharedTlsConfig | null = httpsDisabled
+    ? null
+    : productionTlsConfig.length > 0
+      ? productionTlsConfig
+      : (mergedOptions._cachedSSLConfig ?? null)
 
   // Start DNS server for custom domains on macOS (any domain that's not localhost/127.0.0.1)
   const customDomains = domains.filter((d: string) =>
@@ -1171,7 +1205,13 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
   // (stacksjs/status#1 Phase 9) where `uptime-status.org`'s real Let's Encrypt
   // cert was ignored until this forced the shared path for its single route.
   const useSharedHttps = !!sslConfig && (proxyOptions.length > 1 || singlePortMode || productionTlsConfig.length > 0)
-  const useSharedHttp = !sslConfig && singlePortMode && proxyOptions.length > 0
+  // Plain HTTP shares one listener on `httpPort` for the same cases HTTPS
+  // shares `:443` (several proxies) plus explicit single-port mode. Before,
+  // `https: false` with several proxies bound :80 for the first and :1080,
+  // :1081, ... for the rest, so a `--no-https` gateway put every site on a
+  // different port. The lone-proxy default keeps its per-proxy listener.
+  const useSharedHttp = !sslConfig && proxyOptions.length > 0 && (singlePortMode || proxyOptions.length > 1)
+  const maxTlsContexts = mergedOptions.maxTlsContexts
 
   if (useSharedHttps && sslConfig) {
     debugLog('proxies', `Creating shared HTTPS server for ${proxyOptions.length} domains on port ${httpsPort}`, verbose)
@@ -1232,7 +1272,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           }
           let rebound = false
           for (let attempt = 0; !rebound && attempt < 60; attempt++) {
-            const s = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig: target, originGuard, verbose })
+            const s = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig: target, defaultTls, maxTlsContexts, originGuard, verbose })
             if (s) {
               sharedServer = s
               rebound = true
@@ -1273,7 +1313,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     // adopted certs from `certsDir` beyond the initial production set); until
     // it holds anything, serve the pre-on-demand TLS config as-is.
     const initialTls = onDemand && onDemand.sniEntries().length > 0 ? onDemand.sniEntries() : sslConfig
-    sharedServer = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig: initialTls, originGuard, verbose })
+    sharedServer = createSharedProxyServer({ routeEntries, listenPort: httpsPort, sslConfig: initialTls, defaultTls, maxTlsContexts, originGuard, verbose })
     if (!sharedServer) {
       log.error(`Shared HTTPS proxy failed to bind :${httpsPort}; not exiting`)
       return
@@ -1319,6 +1359,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
           auth: option.auth,
           path: option.path,
           pathRewrites: option.pathRewrites,
+          httpPort: mergedOptions.httpPort,
+          httpsPort: mergedOptions.httpsPort,
         })
       }
       catch (err) {
@@ -1467,10 +1509,17 @@ export function createSharedProxyServer(opts: {
   routeEntries: Array<{ host: string, path?: string, route: ProxyRoute }>
   listenPort: number
   sslConfig: SharedTlsConfig | null
+  /**
+   * Cert for connections with no SNI / an unknown SNI name (only meaningful
+   * with an SNI array `sslConfig`). Becomes the first `tls[]` entry.
+   */
+  defaultTls?: DefaultTlsContext | null
+  /** Memory guard for the SNI array; see `SharedProxyConfig.maxTlsContexts`. */
+  maxTlsContexts?: number
   originGuard: ReturnType<typeof createOriginGuard> | null
   verbose: boolean
 }): ReturnType<typeof Bun.serve> | null {
-  const { routeEntries, listenPort, sslConfig, originGuard, verbose } = opts
+  const { routeEntries, listenPort, sslConfig, defaultTls, maxTlsContexts, originGuard, verbose } = opts
   const routingTable = buildHostRoutes(routeEntries)
   const baseFetchHandler = createProxyFetchHandler(
     (host, pathname) => matchHostRoute(routingTable, host, pathname),
@@ -1497,13 +1546,9 @@ export function createSharedProxyServer(opts: {
       reusePort: shouldReusePort(),
       ...(sslConfig
         ? {
-            tls: withLowMemoryTls(Array.isArray(sslConfig)
-              ? sslConfig.map(entry => ({
-                  serverName: entry.serverName,
-                  key: entry.key,
-                  cert: entry.cert,
-                }))
-              : {
+            tls: Array.isArray(sslConfig)
+              ? buildListenerTls({ sni: sslConfig, defaultTls, maxTlsContexts, verbose })
+              : withLowMemoryTls({
                   key: sslConfig.key,
                   cert: sslConfig.cert,
                   ca: sslConfig.ca,

@@ -16,7 +16,8 @@
  * paths are reachable without touching `~/.stacks/rpx` or :443.
  */
 /* eslint-disable no-console */
-import type { OnDemandSitesConfig, OnDemandTlsConfig, ProductionTlsConfig, ProxyOptions, SSLConfig, TlsOption } from './types'
+import type { LocalCaConfig, OnDemandSitesConfig, OnDemandTlsConfig, ProductionTlsConfig, ProxyOptions, SSLConfig, TlsOption } from './types'
+import type { DefaultTlsContext } from './sni'
 import type { OnNoRoute, ProxyRoute, ProxyServer as ProxyServerLike } from './proxy-handler'
 import { spawn as nodeSpawn } from 'node:child_process'
 import * as fsp from 'node:fs/promises'
@@ -39,7 +40,8 @@ import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-ha
 import { readAcmeChallenge } from './acme-challenge'
 import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
-import { buildSniTlsConfig, withLowMemoryTls } from './sni'
+import { buildListenerTls, buildSniTlsConfig, capTlsContexts, withLowMemoryTls } from './sni'
+import { ensureLocalCa, resolveLocalCaConfig } from './local-ca'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { createSiteResolver } from './site-resolver'
 import { SiteSupervisor } from './site-supervisor'
@@ -69,8 +71,13 @@ export interface DaemonOptions {
   httpPort?: number
   /** Listener bind address. Defaults to `0.0.0.0`. */
   hostname?: string
-  /** TLS bootstrap options forwarded to httpsConfig. */
-  https?: TlsOption
+  /**
+   * TLS bootstrap options forwarded to httpsConfig. `false` runs the daemon as
+   * a plain-HTTP gateway: the proxy handler is served on `httpPort` and nothing
+   * is bound on `httpsPort` (no redirect, no cert bootstrap, no on-demand
+   * ACME). Not available with `workers > 1`.
+   */
+  https?: boolean | TlsOption
   /**
    * Production per-domain SNI certs (real PEMs on disk). When usable certs are
    * found, the listener serves them per SNI server name instead of the dev
@@ -83,6 +90,14 @@ export interface DaemonOptions {
    * Seeded with the `productionCerts`/`certsDir` certs already on disk.
    */
   onDemandTls?: OnDemandTlsConfig
+  /**
+   * LAN production mode: a local Root CA under `dir` signs one leaf for the
+   * given hosts / IPs, served per SNI name and as the default TLS context.
+   * See {@link LocalCaConfig}.
+   */
+  localCa?: LocalCaConfig
+  /** Memory guard on the live SNI set; see `SharedProxyConfig.maxTlsContexts`. */
+  maxTlsContexts?: number
   /**
    * On-demand sites: lazily boot a project's dev server the first time its host
    * is visited and proxy to it (Valet/puma-dev style). Opt-in via `enabled`.
@@ -527,6 +542,11 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   const registryDir = opts.registryDir ?? path.join(rpxDir, 'registry.d')
   const httpsPort = opts.httpsPort ?? 443
   const httpPort = opts.httpPort ?? 80
+  // `https: false`: plain HTTP on `httpPort`, nothing on `httpsPort`.
+  const plainHttp = opts.https === false
+  // Config validation before the lock, the ports, or any cert work.
+  if (opts.localCa)
+    resolveLocalCaConfig(opts.localCa, opts.onDemandTls)
   /*
    * Dual-stack by default.
    *
@@ -561,7 +581,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   // Privileged ports need root. If we were launched unprivileged (the usual
   // `./buddy dev` case), re-exec through sudo and hand off to the elevated
   // copy — it becomes the real daemon. Tests inject high ports and so skip this.
-  const needsPrivilegedPort = (httpsPort > 0 && httpsPort < 1024) || (httpPort > 0 && httpPort < 1024)
+  const needsPrivilegedPort = (!plainHttp && httpsPort > 0 && httpsPort < 1024) || (httpPort > 0 && httpPort < 1024)
   const alreadyRoot = typeof process.getuid === 'function' && process.getuid() === 0
   if (process.platform !== 'win32' && needsPrivilegedPort && !alreadyRoot)
     return elevateDaemonToRoot(rpxDir, httpsPort, httpPort, verbose)
@@ -569,6 +589,8 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   // Cluster coordinator: owns the singletons and spawns N workers that bind :443.
   const workers = Math.max(1, opts.workers ?? (Number.parseInt(process.env.RPX_WORKERS ?? '', 10) || 1))
   if (workers > 1) {
+    if (plainHttp)
+      throw new Error('rpx daemon: https: false is not supported with workers > 1 (the cluster shares the HTTPS port only); run a single process')
     if (opts.onDemandSites?.enabled)
       log.warn('rpx: on-demand sites are not supported in cluster mode (workers > 1); ignoring')
     return runDaemonCoordinator(opts, { rpxDir, registryDir, httpsPort, httpPort, hostname, verbose, gcIntervalMs, workers })
@@ -618,10 +640,22 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   // by server name on the one listener. Falls back to the dev shared cert when
   // no usable production certs are configured.
   let sniTls: Array<{ serverName: string, cert: string, key: string }> = []
-  if (opts.productionCerts) {
+  if (opts.productionCerts && !plainHttp) {
     sniTls = await buildSniTlsConfig(opts.productionCerts, verbose)
     if (verbose && sniTls.length > 0)
       log.info(`SNI: serving ${sniTls.length} real cert(s): ${sniTls.map(e => e.serverName).join(', ')}`)
+  }
+  // LAN production mode: the local-CA leaf goes first in the SNI set (so the
+  // memory cap can never drop it) and doubles as the default context for
+  // connections that send no SNI (an IP-literal URL).
+  let defaultTls: DefaultTlsContext | null = null
+  if (opts.localCa && !plainHttp) {
+    const local = await ensureLocalCa(opts.localCa, { verbose, onDemandTls: opts.onDemandTls })
+    const localHosts = new Set(local.entries.map(e => e.serverName))
+    sniTls = [...local.entries, ...sniTls.filter(e => !localHosts.has(e.serverName))]
+    defaultTls = local.defaultTls
+    if (verbose)
+      log.info(`Local CA: ${local.leafMinted ? `minted leaf (${local.renewalReason})` : 'reusing leaf'} for ${[...localHosts].join(', ')}; valid until ${local.notAfter.toISOString()}`)
   }
 
   // On-demand sites (opt-in): when a request finds no live route, resolve the
@@ -669,14 +703,14 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   // Bootstrap the dev shared cert once when there's no real SNI set, so a single
   // SNI listener with on-demand can still answer hosts that aren't covered yet.
   let devSslConfig: SSLConfig | null = null
-  if (sniTls.length === 0)
+  if (!plainHttp && sniTls.length === 0)
     devSslConfig = await bootstrapTls(opts, registryDir)
 
   // On-demand TLS manager (opt-in). Holds the live SNI set; lazily issues real
   // certs for approved unknown hosts via ACME http-01 served from our :80
   // listener (Bun can't issue at handshake time — see on-demand.ts header).
   const onDemandCfg = opts.onDemandTls
-  const onDemand: OnDemandCertManager | null = onDemandCfg?.enabled
+  const onDemand: OnDemandCertManager | null = onDemandCfg?.enabled && !plainHttp
     ? new OnDemandCertManager({
         config: onDemandCfg,
         certsDir: onDemandCfg.certsDir ?? opts.productionCerts?.certsDir ?? path.join(rpxDir, 'on-demand-certs'),
@@ -699,7 +733,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   /** Build the TLS option for Bun.serve from the current SNI set (or dev cert). */
   function tlsFor(entries: Array<{ serverName: string, cert: string, key: string }>): Bun.TLSOptions | Bun.TLSOptions[] {
     if (entries.length > 0)
-      return withLowMemoryTls(entries.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key })))
+      return buildListenerTls({ sni: entries, defaultTls, maxTlsContexts: opts.maxTlsContexts, verbose })
     // No real certs: fall back to the dev self-signed shared cert.
     return withLowMemoryTls({
       key: devSslConfig!.key,
@@ -761,11 +795,13 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     return devSslToSniEntries([...registryHostsForTls(entries), ...onDemandCertHosts, 'rpx.localhost'], devSslConfig)
   }
 
-  let httpsServer = serveHttps(
-    onDemand
-      ? onDemand.sniEntries()
-      : (sniTls.length > 0 ? sniTls : devTlsEntries(initialEntries)),
-  )
+  let httpsServer: ReturnType<typeof Bun.serve> | null = plainHttp
+    ? null
+    : serveHttps(
+        onDemand
+          ? onDemand.sniEntries()
+          : (sniTls.length > 0 ? sniTls : devTlsEntries(initialEntries)),
+      )
 
   /**
    * Bun has no working SNICallback and `server.reload({ tls })` does not update
@@ -783,7 +819,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   let rebuilding = false
 
   async function rebuildTls(entries: Array<{ serverName: string, cert: string, key: string }>): Promise<void> {
-    if (stopped)
+    if (stopped || plainHttp)
       return
     rebuildLatest = entries // newest desired SNI set
     if (rebuilding)
@@ -794,7 +830,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
         const target = rebuildLatest
         rebuildLatest = null
         debugLog('daemon', `rebuilding :443 with ${target.length} SNI cert(s)`, verbose)
-        httpsServer.stop(false)
+        httpsServer?.stop(false)
         let lastErr: unknown
         let rebound = false
         // A slow OS port release must not permanently unbind :443. Retry with
@@ -827,7 +863,24 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   }
 
   let httpServer: ReturnType<typeof Bun.serve> | null = null
-  if (httpPort > 0) {
+  if (plainHttp) {
+    // Plain-HTTP gateway: the proxy handler itself answers on `httpPort` (0 =
+    // an ephemeral port, reported through the handle). No redirect, no :443.
+    httpServer = serveDualStack({
+      port: httpPort,
+      hostname,
+      reusePort: shouldReusePort(),
+      fetch(req: Request, server: unknown) {
+        return fetchHandler(req, server as ProxyServerLike)
+      },
+      websocket: wsHandler,
+      error(err: Error) {
+        debugLog('daemon', `http server error: ${err}`, verbose)
+        return new Response(`Server Error: ${err.message}`, { status: 500 })
+      },
+    })
+  }
+  else if (httpPort > 0) {
     httpServer = serveDualStack({
       port: httpPort,
       hostname,
@@ -841,7 +894,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   }
 
   if (verbose) {
-    log.success(`rpx daemon listening on https://${hostname}:${httpsPort}${httpServer ? ` (http→https on :${httpPort})` : ''}`)
+    if (plainHttp)
+      log.success(`rpx daemon listening on http://${hostname}:${httpServer?.port ?? httpPort} (https disabled)`)
+    else
+      log.success(`rpx daemon listening on https://${hostname}:${httpsPort}${httpServer ? ` (http→https on :${httpPort})` : ''}`)
     log.info(`pid file: ${pidPath}`)
     log.info(`registry: ${registryDir}`)
   }
@@ -933,7 +989,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       debugLog('daemon', `site supervisor stopAll failed: ${err}`, verbose)
     })
     // `stop(false)` lets in-flight requests drain before closing the listener.
-    httpsServer.stop(false)
+    httpsServer?.stop(false)
     httpServer?.stop(false)
     await tearDownDevelopmentDns({ rpxDir, verbose }).catch((err) => {
       debugLog('daemon', `DNS teardown failed: ${err}`, verbose)
@@ -956,7 +1012,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   return {
     stop,
     done,
-    httpsPort: typeof httpsServer.port === 'number' ? httpsServer.port : httpsPort,
+    httpsPort: httpsServer && typeof httpsServer.port === 'number' ? httpsServer.port : (plainHttp ? 0 : httpsPort),
     httpPort: httpServer && typeof httpServer.port === 'number' ? httpServer.port : httpPort,
     pidPath,
     ensureCert: (host: string) => (onDemand ? onDemand.ensureCert(host) : Promise.resolve(false)),
@@ -981,7 +1037,12 @@ interface CoordinatorCtx extends WorkerCtx {
 }
 
 type SniEntry = { serverName: string, cert: string, key: string }
-interface ClusterSni { sni: SniEntry[], dev: { key: string, cert: string, ca?: string } | null }
+interface ClusterSni {
+  sni: SniEntry[]
+  dev: { key: string, cert: string, ca?: string } | null
+  /** Default (no-SNI) context, e.g. the local-CA leaf. Absent in older files. */
+  defaultTls?: DefaultTlsContext | null
+}
 
 /** Path of the file the coordinator publishes the live SNI set to for workers. */
 function clusterSniPath(rpxDir: string): string {
@@ -989,10 +1050,10 @@ function clusterSniPath(rpxDir: string): string {
 }
 
 /** Atomically publish the current cert material so a worker never reads a partial file. */
-async function writeClusterSni(rpxDir: string, sni: SniEntry[], dev: ClusterSni['dev']): Promise<void> {
+async function writeClusterSni(rpxDir: string, sni: SniEntry[], dev: ClusterSni['dev'], defaultTls: DefaultTlsContext | null = null): Promise<void> {
   const target = clusterSniPath(rpxDir)
   const tmp = `${target}.${process.pid}.tmp`
-  await fsp.writeFile(tmp, JSON.stringify({ sni, dev } satisfies ClusterSni), 'utf8')
+  await fsp.writeFile(tmp, JSON.stringify({ sni, dev, defaultTls } satisfies ClusterSni), 'utf8')
   await fsp.rename(tmp, target)
 }
 
@@ -1007,8 +1068,9 @@ async function readClusterSni(rpxDir: string): Promise<ClusterSni> {
 
 /** Build the Bun.serve `tls` option from a published SNI set (or the dev fallback). */
 function clusterTlsFor(cfg: ClusterSni): Bun.TLSOptions | Bun.TLSOptions[] | undefined {
+  // The coordinator already applied `maxTlsContexts` before publishing.
   if (cfg.sni.length > 0)
-    return withLowMemoryTls(cfg.sni.map(e => ({ serverName: e.serverName, cert: e.cert, key: e.key })))
+    return buildListenerTls({ sni: cfg.sni, defaultTls: cfg.defaultTls ?? null })
   if (cfg.dev)
     return withLowMemoryTls({ key: cfg.dev.key, cert: cfg.dev.cert, ca: cfg.dev.ca, requestCert: false, rejectUnauthorized: false })
   return undefined // no certs published yet; handshakes fail until the first SIGHUP reload
@@ -1161,6 +1223,13 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
   let sniTls: SniEntry[] = []
   if (opts.productionCerts)
     sniTls = await buildSniTlsConfig(opts.productionCerts, verbose)
+  let defaultTls: DefaultTlsContext | null = null
+  if (opts.localCa) {
+    const local = await ensureLocalCa(opts.localCa, { verbose, onDemandTls: opts.onDemandTls })
+    const localHosts = new Set(local.entries.map(e => e.serverName))
+    sniTls = [...local.entries, ...sniTls.filter(e => !localHosts.has(e.serverName))]
+    defaultTls = local.defaultTls
+  }
   let devSslConfig: SSLConfig | null = null
   if (sniTls.length === 0)
     devSslConfig = await bootstrapTls(opts, registryDir)
@@ -1176,9 +1245,9 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
       catch { /* already gone */ }
     }
   }
-  /** Republish certs then tell workers to reload. */
+  /** Republish certs (capped at `maxTlsContexts`) then tell workers to reload. */
   async function publishSni(entries: SniEntry[]): Promise<void> {
-    await writeClusterSni(rpxDir, entries, dev)
+    await writeClusterSni(rpxDir, capTlsContexts(entries, opts.maxTlsContexts, verbose), dev, defaultTls)
     signalWorkers('SIGHUP')
   }
 
@@ -1203,7 +1272,7 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
       })
     : null
 
-  await writeClusterSni(rpxDir, onDemand ? onDemand.sniEntries() : sniTls, dev)
+  await writeClusterSni(rpxDir, capTlsContexts(onDemand ? onDemand.sniEntries() : sniTls, opts.maxTlsContexts, verbose), dev, defaultTls)
 
   // DNS + hosts + registry GC (workers handle routing themselves).
   const initialEntries = await readAll(registryDir, verbose)

@@ -1,8 +1,9 @@
 import type { ProxyOption } from '../src/types'
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, it, spyOn } from 'bun:test'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import * as Start from '../src/start'
 import { collectRouteEntries, createSharedProxyServer } from '../src/start'
 
 type Server = ReturnType<typeof Bun.serve>
@@ -189,6 +190,148 @@ describe('single-port mode', () => {
     finally {
       server!.stop(true)
       await rm(root, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * `https: false` as a first-class shared-mode option: a gateway started
+ * without TLS must come up on `httpPort` ONLY. Before, `useSharedHttp` also
+ * required `singlePortMode`, so `https: false` with several proxies bound :80
+ * for the first proxy and :1080, :1081, ... for the rest, and a `productionCerts`
+ * directory with PEMs on disk silently turned the listener back into HTTPS.
+ */
+describe('https: false in shared mode', () => {
+  let up: Server
+  let tmp: string | undefined
+
+  beforeAll(() => {
+    // rpx rewrites Host to the upstream and carries the original in
+    // X-Forwarded-Host, so echo that to prove Host-header routing.
+    up = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: req => new Response(`plain:${req.headers.get('x-forwarded-host')}`) })
+  })
+
+  afterAll(() => {
+    up.stop(true)
+  })
+
+  afterEach(async () => {
+    if (tmp)
+      await rm(tmp, { recursive: true, force: true })
+    tmp = undefined
+  })
+
+  function twoProxies(): ProxyOption[] {
+    return [
+      { from: `127.0.0.1:${up.port}`, to: 'one.example.com', cleanUrls: false },
+      { from: `127.0.0.1:${up.port}`, to: 'two.example.com', cleanUrls: false },
+    ]
+  }
+
+  it('binds one plain-HTTP listener on httpPort and nothing on the HTTPS port', async () => {
+    // Pass-through spy: records the call AND performs the real bind, so the
+    // listener the gateway actually created can be exercised and stopped.
+    const createSharedSpy = spyOn(Start, 'createSharedProxyServer')
+    const redirectSpy = spyOn(Start, 'startHttpRedirectServer').mockImplementation(() => {})
+    const startServerSpy = spyOn(Start, 'startServer').mockImplementation(async () => {})
+    // Another file may have spied the same export without restoring, in which
+    // case spyOn hands back that spy with its history; start from zero.
+    createSharedSpy.mockClear()
+    redirectSpy.mockClear()
+    startServerSpy.mockClear()
+    try {
+      await Start.startProxies({
+        proxies: twoProxies(),
+        https: false,
+        httpPort: 0, // ephemeral: proves the configured httpPort is the one bound
+        httpsPort: 47443,
+        cleanup: false,
+        vitePluginUsage: false,
+        verbose: false,
+        cleanUrls: false,
+      } as any)
+
+      expect(createSharedSpy).toHaveBeenCalledTimes(1)
+      const [opts] = createSharedSpy.mock.calls[0] as [{ listenPort: number, sslConfig: unknown }]
+      expect(opts.listenPort).toBe(0)
+      expect(opts.sslConfig).toBeNull()
+      // No HTTP to HTTPS redirect server and no per-proxy listeners.
+      expect(redirectSpy).not.toHaveBeenCalled()
+      expect(startServerSpy).not.toHaveBeenCalled()
+
+      const server = createSharedSpy.mock.results[0]!.value as Server
+      try {
+        const res = await fetch(`http://127.0.0.1:${server.port}/`, { headers: { host: 'two.example.com' } })
+        expect(res.status).toBe(200)
+        expect(await res.text()).toBe('plain:two.example.com')
+        // Nothing listens on the HTTPS port.
+        await expect(fetch('https://127.0.0.1:47443/', { tls: { rejectUnauthorized: false } })).rejects.toThrow()
+      }
+      finally {
+        server.stop(true)
+      }
+    }
+    finally {
+      createSharedSpy.mockRestore()
+      redirectSpy.mockRestore()
+      startServerSpy.mockRestore()
+    }
+  })
+
+  it('stays plain HTTP even when productionCerts has real PEMs on disk', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'rpx-https-false-certs-'))
+    Bun.spawnSync(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-keyout', join(tmp, 'one.example.com.key'), '-out', join(tmp, 'one.example.com.crt'), '-days', '1', '-nodes', '-subj', '/CN=one.example.com'])
+
+    const createSharedSpy = spyOn(Start, 'createSharedProxyServer').mockImplementation(() => null)
+    const redirectSpy = spyOn(Start, 'startHttpRedirectServer').mockImplementation(() => {})
+    createSharedSpy.mockClear()
+    redirectSpy.mockClear()
+    try {
+      await Start.startProxies({
+        proxies: twoProxies(),
+        https: false,
+        httpPort: 47081,
+        httpsPort: 47444,
+        productionCerts: { certsDir: tmp },
+        onDemandTls: { enabled: true, allowedSuffixes: ['example.com'] },
+        cleanup: false,
+        vitePluginUsage: false,
+        verbose: false,
+        cleanUrls: false,
+      } as any)
+
+      expect(createSharedSpy).toHaveBeenCalledTimes(1)
+      const [opts] = createSharedSpy.mock.calls[0] as [{ listenPort: number, sslConfig: unknown }]
+      expect(opts.listenPort).toBe(47081)
+      expect(opts.sslConfig).toBeNull()
+      expect(redirectSpy).not.toHaveBeenCalled()
+    }
+    finally {
+      createSharedSpy.mockRestore()
+      redirectSpy.mockRestore()
+    }
+  })
+
+  it('keeps a lone proxy on its own listener unless singlePortMode is set', async () => {
+    const createSharedSpy = spyOn(Start, 'createSharedProxyServer').mockImplementation(() => null)
+    const startServerSpy = spyOn(Start, 'startServer').mockImplementation(async () => {})
+    createSharedSpy.mockClear()
+    startServerSpy.mockClear()
+    try {
+      const lone = [{ from: `127.0.0.1:${up.port}`, to: 'lone.example.com', cleanUrls: false }]
+      await Start.startProxies({ proxies: lone, https: false, httpPort: 47082, cleanup: false, vitePluginUsage: false, verbose: false, cleanUrls: false } as any)
+      expect(createSharedSpy).not.toHaveBeenCalled()
+      expect(startServerSpy).toHaveBeenCalledTimes(1)
+      // The configured port reaches the per-proxy path too.
+      expect((startServerSpy.mock.calls[0][0] as { httpPort?: number }).httpPort).toBe(47082)
+
+      await Start.startProxies({ proxies: lone, https: false, singlePortMode: true, httpPort: 47083, cleanup: false, vitePluginUsage: false, verbose: false, cleanUrls: false } as any)
+      expect(createSharedSpy).toHaveBeenCalledTimes(1)
+      expect((createSharedSpy.mock.calls[0][0] as { listenPort: number }).listenPort).toBe(47083)
+    }
+    finally {
+      createSharedSpy.mockRestore()
+      startServerSpy.mockRestore()
     }
   })
 })

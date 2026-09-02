@@ -26,6 +26,7 @@ export {
   cleanupCertificates,
   clearSslConfigCache,
   devSslToSniEntries,
+  ensureRootCA,
   forceTrustCertificate,
   generateCertificate,
   getRootCAPaths,
@@ -168,8 +169,33 @@ export {
 } from './static-files'
 export type { ResolvedStaticRoute, StaticResolution } from './static-files'
 
-export { buildSniTlsConfig, serverNameFromCertFilename } from './sni'
-export type { SniTlsEntry } from './sni'
+export { buildListenerTls, buildSniTlsConfig, capTlsContexts, DEFAULT_MAX_TLS_CONTEXTS, serverNameFromCertFilename, withLowMemoryTls } from './sni'
+export type { DefaultTlsContext, SniTlsEntry } from './sni'
+
+export {
+  DEFAULT_LOCAL_CA_RENEW_BEFORE_DAYS,
+  DEFAULT_LOCAL_CA_VALIDITY_DAYS,
+  ensureLocalCa,
+  installLocalCaTrust,
+  leafRenewalReason,
+  LOCAL_CA_COMMON_NAME,
+  LOCAL_CA_LEAF_CERT_FILENAME,
+  LOCAL_CA_LEAF_KEY_FILENAME,
+  localCaPaths,
+  parseSanNames,
+  resolveLocalCaConfig,
+} from './local-ca'
+export type { EnsureLocalCaOptions, LocalCaMaterial, LocalCaPaths, ResolvedLocalCaConfig } from './local-ca'
+
+export {
+  DEFAULT_GATEWAY_CERTS_DIR,
+  DEFAULT_GATEWAY_SITES_DIR,
+  mergeGatewayFragments,
+  readGatewayFragments,
+  resolveGatewayOptions,
+  startGateway,
+} from './gateway'
+export type { GatewayFragment, GatewayFragmentFile, GatewayOptions, GatewayRoute, MergeGatewayOptions } from './gateway'
 
 export { isLikelyHostname, matchesAllowedSuffix, OnDemandCertManager } from './on-demand'
 export type { CertIssuer, OnDemandCertManagerOptions } from './on-demand'

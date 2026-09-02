@@ -9,6 +9,7 @@
 import type { DomainCert, ProductionTlsConfig } from './types'
 import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
+import { log } from './logger'
 import { debugLog } from './utils'
 
 /** One entry of the Bun.serve `tls` array. */
@@ -16,6 +17,63 @@ export interface SniTlsEntry {
   serverName: string
   cert: string
   key: string
+}
+
+/**
+ * The cert a listener presents when the client sends no SNI at all (an
+ * IP-literal URL such as `https://192.168.1.20/`) or an SNI name no entry
+ * matches. Bun has no separate "default context" knob: the FIRST element of
+ * the `tls` array is the default, and it is the only element allowed to omit
+ * `serverName` (verified on Bun 1.3.14: an unnamed entry anywhere but first
+ * throws "SNI tls object must have a serverName"). See {@link buildListenerTls}.
+ */
+export interface DefaultTlsContext {
+  cert: string
+  key: string
+}
+
+/**
+ * Default for {@link import('./types').SharedProxyConfig.maxTlsContexts}. A
+ * parsed cert + key per SNI entry lives for the life of the listener; 256 is
+ * far beyond any one box's routed hosts while staying small on a 4 GB Pi.
+ */
+export const DEFAULT_MAX_TLS_CONTEXTS = 256
+
+/**
+ * Memory guard: cap the live SNI set at `max` entries. Keeps the FIRST `max`
+ * (callers order the set so the hosts that matter most, e.g. a LAN local-CA
+ * leaf, come first) and logs ONE warning naming every dropped host, so a
+ * silently missing cert is never a mystery. Returns the input untouched when
+ * it fits.
+ */
+export function capTlsContexts(entries: SniTlsEntry[], max: number = DEFAULT_MAX_TLS_CONTEXTS, verbose?: boolean): SniTlsEntry[] {
+  const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : DEFAULT_MAX_TLS_CONTEXTS
+  if (entries.length <= limit)
+    return entries
+  const kept = entries.slice(0, limit)
+  const dropped = entries.slice(limit).map(entry => entry.serverName)
+  log.warn(`rpx: ${entries.length} TLS contexts exceed maxTlsContexts=${limit}; keeping the first ${limit} and dropping ${dropped.length} host(s): ${dropped.join(', ')}`)
+  debugLog('sni', `capped SNI set to ${limit} of ${entries.length}`, verbose)
+  return kept
+}
+
+/**
+ * Assemble the `Bun.serve({ tls })` array for a shared listener: the optional
+ * default context first (no `serverName`), then the SNI entries capped at
+ * `maxTlsContexts`, every entry in low-memory mode.
+ */
+export function buildListenerTls(opts: {
+  sni: SniTlsEntry[]
+  defaultTls?: DefaultTlsContext | null
+  maxTlsContexts?: number
+  verbose?: boolean
+}): Bun.TLSOptions[] {
+  const capped = capTlsContexts(opts.sni, opts.maxTlsContexts, opts.verbose)
+  const named: Bun.TLSOptions[] = capped.map(entry => ({ serverName: entry.serverName, cert: entry.cert, key: entry.key }))
+  const list: Bun.TLSOptions[] = opts.defaultTls
+    ? [{ cert: opts.defaultTls.cert, key: opts.defaultTls.key }, ...named]
+    : named
+  return withLowMemoryTls(list)
 }
 
 /**

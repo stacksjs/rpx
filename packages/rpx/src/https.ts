@@ -1,3 +1,4 @@
+import type { CAOptions } from '@stacksjs/tlsx'
 import type { ProxyConfigs, ProxyOption, ProxyOptions, SingleProxyConfig, SSLConfig, TlsConfig } from './types'
 import { execSync } from 'node:child_process'
 import fs from 'node:fs/promises'
@@ -146,6 +147,41 @@ async function loadRootCA(paths: RootCAPaths, verbose?: boolean): Promise<{ cert
     debugLog('ssl', `No existing Root CA at ${paths.caCertPath} (${(err as NodeJS.ErrnoException).code || err}), will create one`, verbose)
     return null
   }
+}
+
+/**
+ * Load the persisted Root CA under `sslDir`, or create and persist a fresh one
+ * (cert 0644, private key 0600). The one load-or-create used for the dev cert
+ * flow (`~/.stacks/ssl`) and the LAN local-CA flow alike, so a CA is only ever
+ * minted once per directory and browsers trust it once.
+ */
+export async function ensureRootCA(
+  sslDir: string,
+  options: { caOptions?: CAOptions, verbose?: boolean } = {},
+): Promise<{ certificate: string, privateKey: string, created: boolean, paths: RootCAPaths }> {
+  await fs.mkdir(sslDir, { recursive: true })
+  const paths = getRootCAPaths(sslDir)
+  const existing = await loadRootCA(paths, options.verbose)
+  if (existing) {
+    debugLog('ssl', `Reusing existing Root CA from ${paths.caCertPath}`, options.verbose)
+    return { ...existing, created: false, paths }
+  }
+
+  if (options.verbose)
+    log.info('Generating Root CA certificate (one-time)...')
+  const ca = await createRootCA(options.caOptions ?? {})
+  try {
+    await Promise.all([
+      fs.writeFile(paths.caCertPath, ca.certificate),
+      fs.writeFile(paths.caKeyPath, ca.privateKey, { mode: 0o600 }),
+    ])
+    debugLog('ssl', `Persisted Root CA at ${paths.caCertPath}`, options.verbose)
+  }
+  catch (err) {
+    debugLog('ssl', `Error saving Root CA files: ${err}`, options.verbose)
+    throw new Error(`Failed to save Root CA files: ${err}`)
+  }
+  return { certificate: ca.certificate, privateKey: ca.privateKey, created: true, paths }
 }
 
 /**
@@ -418,33 +454,13 @@ export async function generateCertificate(options: ProxyOptions): Promise<void> 
 
   const hostConfig = httpsConfig(options, options.verbose)
   const sslDir = hostConfig.basePath || join(homedir(), '.stacks', 'ssl')
-  await fs.mkdir(sslDir, { recursive: true })
-  const rootCAPaths = getRootCAPaths(sslDir)
 
   // Reuse the persisted Root CA when present so the user only has to trust it
   // once. A fresh CA gets created (and persisted) on first run.
-  let caCert = await loadRootCA(rootCAPaths, options.verbose)
-  let caIsNew = false
-  if (!caCert) {
-    if (options.verbose)
-      log.info('Generating Root CA certificate (one-time)...')
-    caCert = await createRootCA(hostConfig)
-    try {
-      await Promise.all([
-        fs.writeFile(rootCAPaths.caCertPath, caCert.certificate),
-        fs.writeFile(rootCAPaths.caKeyPath, caCert.privateKey, { mode: 0o600 }),
-      ])
-      caIsNew = true
-      debugLog('ssl', `Persisted Root CA at ${rootCAPaths.caCertPath}`, options.verbose)
-    }
-    catch (err) {
-      debugLog('ssl', `Error saving Root CA files: ${err}`, options.verbose)
-      throw new Error(`Failed to save Root CA files: ${err}`)
-    }
-  }
-  else {
-    debugLog('ssl', `Reusing existing Root CA from ${rootCAPaths.caCertPath}`, options.verbose)
-  }
+  const rootCA = await ensureRootCA(sslDir, { caOptions: hostConfig, verbose: options.verbose })
+  const caCert = { certificate: rootCA.certificate, privateKey: rootCA.privateKey }
+  const caIsNew = rootCA.created
+  const rootCAPaths = rootCA.paths
 
   // Issue the host cert with all SANs from the (possibly reused) CA.
   if (options.verbose)
@@ -771,6 +787,10 @@ export function httpsConfig(options: ProxyOption | ProxyOptions, verbose?: boole
       ? options.https.basePath
       : defaultBasePath
 
+    // IP SANs: the caller's `altNameIPs` (a LAN address the cert must also
+    // answer for) or the loopback pair. tlsx turns each into an iPAddress
+    // (type 7) SAN; the dNSName SANs below come from the routed hostnames.
+    const altNameIPs = options.https.altNameIPs?.filter((ip): ip is string => typeof ip === 'string' && ip.length > 0)
     const config: TlsConfig = {
       domain: primaryDomain,
       hostCertCN: primaryDomain,
@@ -778,7 +798,7 @@ export function httpsConfig(options: ProxyOption | ProxyOptions, verbose?: boole
       caCertPath: options.https.caCertPath || defaultPaths.caCertPath,
       certPath: options.https.certPath || defaultPaths.certPath,
       keyPath: options.https.keyPath || defaultPaths.keyPath,
-      altNameIPs: ['127.0.0.1', '::1'],
+      altNameIPs: altNameIPs && altNameIPs.length > 0 ? altNameIPs : ['127.0.0.1', '::1'],
       altNameURIs: [],
       commonName: options.https.commonName || primaryDomain,
       organizationName: options.https.organizationName || 'Local Development',

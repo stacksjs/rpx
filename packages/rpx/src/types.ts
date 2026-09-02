@@ -370,7 +370,47 @@ export interface OnDemandSitesConfig {
   startupTimeoutMs?: number
 }
 
+/**
+ * LAN production mode: serve HTTPS for hosts that public ACME can never
+ * certify (`pi-stacks.local`, a private IP) from a Root CA rpx owns.
+ *
+ * On start rpx loads or creates the CA under {@link dir}, mints ONE leaf whose
+ * SANs name every entry of {@link hosts} (dNSName) and {@link ips} (iPAddress),
+ * registers it under each host's SNI name AND as the listener's default TLS
+ * context, so a connection that sends no SNI at all (an IP-literal URL) still
+ * gets it. The leaf is re-minted when its SAN set no longer matches or fewer
+ * than {@link renewBeforeDays} remain. Public on-demand ACME and
+ * `productionCerts` keep working alongside it; a host may not appear in both
+ * `hosts` and `onDemandTls.allowedSuffixes` (that is a config error).
+ */
+export interface LocalCaConfig {
+  /**
+   * Directory holding the CA (`rpx-root-ca.crt` / `.key`, key mode 0600) and
+   * the minted leaf (`rpx-local-host.crt` / `.key`).
+   */
+  dir: string
+  /** Hostnames the leaf must cover, e.g. `['pi-stacks.local']`. */
+  hosts: string[]
+  /** IP addresses the leaf must cover as iPAddress SANs, e.g. `['192.168.1.20']`. */
+  ips?: string[]
+  /**
+   * Install the CA into the system trust store on start (tlsx `installCA`),
+   * skipped when it is already trusted. Needs root or sudo. Default `false`.
+   */
+  installTrust?: boolean
+  /** Leaf validity in days. Default `825` (the longest Apple platforms accept). */
+  validityDays?: number
+  /** Re-mint the leaf on start when fewer than this many days remain. Default `30`. */
+  renewBeforeDays?: number
+}
+
 export interface SharedProxyConfig {
+  /**
+   * `true` mints and trusts a local dev certificate, a {@link TlsOption} points
+   * at your own PEMs, and `false` serves plain HTTP only: in shared / gateway /
+   * daemon mode rpx then binds nothing but {@link httpPort} (no `:443`, no
+   * HTTP to HTTPS redirect), even when `productionCerts` or `localCa` are set.
+   */
   https: boolean | TlsOption
   cleanup: boolean | CleanupOptions
   vitePluginUsage: boolean
@@ -438,6 +478,20 @@ export interface SharedProxyConfig {
    * the first time it's needed. Opt-in — see {@link OnDemandTlsConfig}.
    */
   onDemandTls?: OnDemandTlsConfig
+  /**
+   * LAN production mode: a local Root CA under `dir` signs one leaf for the
+   * given `hosts` / `ips`, served per SNI name and as the default TLS context.
+   * See {@link LocalCaConfig}.
+   */
+  localCa?: LocalCaConfig
+  /**
+   * Memory guard: the most TLS contexts (SNI entries) the shared listener keeps
+   * alive. Every entry costs OpenSSL a parsed cert + key for the lifetime of
+   * the listener, so a certs directory with hundreds of PEMs on a 4 GB box is
+   * a real cost. When the assembled set exceeds this, the first N entries are
+   * kept and one warning names the dropped hosts. Default `256`.
+   */
+  maxTlsContexts?: number
   /**
    * On-demand sites: lazily boot a project's dev server the first time its host
    * is visited and proxy to it (Valet/puma-dev style). Read by the daemon when

@@ -233,6 +233,64 @@ describe('runDaemon end-to-end', () => {
   }, 30_000)
 })
 
+describe('runDaemon with https: false', () => {
+  it('serves the proxy handler over plain HTTP on httpPort and binds nothing on httpsPort', async () => {
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch(req: Request) {
+        return new Response(`plain ${new URL(req.url).pathname} via ${req.headers.get('x-forwarded-host') ?? '?'}`)
+      },
+    })
+    const registryDir = path.join(rpxDir, 'registry.d')
+    await writeEntry({
+      id: 'plain-site',
+      from: `localhost:${upstream.port}`,
+      to: 'plain.localhost',
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+    }, registryDir)
+
+    const HTTPS_PORT = 18547
+    const daemon = await runDaemon({
+      rpxDir,
+      registryDir,
+      https: false,
+      httpsPort: HTTPS_PORT,
+      httpPort: 0, // ephemeral; the handle reports the bound port
+      hostname: '127.0.0.1',
+      verbose: false,
+      gcIntervalMs: 60_000,
+    })
+
+    try {
+      expect(daemon.httpsPort).toBe(0)
+      expect(daemon.httpPort).toBeGreaterThan(0)
+
+      // Routed over plain HTTP, not redirected to HTTPS.
+      const res = await fetch(`http://127.0.0.1:${daemon.httpPort}/foo`, { headers: { host: 'plain.localhost' }, redirect: 'manual' })
+      expect(res.status).toBe(200)
+      expect(await res.text()).toContain('plain /foo via plain.localhost')
+
+      const miss = await fetch(`http://127.0.0.1:${daemon.httpPort}/`, { headers: { host: 'nope.localhost' } })
+      expect(miss.status).toBe(404)
+
+      // The HTTPS port was never bound.
+      await expect(fetch(`https://127.0.0.1:${HTTPS_PORT}/`, { tls: { rejectUnauthorized: false } })).rejects.toThrow()
+    }
+    finally {
+      await daemon.stop()
+      upstream.stop(true)
+    }
+  }, 30_000)
+
+  it('refuses https: false in cluster mode instead of silently binding :443', async () => {
+    await expect(runDaemon({ rpxDir, https: false, workers: 2, httpPort: 18548, httpsPort: 18549, hostname: '127.0.0.1', verbose: false }))
+      .rejects
+      .toThrow(/https: false is not supported with workers > 1/)
+  })
+})
+
 // Helper: write a tiny "fake daemon" script into the test dir. The script
 // writes its own pid into the pid file, optionally swallows SIGTERM, and
 // otherwise idles forever. Lets us drive ensureDaemonRunning / stopDaemon
