@@ -183,6 +183,9 @@ describe('proxyViaPool', () => {
     expect(got['x-forwarded-for']).toBe('203.0.113.7')
     expect(got['x-real-ip']).toBe('203.0.113.7')
     expect(got['x-forwarded-host']).toBe('site.test')
+    // rpx terminates TLS, so the upstream cannot otherwise tell the client arrived
+    // over it — anything building absolute URLs or forcing HTTPS reads this.
+    expect(got['x-forwarded-proto']).toBe('https')
     expect(got['x-custom']).toBe('keep-me') // unrelated client headers pass through
   })
 
