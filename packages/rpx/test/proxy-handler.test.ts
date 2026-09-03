@@ -246,6 +246,50 @@ describe('client address forwarding', () => {
     }
   })
 
+  it('gives the upstream the whole forwarded set on the ordinary HTTP path', async () => {
+    // #2265: the report was that an upstream saw only `x-real-ip` plus a rewritten
+    // `Host`, with no `x-forwarded-host`/`-for`/`-proto`, leaving an app behind rpx
+    // unable to learn the hostname or scheme the client actually used — a CSRF
+    // origin guard comparing `Origin` against the host then rejected every real
+    // browser request. The pooled and fallback transports each write the set
+    // separately, so both are pinned here rather than only the one in use.
+    const upstream = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: r => new Response(JSON.stringify({
+        host: r.headers.get('host'),
+        for: r.headers.get('x-forwarded-for'),
+        realIp: r.headers.get('x-real-ip'),
+        forwardedHost: r.headers.get('x-forwarded-host'),
+        proto: r.headers.get('x-forwarded-proto'),
+      }), { headers: { 'content-type': 'application/json' } }),
+    })
+    try {
+      const handler = createProxyFetchHandler(() => ({ sourceHost: `127.0.0.1:${upstream.port}` }))
+      const expected = {
+        host: `127.0.0.1:${upstream.port}`,
+        for: '198.51.100.42',
+        realIp: '198.51.100.42',
+        forwardedHost: 'bughq.org',
+        proto: 'https',
+      }
+
+      // The pooled transport, which carries ordinary requests.
+      const pooled = await handler(req('https://bughq.org/api/thing'), serverWithPeer('198.51.100.42'))
+      expect(await pooled?.json()).toEqual(expected)
+
+      // ...and the fetch fallback, which the pool declines an SSE request to.
+      const fallback = await handler(
+        req('https://bughq.org/api/thing', { accept: 'text/event-stream' }),
+        serverWithPeer('198.51.100.42'),
+      )
+      expect(await fallback?.json()).toEqual(expected)
+    }
+    finally {
+      upstream.stop(true)
+    }
+  })
+
   it('carries the peer onto the websocket upgrade too', async () => {
     const handler = createProxyFetchHandler(() => ({ sourceHost: 'localhost:3002' }))
     let data: any
