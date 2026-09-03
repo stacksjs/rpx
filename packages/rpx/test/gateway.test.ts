@@ -22,6 +22,7 @@ import * as path from 'node:path'
 import * as process from 'node:process'
 import { mergeGatewayFragments, readGatewayFragments, resolveGatewayOptions, startGateway } from '../src/gateway'
 import * as Start from '../src/start'
+import { envDump, parentDump, procDump, runSweep, say } from './helpers/spawn-diag'
 
 const CERTS_DIR = '/etc/rpx/certs'
 
@@ -353,9 +354,16 @@ async function freePort(): Promise<number> {
   return port
 }
 
-const CLI_STARTS = process.platform !== 'linux'
-
-describe.skipIf(!CLI_STARTS)('rpx gateway (CLI, end to end)', () => {
+/**
+ * #2267 diagnostic, in situ. The Linux skip is lifted on this branch so the
+ * baseline runs exactly where the hang was recorded — this file is position 23
+ * of 48 in bun's deterministic order, and the same shape passes from a
+ * standalone file at position 38. On a hang the child's and this parent's
+ * /proc state is dumped before the kill, then the variant sweep runs from the
+ * same spot. The long-lived case stays skipped on Linux: it is not the
+ * discriminator and would only add 45s.
+ */
+describe('rpx gateway (CLI, end to end)', () => {
   it('starts and prints its help', async () => {
     const cli = path.join(import.meta.dir, '..', 'bin', 'cli.ts')
     const child = spawn(process.execPath, [cli, '--help'], { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -368,13 +376,26 @@ describe.skipIf(!CLI_STARTS)('rpx gateway (CLI, end to end)', () => {
       new Promise<string>(resolve => setTimeout(() => resolve('still running after 45s'), 45_000)),
     ])
 
-    if (child.exitCode === null && child.signalCode === null)
+    if (child.exitCode === null && child.signalCode === null) {
+      say('IN-SITU BASELINE HUNG at gateway.test.ts; child pid', child.pid)
+      say(`   child:\n    ${child.pid ? procDump(child.pid) : '(no pid)'}`)
+      say(`   parent:\n    ${parentDump()}`)
       child.kill('SIGKILL')
+    }
+    else {
+      say('IN-SITU BASELINE OK:', exit, `${output.length} bytes`)
+    }
 
     expect(output, `rpx --help produced nothing (${exit})`).toContain('gateway')
   }, 60_000)
 
-  it('serves a fragment\'s route over plain HTTP with --no-https on the given port', async () => {
+  it('[2267-diag] in-situ spawn variant sweep', async () => {
+    envDump()
+    const results = await runSweep(path.join(import.meta.dir, '..', 'bin', 'cli.ts'), 'in-situ')
+    expect(results).toHaveLength(8)
+  }, 200_000)
+
+  it.skipIf(process.platform === 'linux')('serves a fragment\'s route over plain HTTP with --no-https on the given port', async () => {
     const upstream = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: req => new Response(`gateway-upstream ${req.headers.get('x-forwarded-host')}`) })
     const httpPort = await freePort()
     // Two routes so the fragment looks like a real box (and the shared
