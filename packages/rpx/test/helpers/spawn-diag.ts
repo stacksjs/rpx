@@ -5,6 +5,7 @@
  * directly; `gateway.test.ts` and `zz-2267-diagnostic.test.ts` import it.
  * Every line printed is prefixed `[2267-diag]` so it is greppable in CI logs.
  */
+import type { ChildProcess } from 'node:child_process'
 import { spawn, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
@@ -94,6 +95,19 @@ export function parentDump(): string {
   lines.push(`children: ${sh(['sh', '-c', `ps -o pid,stat,wchan:30,etimes,cmd --ppid ${pid} 2>/dev/null | tail -n +2 | tr '\\n' ';'`])}`)
   lines.push(`task wchan: ${perTask(pid, 'wchan')}`)
   lines.push(`task syscall: ${perTask(pid, 'syscall')}`)
+  lines.push(`task stack: ${perTask(pid, 'stack')}`)
+  lines.push(`fd table: ${sh(['sh', '-c', `ls -l /proc/${pid}/fd 2>/dev/null | tail -n +2 | awk '{print $9"->"$11}' | tr '\\n' ' '`])}`)
+  // For every pipe this process holds, which OTHER processes hold the same
+  // pipe — i.e. who is on the far end of a read one of our threads is stuck in.
+  lines.push(`pipe peers: ${sh(['sh', '-c', `
+for l in $(ls -l /proc/${pid}/fd 2>/dev/null | awk '$11 ~ /^pipe:/ {print $11}' | sort -u); do
+  e=$(printf '%s' "$l" | sed 's/\\[/\\\\[/; s/\\]/\\\\]/')
+  printf '%s<=' "$l"
+  sudo -n find /proc/[0-9]*/fd -lname "$e" 2>/dev/null | awk -F/ -v me=${pid} '$3 != me {print $3}' | sort -u | while read p; do
+    printf '%s(%s) ' "$p" "$(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null | head -c 70)"
+  done
+  printf '; '
+done`])}`)
   lines.push(`listening sockets: ${sh(['sh', '-c', '(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | tail -n +2 | wc -l'])}`)
   return lines.join('\n    ')
 }
@@ -109,6 +123,11 @@ export function envDump(): void {
 
 function shape(out: string): string {
   return out.slice(0, 100).replace(/\n/g, '⏎')
+}
+
+/** What the JS ChildProcess object itself claims about a child that went quiet. */
+export function jsFields(child: ChildProcess): string {
+  return `js: pid=${child.pid} exitCode=${child.exitCode} signalCode=${child.signalCode} killed=${child.killed} connected=${child.connected} spawnfile=${child.spawnfile} stdin=${child.stdin === null ? 'null' : typeof child.stdin} stdout=${child.stdout === null ? 'null' : typeof child.stdout}`
 }
 
 export function viaNodeSpawn(name: string, argv: string[], opts: { stdio: Stdio, env?: Record<string, string>, cwd?: string }, budget = BUDGET_MS): Promise<Result> {
@@ -136,7 +155,7 @@ export function viaNodeSpawn(name: string, argv: string[], opts: { stdio: Stdio,
     setTimeout(() => {
       if (settled)
         return
-      const diag = `${child.pid ? procDump(child.pid) : '(no pid)'}\n    PARENT: ${parentDump()}`
+      const diag = `${jsFields(child)}\n    ${child.pid ? procDump(child.pid) : '(no pid)'}\n    PARENT: ${parentDump()}`
       try {
         child.kill('SIGKILL')
       }

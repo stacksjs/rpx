@@ -22,7 +22,7 @@ import * as path from 'node:path'
 import * as process from 'node:process'
 import { mergeGatewayFragments, readGatewayFragments, resolveGatewayOptions, startGateway } from '../src/gateway'
 import * as Start from '../src/start'
-import { envDump, parentDump, procDump, runSweep, say } from './helpers/spawn-diag'
+import { envDump, jsFields, parentDump, procDump, runSweep, say } from './helpers/spawn-diag'
 
 const CERTS_DIR = '/etc/rpx/certs'
 
@@ -376,11 +376,18 @@ describe('rpx gateway (CLI, end to end)', () => {
       new Promise<string>(resolve => setTimeout(() => resolve('still running after 45s'), 45_000)),
     ])
 
-    if (child.exitCode === null && child.signalCode === null) {
-      say('IN-SITU BASELINE HUNG at gateway.test.ts; child pid', child.pid)
+    // Trigger on the race, not on exitCode/signalCode: last run the dud
+    // ChildProcess reported a non-null one at 45s with no exit event and no
+    // bytes, which took the wrong branch and skipped the dump.
+    if (exit.startsWith('still running')) {
+      say('IN-SITU BASELINE HUNG at gateway.test.ts')
+      say(`   ${jsFields(child)}`)
       say(`   child:\n    ${child.pid ? procDump(child.pid) : '(no pid)'}`)
       say(`   parent:\n    ${parentDump()}`)
-      child.kill('SIGKILL')
+      try {
+        child.kill('SIGKILL')
+      }
+      catch {}
     }
     else {
       say('IN-SITU BASELINE OK:', exit, `${output.length} bytes`)
