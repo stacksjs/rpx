@@ -45,7 +45,15 @@ describe('ProcessManager', () => {
   })
 
   afterEach(() => {
-    // No cleanup needed - Bun's spyOn handles cleanup automatically
+    // Bun's spyOn does NOT restore on its own, and the `childProcess.spawn` spy
+    // above is installed on the shared module object — so without this it stays
+    // installed for every test file that runs after this one in the same `bun
+    // test` process. Anything spawning a subprocess then gets the stub back
+    // (pid 12345, no-op `on`/`stdout.on`), so its child never starts, never
+    // prints and never exits: #2267, where `rpx --help` appeared to hang on
+    // Linux CI purely because bun's file order happened to put this file first
+    // there. Restore, and keep it restored.
+    mock.restore()
   })
 
   describe('isRunning', () => {
