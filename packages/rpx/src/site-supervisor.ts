@@ -323,6 +323,14 @@ export class SiteSupervisor {
       await delay(this.pollIntervalMs)
     }
 
+    // The loop also exits when `stopAll()` flips `stopped`, which is a
+    // deliberate shutdown rather than a timeout. Falling through to `fail()`
+    // there logged "did not become ready within 120s" for every site that was
+    // still booting, on every shutdown — a failure that never happened, and a
+    // second teardown on top of the one `stop()` is already running.
+    if (this.stopped)
+      return
+
     if (state.status === 'starting')
       this.fail(state, `did not become ready within ${Math.round(this.startupTimeoutMs / 1000)}s`)
   }
