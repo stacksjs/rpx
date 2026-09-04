@@ -1,5 +1,43 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.51...v0.11.52)
+
+## 🚀 Features
+
+- imgx integration — on-the-fly image transforms from query params ([a710d4b](https://github.com/stacksjs/rpx/commit/a710d4b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **gateway**: say what was loaded and where it is listening ([1d604c3](https://github.com/stacksjs/rpx/commit/1d604c3)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **supervisor**: stop reporting a shutdown as a readiness timeout ([9953f91](https://github.com/stacksjs/rpx/commit/9953f91)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **test**: restore the spawn spy that leaked into every later file ([3c176a6](https://github.com/stacksjs/rpx/commit/3c176a6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 📚 Documentation
+
+- the local CA, gateway mode and running on a LAN ([bde99bb](https://github.com/stacksjs/rpx/commit/bde99bb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- stop leaking mocked module state across test files ([e197835](https://github.com/stacksjs/rpx/commit/e197835)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **proxy**: pin the whole forwarded header set on the HTTP path ([9e9137f](https://github.com/stacksjs/rpx/commit/9e9137f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **cli**: skip the subprocess cases on Linux, where the CLI hangs ([eb8ad94](https://github.com/stacksjs/rpx/commit/eb8ad94)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **cli**: check the entry point starts, separately from what it serves ([bd0d57b](https://github.com/stacksjs/rpx/commit/bd0d57b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **gateway**: give the spawned CLI longer to come up ([51325c7](https://github.com/stacksjs/rpx/commit/51325c7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🤖 Continuous Integration
+
+- leave the daemon suite out of the emulated arm64 job ([d2c85e0](https://github.com/stacksjs/rpx/commit/d2c85e0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.52 ([88b14eb](https://github.com/stacksjs/rpx/commit/88b14eb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: update ts-images to 0.2.17 ([6370410](https://github.com/stacksjs/rpx/commit/6370410)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.50...v0.11.51)
 
 ## 🧪 Tests
