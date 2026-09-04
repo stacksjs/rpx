@@ -9,7 +9,7 @@
  * redirect server (challenge store + reactive issuance kick), and serves the
  * manager's live SNI set on the shared :443 listener.
  */
-import { afterEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -20,6 +20,14 @@ import * as Start from '../src/start'
 const HTTPS_PORT = 49443
 const HTTP_PORT = 49080
 const REDIRECT_PORT = 49081
+
+// File-level, outside both describes: the spies below are restored only after
+// their assertions, so a throw left them installed (#2270). The second describe
+// needs the REAL startHttpRedirectServer, and other files spy this same
+// namespace, so restore globally between every test in this file.
+afterEach(() => {
+  mock.restore()
+})
 
 describe('startProxies on-demand TLS wiring', () => {
   let dir: string | undefined

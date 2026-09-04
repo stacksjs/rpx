@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import * as hostsModule from '../src/hosts'
 import { dropStaleRpxHostsLines, filterRpxHostsEntries, hostsLineMapsHost, isLoopbackDevelopmentHost, parseHostsLine } from '../src/hosts'
 
@@ -32,6 +32,14 @@ describe('hosts', () => {
       // Mock implementation that doesn't modify anything
       return Promise.resolve()
     })
+  })
+
+  // `bun test` shares one module registry across every file in the process and
+  // `spyOn` does not auto-restore, so without this these three stubs stay
+  // installed on `../src/hosts` for every file that runs after this one —
+  // silently turning real hosts-file writes into no-ops there (#2270).
+  afterEach(() => {
+    mock.restore()
   })
 
   describe('hosts file operations', () => {

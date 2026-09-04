@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { config } from '../src/config'
 import * as Hosts from '../src/hosts'
 import * as Https from '../src/https'
@@ -6,6 +6,11 @@ import * as Start from '../src/start'
 
 // Simplified test that just verifies exports and basic functionality
 describe('Integration', () => {
+  // Guard: nothing here should outlive the file (see #2270).
+  afterEach(() => {
+    mock.restore()
+  })
+
   // Just verify that the required functions exist and are exported
   it('exports required functionality', () => {
     expect(Start.startProxies).toBeDefined()
@@ -25,14 +30,12 @@ describe('Integration', () => {
 
   // Check that util functions are working
   it('has working host utilities', () => {
-    // Mock the functions to avoid system calls
-    const mockAddHosts = spyOn(Hosts, 'addHosts').mockImplementation(async () => {})
-    const mockCheckHosts = spyOn(Hosts, 'checkHosts').mockImplementation(async (hosts) => {
-      return hosts.map(host => host === 'localhost')
-    })
-
-    expect(mockAddHosts).toBeDefined()
-    expect(mockCheckHosts).toBeDefined()
+    // These were spied "to avoid system calls", but the spies were only ever
+    // asserted on — never invoked — so they bought nothing and leaked no-op
+    // stubs onto `../src/hosts` for the rest of the run (#2270). Assert on the
+    // real exports instead.
+    expect(Hosts.addHosts).toBeDefined()
+    expect(Hosts.checkHosts).toBeDefined()
   })
 
   // Check HTTPS functionality

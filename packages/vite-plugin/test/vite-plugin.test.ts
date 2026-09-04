@@ -33,9 +33,6 @@ function mockVitePluginRpx() {
   }
 }
 
-// Expose a named export for the mock to satisfy the import
-const VitePluginRpx = mock(mockVitePluginRpx)
-
 // Mock dependencies
 const mockStartProxies = mock(async (_opts?: any) => {})
 const mockCleanup = mock(async (_opts?: any) => {})
@@ -61,41 +58,16 @@ const mockHttpServer = {
   }),
 }
 
-// Set up mocks
-mock.module('@stacksjs/rpx', () => ({
-  startProxies: mockStartProxies,
-  cleanup: mockCleanup,
-  checkExistingCertificates: mockCheckExistingCertificates,
-  checkHosts: mockCheckHosts,
-}))
-
-const processMock = {
-  ...process,
-  on: (event: string, cb: SignalHandler) => {
-    processListeners[event] = processListeners[event] || []
-    processListeners[event].push(cb)
-  },
-  once: (event: string, cb: SignalHandler) => {
-    processListeners[event] = processListeners[event] || []
-    processListeners[event].push(cb)
-  },
-  emit: (event: string) => {
-    if (processListeners[event]) {
-      processListeners[event].forEach(cb => cb())
-    }
-  },
-  listeners: (event: string) => processListeners[event] || [],
-  exit: mock(() => {}),
-}
-mock.module('node:process', () => ({
-  ...processMock,
-  default: processMock,
-}))
-
-// Mock the actual plugin import
-mock.module('../src', () => ({
-  VitePluginRpx,
-}))
+// No `mock.module` here on purpose. Nothing in this file imports `@stacksjs/rpx`,
+// `node:process` or `../src` — the tests drive the locally defined
+// `mockVitePluginRpx()`, which closes over the mock fns directly — so the three
+// module mocks that used to live here were dead weight. They were not harmless:
+// `mock.module` is global and permanent (`mock.restore()` does not undo it), and
+// the `node:process` one spread `{ ...process }`, dropping every
+// EventEmitter.prototype method. That only stayed invisible because `bun run
+// test` runs this directory as its own process; a plain `bun test` at the repo
+// root puts it in with the rpx suite, where ten src modules import
+// `node:process` (#2270).
 
 describe('Vite Plugin RPX', () => {
   let plugin: ReturnType<typeof mockVitePluginRpx>
