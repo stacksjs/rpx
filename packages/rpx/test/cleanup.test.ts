@@ -1,14 +1,17 @@
 import type { CleanupOptions } from '../src/types'
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import realProcess from 'node:process'
+import * as Hosts from '../src/hosts'
+import * as Https from '../src/https'
 import { cleanup } from '../src/start'
 
 // Mock dependencies
 const mockProcessExit = mock(() => {})
 const mockConsoleLog = mock(() => {})
 const mockConsoleSuccess = mock(() => {})
-const mockRemoveHosts = mock(async () => {})
-const mockCleanupCertificates = mock(async () => {})
+// Spies, not `mock.module`: see the beforeEach below.
+let mockRemoveHosts: any
+let mockCleanupCertificates: any
 
 // `mock.module` is global and persists for the rest of the test run. A partial
 // process replacement ({ exit, on, once, env }) therefore poisons every file
@@ -33,21 +36,23 @@ const processMock = new Proxy(realProcess, {
 processOverrides.default = processMock
 mock.module('node:process', () => processMock)
 
-mock.module('../src/hosts', () => ({
-  removeHosts: mockRemoveHosts,
-}))
-
-mock.module('../src/https', () => ({
-  cleanupCertificates: mockCleanupCertificates,
-}))
-
 describe('Cleanup Process', () => {
   beforeEach(() => {
     mockProcessExit.mockClear()
     mockConsoleLog.mockClear()
     mockConsoleSuccess.mockClear()
-    mockRemoveHosts.mockClear()
-    mockCleanupCertificates.mockClear()
+    // These two were `mock.module('../src/hosts')` / `('../src/https')`, which
+    // replace the whole namespace permanently — `mock.restore()` does not undo a
+    // module mock, so no later file could recover, and each namespace was left
+    // holding a single export (#2270). Spies on the namespace members are
+    // restorable and still observe `cleanup`'s internal calls, the same way
+    // start.test.ts does it.
+    mockRemoveHosts = spyOn(Hosts, 'removeHosts').mockImplementation(async () => {})
+    mockCleanupCertificates = spyOn(Https, 'cleanupCertificates').mockImplementation(async () => {})
+  })
+
+  afterEach(() => {
+    mock.restore()
   })
 
   it('should handle multiple cleanup calls gracefully', async () => {

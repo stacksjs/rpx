@@ -274,6 +274,10 @@ describe('SiteSupervisor', () => {
       probePort: async () => false,
       pollIntervalMs: 5,
     })
+    // Registered before the first await that can reject: the only one of these
+    // eight supervisors the afterEach could not reach, so its 30s reaper and
+    // readiness loop outlived a failing run (#2271).
+    supervisors.push(sup)
     await sup.onRequest('myapp.localhost')
     await sup.stopAll()
     expect(proc.signals).toContain('SIGTERM')

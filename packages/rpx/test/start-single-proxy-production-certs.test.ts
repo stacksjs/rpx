@@ -10,7 +10,7 @@
  * a single entry fell through to `startServer`, which never receives
  * `productionTlsConfig` at all and unconditionally mints/uses a dev cert.
  */
-import { afterEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -20,6 +20,11 @@ describe('startProxies single-proxy production certs', () => {
   let dir: string | undefined
 
   afterEach(async () => {
+    // Restore on EVERY path: the mockRestore()s used to sit at the very end of
+    // the `it`, so any assertion above them left `startServer` a permanent no-op
+    // and `createSharedProxyServer` permanently returning null for the rest of
+    // the run (#2270).
+    mock.restore()
     if (dir)
       await fsp.rm(dir, { recursive: true, force: true }).catch(() => {})
     dir = undefined
@@ -61,8 +66,5 @@ describe('startProxies single-proxy production certs', () => {
     // The individual (dev-cert-only) path must NOT have been used — that's
     // exactly the path that was silently dropping the real production cert.
     expect(startServerSpy).not.toHaveBeenCalled()
-
-    createSharedSpy.mockRestore()
-    startServerSpy.mockRestore()
   })
 })

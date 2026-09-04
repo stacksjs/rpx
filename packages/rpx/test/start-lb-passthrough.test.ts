@@ -1,5 +1,5 @@
 import type { MultiProxyConfig } from '../src/types'
-import { describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import * as Start from '../src/start'
 
 /**
@@ -21,6 +21,14 @@ import * as Start from '../src/start'
  * single-proxy-in-multi-array tests once this passthrough is corrected).
  */
 describe('startProxies non-shared-listener fallback passes loadBalancer through', () => {
+  // This file already defends against spies leaking IN (see the comment on the
+  // spy below); without this it leaked right back OUT. `Start.startServer` is a
+  // shared export and `spyOn` does not auto-restore, so the no-op stub — and its
+  // call history — reached every later file (#2270).
+  afterEach(() => {
+    mock.restore()
+  })
+
   it('a single-entry `proxies` array (no shared listener) forwards loadBalancer to startServer', async () => {
     // Matches this file's established convention (see start.test.ts): re-spy
     // immediately before the call and inspect the most recent call, since
