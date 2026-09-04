@@ -1,10 +1,11 @@
 import type { ResolvedSite, SiteResolver } from '../src/site-resolver'
 import type { SiteLauncher, SiteProcessHandle } from '../src/site-supervisor'
 import type { RegistryEntry } from '../src/registry'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it, spyOn } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { log } from '../src/logger'
 import { SiteSupervisor } from '../src/site-supervisor'
 
 /** A controllable fake process: tests resolve `exit` to simulate it dying. */
@@ -276,6 +277,43 @@ describe('SiteSupervisor', () => {
     await sup.onRequest('myapp.localhost')
     await sup.stopAll()
     expect(proc.signals).toContain('SIGTERM')
+  })
+
+  it('does not report a readiness timeout for a site still booting at stopAll', async () => {
+    // The readiness loop exits on `stopped` as well as on the deadline, and used
+    // to fall through to the timeout failure either way — so every shutdown
+    // logged "did not become ready within 120s" for each still-booting site, a
+    // failure that never happened. Worse for tests: the warn lands a poll after
+    // the file that caused it has ended, so it is attributed to whatever file
+    // runs next.
+    await mkdir()
+    const proc = fakeProc(321)
+    const sup = new SiteSupervisor({
+      resolver: resolverFor(stacksSite()),
+      rpxDir,
+      registryDir: rpxDir,
+      launcher: () => proc.handle,
+      pickPort: async preferred => preferred,
+      probePort: async () => false, // never becomes ready, so it is mid-boot at stopAll
+      pollIntervalMs: 5,
+    })
+    supervisors.push(sup)
+
+    const warnSpy = spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      await sup.onRequest('myapp.localhost')
+      await sup.stopAll()
+      // Let the readiness loop wake once more past the stop — the stray warn
+      // arrived a poll interval later, which is exactly why it used to surface
+      // under an unrelated test file's name.
+      await new Promise(resolve => setTimeout(resolve, 60))
+
+      const warnings = warnSpy.mock.calls.map(call => String(call[0]))
+      expect(warnings.filter(w => w.includes('did not become ready'))).toEqual([])
+    }
+    finally {
+      warnSpy.mockRestore()
+    }
   })
 })
 
