@@ -102,6 +102,8 @@ Requests route as:
 - `stacksjs.com/api/users` → proxied to `localhost:3000/api/users`
 - `stacksjs.com/docs/guide` → served from `/var/www/docs/guide`
 - `stacksjs.com/about` → served from `/var/www/public/about`
+- `stacksjs.com/docs/guide.html` → 301 to `stacksjs.com/docs/guide`, keeping the
+  `/docs` mount and any query string
 
 For a **static** route the mount prefix is stripped before file resolution
 (`/docs/guide` → `<root>/guide`); for a **proxy** route the prefix is preserved

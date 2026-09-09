@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  cleanUrl,
   contentTypeFor,
   resolveStaticFile,
   resolveStaticRoute,
@@ -120,11 +121,58 @@ describe('resolveStaticFile', () => {
     })
   })
 
+  // The mount prefix is stripped before this module sees the path, so a
+  // redirect built from it alone leaves the mount: `/docs/x.html` pointed at
+  // `/x`, served by whatever owns the host root, and 301s are cached.
+  it('cleanUrls keeps the mount prefix on the redirect', () => {
+    expect(resolveStaticFile('/diagrams/x.html', dir({ cleanUrls: true }), { mountPath: '/docs' })).toEqual({
+      filePath: '/srv/site/diagrams/x.html',
+      redirectTo: '/docs/diagrams/x',
+    })
+  })
+
+  it('cleanUrls redirects a mounted root index.html to the mount with a trailing slash', () => {
+    expect(resolveStaticFile('/index.html', dir({ cleanUrls: true }), { mountPath: '/docs' })).toEqual({
+      filePath: '/srv/site/index.html',
+      redirectTo: '/docs/',
+    })
+  })
+
+  it('cleanUrls keeps the query string on the redirect', () => {
+    expect(resolveStaticFile('/about.html', dir({ cleanUrls: true }), { search: '?ref=nav' })).toEqual({
+      filePath: '/srv/site/about.html',
+      redirectTo: '/about?ref=nav',
+    })
+  })
+
   it('clamps traversal so it stays inside the root dir', () => {
     expect(resolveStaticFile('/a/../../assets/x.css', dir())).toEqual({ filePath: '/srv/site/assets/x.css' })
   })
 
   it('returns null on a backslash escape', () => {
     expect(resolveStaticFile('/a\\b', dir())).toBeNull()
+  })
+})
+
+describe('cleanUrl', () => {
+  it('strips .html', () => {
+    expect(cleanUrl('/about.html')).toBe('/about')
+  })
+
+  it('turns a directory index into a trailing slash', () => {
+    expect(cleanUrl('/blog/index.html')).toBe('/blog/')
+  })
+
+  it('restores the mount prefix, tolerating a trailing slash on it', () => {
+    expect(cleanUrl('/guide/x.html', { mountPath: '/docs' })).toBe('/docs/guide/x')
+    expect(cleanUrl('/guide/x.html', { mountPath: '/docs/' })).toBe('/docs/guide/x')
+  })
+
+  it('treats a root mount as no prefix', () => {
+    expect(cleanUrl('/about.html', { mountPath: '/' })).toBe('/about')
+  })
+
+  it('appends the query string last, after the prefix', () => {
+    expect(cleanUrl('/x.html', { mountPath: '/docs', search: '?a=1&b=2' })).toBe('/docs/x?a=1&b=2')
   })
 })

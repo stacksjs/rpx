@@ -354,4 +354,32 @@ describe('createProxyFetchHandler path-based routing within a host', () => {
 
     await fsp.rm(docsDir, { recursive: true, force: true }).catch(() => {})
   })
+
+  // The mount prefix is stripped before the static resolver runs, so a
+  // clean-URL redirect built from the stripped path left the mount: a request
+  // for `/docs/diagrams/x.html` was 301'd to `/diagrams/x`, which belongs to
+  // whatever serves the host root - on stacksjs.com, a 404 page, cached because
+  // the redirect is permanent.
+  it('keeps the mount prefix and query string on a clean-URL redirect', async () => {
+    const docsDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rpx-ph-clean-'))
+    // Directory style, as an SSG builds it: the clean URL `/docs/diagrams/x` is
+    // this file, and `/docs/diagrams/x.html` is the stale link redirecting to it.
+    await fsp.mkdir(path.join(docsDir, 'diagrams', 'x'), { recursive: true })
+    await fsp.writeFile(path.join(docsDir, 'diagrams', 'x', 'index.html'), '<h1>diagram</h1>')
+
+    const docsRoute: ProxyRoute = { static: resolveStaticRoute(docsDir, true), basePath: '/docs' }
+    const handler = createProxyFetchHandler((host, pathname) =>
+      host === 'stacksjs.com' && (pathname === '/docs' || pathname.startsWith('/docs/')) ? docsRoute : undefined)
+
+    const redirect = await handler(req('https://stacksjs.com/docs/diagrams/x.html?ref=nav'))
+    expect(redirect?.status).toBe(301)
+    expect(redirect?.headers.get('location')).toBe('/docs/diagrams/x?ref=nav')
+
+    // And the destination it names is a real page, rather than another host's 404.
+    const followed = await handler(req('https://stacksjs.com/docs/diagrams/x'))
+    expect(followed?.status).toBe(200)
+    expect(await followed?.text()).toBe('<h1>diagram</h1>')
+
+    await fsp.rm(docsDir, { recursive: true, force: true }).catch(() => {})
+  })
 })

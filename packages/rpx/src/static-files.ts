@@ -111,6 +111,42 @@ export interface StaticResolution {
 }
 
 /**
+ * What the resolver needs about the REQUEST, as opposed to the route: the two
+ * pieces of the original URL that `pathname` alone no longer carries.
+ *
+ * Both exist for the clean-URL redirect, which is the only thing here that has
+ * to name a URL rather than a file. `pathname` reaches this module already
+ * stripped of the route's mount prefix (a directory mounted at `/docs` resolves
+ * `/docs/guide` against `<dir>/guide`), and without its query string — so a
+ * redirect built from `pathname` alone sends the client somewhere else
+ * entirely. See {@link cleanUrl}.
+ */
+export interface StaticRequestContext {
+  /** Mount prefix stripped from `pathname` (e.g. `/docs`), to put back on a redirect. */
+  mountPath?: string
+  /** Query string including `?`, preserved across a redirect. */
+  search?: string
+}
+
+/**
+ * The clean URL to redirect a `.html` request to: mount prefix restored, query
+ * string kept.
+ *
+ * Restoring the prefix is the whole point. Without it, `/docs/x.html` on a site
+ * mounted at `/docs` redirected to `/x` — outside the mount, so whatever owns
+ * the host root answered, and on stacksjs.com that was a 404 page. The redirect
+ * is a 301, so browsers cached the wrong destination. A mounted root
+ * (`/docs/index.html`) redirects to `/docs/`, keeping the trailing slash that
+ * the unmounted case has always produced, so relative links inside the page
+ * still resolve under the mount.
+ */
+export function cleanUrl(pathname: string, context: StaticRequestContext = {}): string {
+  const clean = pathname.replace(/\/index\.html$/i, '/').replace(/\.html$/i, '') || '/'
+  const base = (context.mountPath ?? '/').replace(/\/+$/, '')
+  return `${base}${clean}${context.search ?? ''}`
+}
+
+/**
  * Pure resolution of an incoming request pathname to a candidate file path on
  * disk. Does no I/O; the caller checks existence and may fall back (SPA).
  *
@@ -127,6 +163,7 @@ export interface StaticResolution {
 export function resolveStaticFile(
   pathname: string,
   route: ResolvedStaticRoute,
+  context: StaticRequestContext = {},
 ): StaticResolution | null {
   const rel = safeRelativePath(pathname)
   if (rel === null)
@@ -135,10 +172,8 @@ export function resolveStaticFile(
   const ext = path.posix.extname(rel)
 
   // `cleanUrls`: redirect explicit `.html` requests to the clean URL.
-  if (route.cleanUrls && ext === '.html') {
-    const clean = pathname.replace(/\/index\.html$/i, '/').replace(/\.html$/i, '')
-    return { filePath: path.join(route.dir, rel), redirectTo: clean || '/' }
-  }
+  if (route.cleanUrls && ext === '.html')
+    return { filePath: path.join(route.dir, rel), redirectTo: cleanUrl(pathname, context) }
 
   // Directory or root request → index.html.
   if (rel === '' || pathname.endsWith('/'))
@@ -162,8 +197,9 @@ export function resolveStaticFile(
 export async function serveStaticFile(
   pathname: string,
   route: ResolvedStaticRoute,
+  context: StaticRequestContext = {},
 ): Promise<Response> {
-  const resolution = resolveStaticFile(pathname, route)
+  const resolution = resolveStaticFile(pathname, route, context)
   if (!resolution)
     return new Response('Forbidden', { status: 403 })
 

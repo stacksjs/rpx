@@ -451,10 +451,17 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
     // Static file serving short-circuits everything else. Strip the route's
     // mount prefix (default for static) so a dir mounted at `/docs` serves its
     // own root for `/docs`.
+    //
+    // The stripped prefix and the query string are handed along, because a
+    // clean-URL redirect has to name a URL the client can come back to: built
+    // from the stripped path alone it pointed outside the mount entirely.
     if (route.static) {
       const strip = route.stripBasePathPrefix ?? true
       const staticPath = strip ? stripBasePath(pathname, route.basePath) : pathname
-      const staticRes = await serveStaticFile(staticPath, route.static)
+      const staticRes = await serveStaticFile(staticPath, route.static, {
+        mountPath: strip ? route.basePath : undefined,
+        search,
+      })
       return applyImgxTransform(req, pathname, search, route.imgx, staticRes, verbose)
     }
 
@@ -496,12 +503,14 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
     }
 
     // Strip `.html` and 301 to the clean URL when enabled — before any upstream
-    // work, since the redirect doesn't depend on the origin response.
+    // work, since the redirect doesn't depend on the origin response. `pathname`
+    // still carries the mount prefix on this path (proxy routes don't strip by
+    // default), but the query string lives in `search` and would be dropped.
     if (route.cleanUrls && pathname.endsWith('.html')) {
       const cleanPath = pathname.replace(/\.html$/, '')
       return new Response(null, {
         status: 301,
-        headers: { Location: cleanPath },
+        headers: { Location: `${cleanPath}${search}` },
       })
     }
 
