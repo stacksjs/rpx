@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.52...v0.11.53)
+
+## 🐛 Bug Fixes
+
+- **static**: keep the mount prefix and query on a clean-URL redirect ([bee9402](https://github.com/stacksjs/rpx/commit/bee9402)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.53 ([41e929e](https://github.com/stacksjs/rpx/commit/41e929e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.51...v0.11.52)
 
 ## 🚀 Features
