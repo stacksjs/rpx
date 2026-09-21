@@ -58,7 +58,7 @@ export {
   verifyHttpsChain,
 } from './cert-inspect'
 
-export { DefaultPortManager, findAvailablePort, isPortInUse, portManager } from './port-manager'
+export { DefaultPortManager, findAvailablePort, isPortClaimable, isPortInUse, portManager } from './port-manager'
 
 export {
   gcStaleEntries,

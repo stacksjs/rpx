@@ -1,6 +1,10 @@
 import type { PortManager } from './types'
+import { randomUUID } from 'node:crypto'
 import * as net from 'node:net'
 import { debugLog } from './utils'
+
+/** Highest port the OS can bind. */
+const MAX_PORT = 65535
 
 /**
  * Check if a port is in use
@@ -78,7 +82,26 @@ export async function findAvailablePort(
 }
 
 /**
- * Test if a port is actually connectable
+ * Host to dial when probing a port we just bound.
+ *
+ * A wildcard bind address is not a destination: connecting to `0.0.0.0` is
+ * undefined-ish across platforms, so dial the matching loopback address
+ * instead - the probe listener bound to the wildcard answers there too.
+ */
+function probeDialHost(hostname: string): string {
+  if (hostname === '' || hostname === '0.0.0.0')
+    return '127.0.0.1'
+  if (hostname === '::' || hostname === '[::]')
+    return '::1'
+  return hostname
+}
+
+/**
+ * Test if a port is actually connectable, i.e. whether *something* is already
+ * listening there and accepting connections.
+ *
+ * This answers "is this port occupied and healthy", which is the opposite of
+ * what a caller looking for a port to BIND wants - see {@link isPortClaimable}.
  */
 export function testPortConnectivity(
   port: number,
@@ -114,6 +137,70 @@ export function testPortConnectivity(
   })
 }
 
+/**
+ * Test whether *we* can claim `port`: bind a probe listener on it, dial that
+ * listener, and confirm the bytes that come back are the probe's own nonce.
+ *
+ * Binding alone is not proof of ownership. On macOS a wildcard bind succeeds
+ * while a loopback-only listener already holds the same port (Postgres on
+ * 127.0.0.1:5432 is the everyday example), and the more specific binding keeps
+ * winning every connection - so a server "successfully" bound there would never
+ * receive a request. The nonce handshake is what distinguishes the two: traffic
+ * has to reach our listener, not somebody else's.
+ */
+export function isPortClaimable(
+  port: number,
+  hostname: string,
+  timeout = 3000,
+  verbose?: boolean,
+): Promise<boolean> {
+  debugLog('port', `Probing whether ${hostname}:${port} can be claimed`, verbose)
+  return new Promise((resolve) => {
+    const nonce = `rpx-port-probe-${randomUUID()}`
+    const server = net.createServer((socket) => { socket.end(nonce) })
+    let settled = false
+    const timer = setTimeout(() => finish(false, 'probe timed out'), timeout)
+
+    function finish(claimable: boolean, reason: string): void {
+      if (settled)
+        return
+      settled = true
+      clearTimeout(timer)
+      // Closing a server that never bound emits ERR_SERVER_NOT_RUNNING, and the
+      // persistent error handler below is what keeps that (or a late bind error)
+      // from reaching the process as an unhandled 'error' event.
+      if (server.listening)
+        server.close()
+      debugLog('port', `Port ${port} ${claimable ? 'can be claimed' : 'cannot be claimed'}: ${reason}`, verbose)
+      resolve(claimable)
+    }
+
+    server.on('error', (err: NodeJS.ErrnoException) => finish(false, `bind failed (${err.code ?? err.message})`))
+
+    server.listen(port, hostname, () => {
+      const socket = net.connect({ host: probeDialHost(hostname), port, timeout })
+      let received = ''
+
+      socket.setEncoding('utf8')
+      socket.on('data', (chunk: string) => { received += chunk })
+      socket.once('timeout', () => {
+        socket.destroy()
+        finish(false, 'probe connection timed out')
+      })
+      socket.once('error', (err) => {
+        socket.destroy()
+        finish(false, `probe connection failed (${err.message})`)
+      })
+      socket.once('close', () => {
+        finish(received === nonce, received === nonce ? 'probe answered itself' : 'another listener answered')
+      })
+    })
+
+    // Never hold the event loop open on account of a probe.
+    server.unref()
+  })
+}
+
 export class DefaultPortManager implements PortManager {
   usedPorts: Set<number> = new Set()
   private hostname: string
@@ -126,51 +213,45 @@ export class DefaultPortManager implements PortManager {
     this.maxRetries = maxRetries
   }
 
-  async getNextAvailablePort(startPort: number, testConnectivity = false): Promise<number> {
-    if (this.usedPorts.has(startPort)) {
-      // If we already have this port registered as used, find another one
-      return this.findNextAvailablePort(startPort + 1, testConnectivity)
-    }
+  /**
+   * Reserve the first port at or after `startPort` that this process can bind.
+   *
+   * `verifyClaim` adds the {@link isPortClaimable} handshake on top of the
+   * plain bind check, for callers that cannot tolerate a port whose traffic
+   * would be swallowed by a more specific listener.
+   *
+   * The search is a bounded scan. It used to recurse, re-deriving the retry
+   * budget from the port it had just rejected - `port < startPort + maxRetries`
+   * with `startPort` advancing in lockstep, so the guard could never fire and
+   * the scan walked the entire port space one port at a time. Worse, the old
+   * verification step required the candidate to be CONNECTABLE, which a free
+   * port never is: every genuinely free port was rejected, and the scan only
+   * stopped once it blundered onto a port owned by an unrelated service. What
+   * that cost in practice was minutes of spinning followed by a port belonging
+   * to somebody else.
+   */
+  async getNextAvailablePort(startPort: number, verifyClaim = false): Promise<number> {
+    const first = Math.min(Math.max(Math.trunc(startPort), 1), MAX_PORT)
+    const last = Math.min(first + this.maxRetries - 1, MAX_PORT)
 
-    const isInUse = await isPortInUse(startPort, this.hostname, this.verbose)
-
-    if (isInUse) {
-      return this.findNextAvailablePort(startPort + 1, testConnectivity)
-    }
-
-    // If requested, test that we can actually connect to this port
-    if (testConnectivity) {
-      const isConnectable = await testPortConnectivity(startPort, this.hostname, 3000, this.verbose)
-      if (!isConnectable) {
-        debugLog('port', `Port ${startPort} is available but not connectable, trying next port`, this.verbose)
-        return this.findNextAvailablePort(startPort + 1, testConnectivity)
+    for (let port = first; port <= last; port++) {
+      if (this.usedPorts.has(port)) {
+        debugLog('port', `Port ${port} is already reserved by this process`, this.verbose)
+        continue
       }
+
+      if (await isPortInUse(port, this.hostname, this.verbose))
+        continue
+
+      if (verifyClaim && !(await isPortClaimable(port, this.hostname, 3000, this.verbose)))
+        continue
+
+      debugLog('port', `Reserved port ${port} (scan started at ${first})`, this.verbose)
+      this.usedPorts.add(port)
+      return port
     }
 
-    // Port is available, register it
-    this.usedPorts.add(startPort)
-    return startPort
-  }
-
-  private async findNextAvailablePort(startPort: number, testConnectivity = false): Promise<number> {
-    const port = await findAvailablePort(startPort, this.hostname, this.verbose, this.maxRetries)
-
-    // If requested, test that we can actually connect to this port
-    if (testConnectivity) {
-      const isConnectable = await testPortConnectivity(port, this.hostname, 3000, this.verbose)
-      if (!isConnectable) {
-        // If the port isn't connectable, try the next one
-        if (port < startPort + this.maxRetries) {
-          return this.findNextAvailablePort(port + 1, testConnectivity)
-        }
-        else {
-          throw new Error(`Unable to find a connectable port after ${this.maxRetries} attempts`)
-        }
-      }
-    }
-
-    this.usedPorts.add(port)
-    return port
+    throw new Error(`Unable to find an available port in ${first}-${last} after ${last - first + 1} attempts`)
   }
 
   releasePort(port: number): void {
