@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.53...v0.11.54)
+
+## 🐛 Bug Fixes
+
+- **ports**: verified search rejected every usable port ([e8d9c67](https://github.com/stacksjs/rpx/commit/e8d9c67)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.54 ([eb5359a](https://github.com/stacksjs/rpx/commit/eb5359a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.52...v0.11.53)
 
 ## 🐛 Bug Fixes
