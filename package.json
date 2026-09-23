@@ -51,7 +51,7 @@
     "format:fix": "bunx --bun pickier . --format --write",
     "changelog": "bunx --bun logsmith --verbose",
     "changelog:generate": "bunx --bun logsmith --output CHANGELOG.md",
-    "release": "bunx --bun bumpx prompt --recursive",
+    "release": "bunx --bun @stacksjs/bumpx prompt --recursive",
     "release:patch": "bunx --bun bumpx patch --recursive --yes",
     "release:minor": "bunx --bun bumpx minor --recursive --yes",
     "release:major": "bunx --bun bumpx major --recursive --yes",
@@ -65,6 +65,7 @@
     "build:binaries": "bun scripts/compile-binaries.ts"
   },
   "devDependencies": {
+    "@stacksjs/bumpx": "^0.2.17",
     "@stacksjs/tlsx": "^0.13.19",
     "better-dx": "^0.2.15",
     "typescript": "^7.0.2",
