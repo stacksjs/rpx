@@ -1,5 +1,22 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.54...v0.11.55)
+
+## 🐛 Bug Fixes
+
+- **proxy**: give an upstream two minutes to answer, not 10s ([3d89661](https://github.com/stacksjs/rpx/commit/3d89661)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **release**: point the release script at @stacksjs/bumpx ([a3fd0fb](https://github.com/stacksjs/rpx/commit/a3fd0fb)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.55 ([92c909a](https://github.com/stacksjs/rpx/commit/92c909a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- run bun-git-hooks and @stacksjs/logsmith, not the unrelated npm 'git-hooks' and 'logsmith' ([706ba09](https://github.com/stacksjs/rpx/commit/706ba09)) _(by Chris <chrisbreuer93@gmail.com>)_
+- release through @stacksjs/bumpx, not the unrelated npm 'bumpx' ([8a9c1ed](https://github.com/stacksjs/rpx/commit/8a9c1ed)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.53...v0.11.54)
 
 ## 🐛 Bug Fixes
