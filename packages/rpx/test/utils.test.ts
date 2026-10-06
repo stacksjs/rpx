@@ -75,6 +75,34 @@ describe('utils', () => {
     })
   })
 
+  describe('proxyIdleTimeout', () => {
+    const original = process.env.RPX_IDLE_TIMEOUT
+    const restore = () => {
+      if (original === undefined)
+        delete process.env.RPX_IDLE_TIMEOUT
+      else
+        process.env.RPX_IDLE_TIMEOUT = original
+    }
+
+    it('gives an upstream two minutes to answer, not Bun\'s ten seconds', () => {
+      delete process.env.RPX_IDLE_TIMEOUT
+      expect(utils.proxyIdleTimeout()).toBe(120)
+      restore()
+    })
+
+    it('takes RPX_IDLE_TIMEOUT, within what Bun accepts', () => {
+      process.env.RPX_IDLE_TIMEOUT = '30'
+      expect(utils.proxyIdleTimeout()).toBe(30)
+      process.env.RPX_IDLE_TIMEOUT = '0'
+      expect(utils.proxyIdleTimeout()).toBe(0)
+      process.env.RPX_IDLE_TIMEOUT = '900'
+      expect(utils.proxyIdleTimeout()).toBe(255)
+      process.env.RPX_IDLE_TIMEOUT = 'soon'
+      expect(utils.proxyIdleTimeout()).toBe(120)
+      restore()
+    })
+  })
+
   describe('extractHostname', () => {
     it('extracts hostname from single proxy options', () => {
       const options: ProxyOption = {

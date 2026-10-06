@@ -113,6 +113,23 @@ export function shouldReusePort(): boolean {
   return v === '1' || v === 'true'
 }
 
+/**
+ * How long, in seconds, a proxied request may go without a byte before the
+ * listener closes it. Bun's own default is 10, which for a reverse proxy is
+ * the time an upstream gets to *answer*: a sync, an import or a report that
+ * took longer reached the browser as a dropped connection (Safari's "Load
+ * failed") while the app behind it carried on. 120 by default, matching the
+ * Stacks API server; `RPX_IDLE_TIMEOUT` overrides it, 0 disables it, and Bun
+ * caps it at 255.
+ */
+export function proxyIdleTimeout(): number {
+  const raw = process.env.RPX_IDLE_TIMEOUT
+  const value = raw === undefined || raw.trim() === '' ? Number.NaN : Number(raw)
+  if (!Number.isFinite(value) || value < 0)
+    return 120
+  return Math.min(255, Math.floor(value))
+}
+
 const REDACTED = '[redacted]'
 const SENSITIVE_KEYS = new Set([
   'certificate',

@@ -34,7 +34,7 @@ import type { DefaultTlsContext, SniTlsEntry } from './sni'
 import { ensureLocalCa, resolveLocalCaConfig } from './local-ca'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { resolveStaticRoute } from './static-files'
-import { debugLog, getSudoPassword, safeStringify, shouldReusePort } from './utils'
+import { debugLog, getSudoPassword, proxyIdleTimeout, safeStringify, shouldReusePort } from './utils'
 import { version } from './version'
 
 const processManager = new ProcessManager()
@@ -1557,6 +1557,8 @@ export function createSharedProxyServer(opts: {
       // Opt-in (RPX_REUSE_PORT): lets multiple rpx instances share the port for
       // multi-core scaling on Linux. Off by default — see shouldReusePort().
       reusePort: shouldReusePort(),
+      // Time for the upstream to answer, not Bun's 10 seconds: see proxyIdleTimeout().
+      idleTimeout: proxyIdleTimeout(),
       ...(sslConfig
         ? {
             tls: Array.isArray(sslConfig)
