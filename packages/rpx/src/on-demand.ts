@@ -170,9 +170,32 @@ export class OnDemandCertManager {
     return Array.from(this.certs.values())
   }
 
-  /** True if a usable cert for `host` is already loaded in the live set. */
+  /**
+   * The loaded server name that serves `host`: its own certificate, or a
+   * wildcard one label up (`*.example.com` for `a.example.com`, which is all a
+   * wildcard covers - and what the TLS listener's SNI match agrees with).
+   */
+  private covering(host: string): string | undefined {
+    if (this.certs.has(host))
+      return host
+    const dot = host.indexOf('.')
+    if (dot > 0) {
+      const wildcard = `*${host.slice(dot)}`
+      if (this.certs.has(wildcard))
+        return wildcard
+    }
+    return undefined
+  }
+
+  /**
+   * True if a usable cert for `host` is already loaded in the live set,
+   * including a wildcard that covers it. Without the wildcard case every
+   * subdomain under a loaded `*.example.com` was issued a certificate of its
+   * own on first visit - so with wildcard DNS, anyone could spend the
+   * domain's Let's Encrypt quota by asking for made-up names.
+   */
   hasCert(host: string): boolean {
-    return this.certs.has(host)
+    return this.covering(host) !== undefined
   }
 
   /**
@@ -208,7 +231,7 @@ export class OnDemandCertManager {
   async ensureCert(host: string): Promise<boolean> {
     if (!this.config.enabled)
       return false
-    if (this.certs.has(host))
+    if (this.covering(host))
       return true
     // Cheap pre-filter: reject anything that isn't a plausible hostname before
     // touching the disk or the `ask` callback, so a flood of junk Host headers on
@@ -243,7 +266,7 @@ export class OnDemandCertManager {
 
   private async issue(host: string): Promise<boolean> {
     // A concurrent caller may have already loaded it while we were queued.
-    if (this.certs.has(host))
+    if (this.covering(host))
       return true
 
     // Maybe it's already on disk (issued by a prior run) — adopt without ACME.

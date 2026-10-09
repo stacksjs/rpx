@@ -328,3 +328,34 @@ describe('OnDemandCertManager.ensureCert', () => {
     expect(calls.length).toBe(0)
   })
 })
+
+describe('OnDemandCertManager with a wildcard certificate', () => {
+  let dir: string
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rpx-ondemand-wildcard-'))
+  })
+  afterEach(async () => {
+    await fsp.rm(dir, { recursive: true, force: true })
+  })
+
+  const wildcard: SniTlsEntry = { serverName: '*.example.com', cert: 'cert:*', key: 'key:*' }
+
+  it('never issues a name the wildcard already serves', async () => {
+    const { issuer, calls } = fakeIssuer()
+    const m = new OnDemandCertManager({ config: { enabled: true, allowedSuffixes: ['example.com'] }, certsDir: dir, issuer, initial: [wildcard] })
+    expect(m.hasCert('chris.example.com')).toBe(true)
+    expect(await m.ensureCert('chris.example.com')).toBe(true)
+    expect(await m.ensureCert('made-up-name.example.com')).toBe(true)
+    expect(calls).toEqual([])
+  })
+
+  it('still issues what a wildcard does not cover: the apex, and deeper names', async () => {
+    const { issuer, calls } = fakeIssuer()
+    const m = new OnDemandCertManager({ config: { enabled: true, allowedSuffixes: ['example.com'] }, certsDir: dir, issuer, initial: [wildcard] })
+    expect(m.hasCert('example.com')).toBe(false)
+    expect(m.hasCert('a.b.example.com')).toBe(false)
+    expect(await m.ensureCert('example.com')).toBe(true)
+    expect(await m.ensureCert('a.b.example.com')).toBe(true)
+    expect(calls).toEqual([['example.com'], ['a.b.example.com']])
+  })
+})
