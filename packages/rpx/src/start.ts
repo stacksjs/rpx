@@ -648,6 +648,25 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   }
 }
 
+/**
+ * May a plaintext hit for `hostname` start on-demand issuance?
+ *
+ * Only for a host the gateway routes: an exact route, or a wildcard one. A
+ * wildcard route that has a wildcard certificate of its own is served by
+ * that certificate, so names under it are never issued one each: behind
+ * wildcard DNS any stranger can make up names (deeper ones too, which the
+ * certificate does not cover), and each issuance would spend the domain's
+ * Let's Encrypt quota. A wildcard route without one keeps reactive issuance.
+ */
+export function reactiveIssuanceAllowed(hostname: string, routeHosts: Set<string>, hasServerName: (name: string) => boolean): boolean {
+  if (routeHosts.has(hostname))
+    return true
+  const patterns = [...routeHosts].filter(pattern => matchesWildcard(hostname, pattern))
+  if (patterns.length === 0)
+    return false
+  return patterns.some(pattern => !hasServerName(pattern))
+}
+
 export function startHttpRedirectServer(
   verbose?: boolean,
   httpPort = 80,
@@ -1306,8 +1325,7 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
     if (!isHttpPortBusy) {
       const routeHosts = new Set(routeEntries.map(entry => entry.host))
       const shouldEnsureCert = (hostname: string): boolean =>
-        routeHosts.has(hostname)
-        || [...routeHosts].some(pattern => matchesWildcard(hostname, pattern))
+        reactiveIssuanceAllowed(hostname, routeHosts, name => !!onDemand?.hasServerName(name))
       startHttpRedirectServer(verbose, httpPort, httpsPort, mergedOptions.acmeChallengeWebroot, onDemand, shouldEnsureCert)
     }
 

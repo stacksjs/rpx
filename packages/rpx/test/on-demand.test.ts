@@ -359,3 +359,29 @@ describe('OnDemandCertManager with a wildcard certificate', () => {
     expect(calls).toEqual([['example.com'], ['a.b.example.com']])
   })
 })
+
+describe('reactiveIssuanceAllowed', () => {
+  // Imported here so this block stays self-contained in the file.
+  const load = async () => (await import('../src/start')).reactiveIssuanceAllowed
+  const routes = new Set(['example.com', '*.example.com', '*.other.com'])
+  const loaded = new Set(['*.example.com'])
+  const has = (name: string) => loaded.has(name)
+
+  it('allows an exact route', async () => {
+    expect((await load())('example.com', routes, has)).toBe(true)
+  })
+
+  it('refuses names under a wildcard route that has a wildcard certificate, at any depth', async () => {
+    const allowed = await load()
+    expect(allowed('made-up.example.com', routes, has)).toBe(false)
+    expect(allowed('a.b.example.com', routes, has)).toBe(false)
+  })
+
+  it('keeps reactive issuance for a wildcard route without one', async () => {
+    expect((await load())('tenant.other.com', routes, has)).toBe(true)
+  })
+
+  it('refuses a host the gateway does not route', async () => {
+    expect((await load())('evil.test', routes, has)).toBe(false)
+  })
+})

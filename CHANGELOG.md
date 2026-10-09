@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.56...v0.11.57)
+
+## 🧹 Chores
+
+- release v0.11.57 ([6e26b14](https://github.com/stacksjs/rpx/commit/6e26b14)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.55...v0.11.56)
 
 ## 🐛 Bug Fixes

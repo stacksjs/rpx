@@ -187,6 +187,11 @@ export class OnDemandCertManager {
     return undefined
   }
 
+  /** True if a certificate is loaded under exactly this server name (e.g. `*.example.com`). */
+  hasServerName(name: string): boolean {
+    return this.certs.has(name)
+  }
+
   /**
    * True if a usable cert for `host` is already loaded in the live set,
    * including a wildcard that covers it. Without the wildcard case every
