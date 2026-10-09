@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.55...v0.11.56)
+
+## 🐛 Bug Fixes
+
+- **on-demand**: a loaded wildcard covers its subdomains ([d366e81](https://github.com/stacksjs/rpx/commit/d366e81)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.56 ([c320807](https://github.com/stacksjs/rpx/commit/c320807)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.54...v0.11.55)
 
 ## 🐛 Bug Fixes
