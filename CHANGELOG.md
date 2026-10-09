@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.57...v0.11.58)
+
+## 🐛 Bug Fixes
+
+- **tls**: unmatched names no longer get another tenant's cert ([54184a6](https://github.com/stacksjs/rpx/commit/54184a6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.11.58 ([154950f](https://github.com/stacksjs/rpx/commit/154950f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.56...v0.11.57)
 
 ## 🧹 Chores
