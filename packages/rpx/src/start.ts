@@ -27,9 +27,9 @@ import { resolveRedirect } from './redirect'
 import { readAcmeChallenge } from './acme-challenge'
 import { resolveAuth } from './auth'
 import type { ResolvedAuth } from './auth'
-import { isWildcardPattern, matchesWildcard } from './host-match'
+import { isWildcardPattern, reactiveIssuanceAllowed } from './host-match'
 import { buildHostRoutes, matchHostRoute, normalizePathPrefix } from './host-routes'
-import { buildListenerTls, buildSniTlsConfig, withLowMemoryTls } from './sni'
+import { buildListenerTls, buildSniTlsConfig, fallbackTlsContext, withLowMemoryTls } from './sni'
 import type { DefaultTlsContext, SniTlsEntry } from './sni'
 import { ensureLocalCa, resolveLocalCaConfig } from './local-ca'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
@@ -648,24 +648,8 @@ export async function setupProxy(options: ProxySetupOptions): Promise<void> {
   }
 }
 
-/**
- * May a plaintext hit for `hostname` start on-demand issuance?
- *
- * Only for a host the gateway routes: an exact route, or a wildcard one. A
- * wildcard route that has a wildcard certificate of its own is served by
- * that certificate, so names under it are never issued one each: behind
- * wildcard DNS any stranger can make up names (deeper ones too, which the
- * certificate does not cover), and each issuance would spend the domain's
- * Let's Encrypt quota. A wildcard route without one keeps reactive issuance.
- */
-export function reactiveIssuanceAllowed(hostname: string, routeHosts: Set<string>, hasServerName: (name: string) => boolean): boolean {
-  if (routeHosts.has(hostname))
-    return true
-  const patterns = [...routeHosts].filter(pattern => matchesWildcard(hostname, pattern))
-  if (patterns.length === 0)
-    return false
-  return patterns.some(pattern => !hasServerName(pattern))
-}
+// Moved to host-match so the daemon applies the same gate; kept exported here.
+export { reactiveIssuanceAllowed }
 
 export function startHttpRedirectServer(
   verbose?: boolean,
@@ -1046,8 +1030,8 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
 
   let productionTlsConfig: SniTlsEntry[] = []
   // The cert presented when a client sends no SNI (IP-literal URL) or an
-  // unknown name. Only the LAN local-CA leaf sets one; Bun otherwise falls
-  // back to the first SNI entry.
+  // unknown name: the LAN local-CA leaf, or for real certs a neutral one (Bun
+  // would otherwise fall back to the first SNI entry, another tenant's).
   let defaultTls: DefaultTlsContext | null = null
 
   if (mergedOptions.productionCerts && !httpsDisabled) {
@@ -1077,6 +1061,12 @@ export async function startProxies(options?: ProxyOptions): Promise<void> {
       verbose,
     )
   }
+
+  // A real-cert listener answers a name it holds no certificate for (a
+  // made-up name, or one deeper than a wildcard covers) with a neutral
+  // certificate, never with whichever tenant's certificate was read first.
+  if (!defaultTls && !httpsDisabled && (productionTlsConfig.length > 0 || mergedOptions.onDemandTls?.enabled))
+    defaultTls = await fallbackTlsContext(verbose)
 
   // Resolve SSL configuration if HTTPS is enabled and no production SNI set was
   // provided. Production gateways must not fall back to dev-local certificates

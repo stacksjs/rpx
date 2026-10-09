@@ -173,7 +173,7 @@ export {
 } from './static-files'
 export type { ResolvedStaticRoute, StaticRequestContext, StaticResolution } from './static-files'
 
-export { buildListenerTls, buildSniTlsConfig, capTlsContexts, DEFAULT_MAX_TLS_CONTEXTS, serverNameFromCertFilename, withLowMemoryTls } from './sni'
+export { buildListenerTls, buildSniTlsConfig, capTlsContexts, deepWildcardAliases, DEFAULT_MAX_TLS_CONTEXTS, FALLBACK_TLS_COMMON_NAME, fallbackTlsContext, serverNameFromCertFilename, withLowMemoryTls } from './sni'
 export type { DefaultTlsContext, SniTlsEntry } from './sni'
 
 export {

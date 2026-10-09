@@ -9,6 +9,7 @@
 import type { DomainCert, ProductionTlsConfig } from './types'
 import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
+import * as tlsx from '@stacksjs/tlsx'
 import { log } from './logger'
 import { debugLog } from './utils'
 
@@ -26,6 +27,12 @@ export interface SniTlsEntry {
  * the `tls` array is the default, and it is the only element allowed to omit
  * `serverName` (verified on Bun 1.3.14: an unnamed entry anywhere but first
  * throws "SNI tls object must have a serverName"). See {@link buildListenerTls}.
+ *
+ * Without one, the first SNI entry is the default, so a name nothing matches
+ * was answered with whichever tenant's certificate happened to be read first
+ * (on a shared gateway, `a.b.hq.training` got `trifit.stacksjs.com`). Real-cert
+ * listeners therefore always get one: the LAN local-CA leaf when configured,
+ * otherwise {@link fallbackTlsContext}.
  */
 export interface DefaultTlsContext {
   cert: string
@@ -46,8 +53,12 @@ export const DEFAULT_MAX_TLS_CONTEXTS = 256
  * silently missing cert is never a mystery. Returns the input untouched when
  * it fits.
  */
+function contextLimit(max: number | undefined): number {
+  return max !== undefined && Number.isFinite(max) && max > 0 ? Math.floor(max) : DEFAULT_MAX_TLS_CONTEXTS
+}
+
 export function capTlsContexts(entries: SniTlsEntry[], max: number = DEFAULT_MAX_TLS_CONTEXTS, verbose?: boolean): SniTlsEntry[] {
-  const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : DEFAULT_MAX_TLS_CONTEXTS
+  const limit = contextLimit(max)
   if (entries.length <= limit)
     return entries
   const kept = entries.slice(0, limit)
@@ -58,9 +69,91 @@ export function capTlsContexts(entries: SniTlsEntry[], max: number = DEFAULT_MAX
 }
 
 /**
+ * How many labels below its own level a wildcard certificate is also offered.
+ * See {@link deepWildcardAliases}.
+ */
+export const DEEP_WILDCARD_LEVELS = 2
+
+/**
+ * Extra SNI names that hand a wildcard certificate to names deeper than it
+ * covers: `*.*.example.com` and `*.*.*.example.com` for `*.example.com`.
+ *
+ * A wildcard covers exactly one label, but a wildcard ROUTE matches any depth,
+ * so `a.b.example.com` reaches the same app. Without an entry for it the
+ * handshake fell through to the listener's default certificate, which named
+ * some other tenant. The browser still reports a name mismatch, as it must,
+ * but now with the certificate of the site the name belongs to.
+ *
+ * Bun's SNI match (uSockets' sni_tree) matches label by label, `*` standing
+ * for one label, and prefers the more specific name at every level whatever
+ * the order of the array (verified on Bun 1.4.2): an exact name, or a closer
+ * wildcard such as `*.foo.example.com` for `x.foo.example.com`, still wins over
+ * these aliases. Names that are already taken are never shadowed.
+ */
+export function deepWildcardAliases(entries: SniTlsEntry[], levels: number = DEEP_WILDCARD_LEVELS): SniTlsEntry[] {
+  const taken = new Set(entries.map(entry => entry.serverName))
+  const aliases: SniTlsEntry[] = []
+  for (const entry of entries) {
+    if (!entry.serverName.startsWith('*.'))
+      continue
+    let name = entry.serverName
+    for (let level = 0; level < levels; level++) {
+      name = `*.${name}`
+      if (taken.has(name))
+        continue
+      taken.add(name)
+      aliases.push({ serverName: name, cert: entry.cert, key: entry.key })
+    }
+  }
+  return aliases
+}
+
+/** Common name of the certificate {@link fallbackTlsContext} mints. */
+export const FALLBACK_TLS_COMMON_NAME = 'no-matching-certificate.invalid'
+
+let fallbackTls: Promise<DefaultTlsContext | null> | null = null
+
+/**
+ * A neutral default certificate for a real-cert listener: self-signed, minted
+ * in memory once per process, naming only `no-matching-certificate.invalid`.
+ * A client whose name matches no loaded certificate (or that sends no SNI)
+ * gets this instead of another tenant's certificate, so the error it shows is
+ * an untrusted certificate that reveals nothing about the box's other sites.
+ *
+ * Resolves `null` when minting fails; the listener then keeps Bun's old
+ * fallback (its first SNI entry) rather than refusing to start.
+ */
+export function fallbackTlsContext(verbose?: boolean): Promise<DefaultTlsContext | null> {
+  if (fallbackTls)
+    return fallbackTls
+  fallbackTls = (async () => {
+    try {
+      const ca = await tlsx.createRootCA({ commonName: 'rpx fallback', organization: 'rpx', validityYears: 10, verbose: false })
+      const leaf = await tlsx.generateCertificate({
+        domain: FALLBACK_TLS_COMMON_NAME,
+        domains: [FALLBACK_TLS_COMMON_NAME],
+        commonName: FALLBACK_TLS_COMMON_NAME,
+        organizationName: 'rpx',
+        validityDays: 3650,
+        rootCA: { certificate: ca.certificate, privateKey: ca.privateKey },
+        verbose: false,
+      })
+      debugLog('sni', `minted fallback certificate ${FALLBACK_TLS_COMMON_NAME}`, verbose)
+      return { cert: leaf.certificate, key: leaf.privateKey }
+    }
+    catch (err) {
+      log.warn(`rpx: could not mint the fallback TLS certificate (${(err as Error).message}); unmatched names get the first SNI certificate`)
+      return null
+    }
+  })()
+  return fallbackTls
+}
+
+/**
  * Assemble the `Bun.serve({ tls })` array for a shared listener: the optional
  * default context first (no `serverName`), then the SNI entries capped at
- * `maxTlsContexts`, every entry in low-memory mode.
+ * `maxTlsContexts`, then {@link deepWildcardAliases} while the cap allows,
+ * every entry in low-memory mode.
  */
 export function buildListenerTls(opts: {
   sni: SniTlsEntry[]
@@ -69,7 +162,9 @@ export function buildListenerTls(opts: {
   verbose?: boolean
 }): Bun.TLSOptions[] {
   const capped = capTlsContexts(opts.sni, opts.maxTlsContexts, opts.verbose)
-  const named: Bun.TLSOptions[] = capped.map(entry => ({ serverName: entry.serverName, cert: entry.cert, key: entry.key }))
+  const room = contextLimit(opts.maxTlsContexts) - capped.length
+  const aliases = room > 0 ? deepWildcardAliases(capped).slice(0, room) : []
+  const named: Bun.TLSOptions[] = [...capped, ...aliases].map(entry => ({ serverName: entry.serverName, cert: entry.cert, key: entry.key }))
   const list: Bun.TLSOptions[] = opts.defaultTls
     ? [{ cert: opts.defaultTls.cert, key: opts.defaultTls.key }, ...named]
     : named

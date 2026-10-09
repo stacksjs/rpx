@@ -39,9 +39,10 @@ import type { UpstreamPool } from './load-balancer'
 import { createProxyFetchHandler, createProxyWebSocketHandler } from './proxy-handler'
 import { resolveImgx } from './imgx'
 import { readAcmeChallenge } from './acme-challenge'
+import { matchesWildcard, reactiveIssuanceAllowed } from './host-match'
 import { buildHostRoutes, matchHostList, matchHostRoute, normalizePathPrefix } from './host-routes'
 import type { HostRoutes } from './host-routes'
-import { buildListenerTls, buildSniTlsConfig, capTlsContexts, withLowMemoryTls } from './sni'
+import { buildListenerTls, buildSniTlsConfig, capTlsContexts, fallbackTlsContext, withLowMemoryTls } from './sni'
 import { ensureLocalCa, resolveLocalCaConfig } from './local-ca'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { createSiteResolver } from './site-resolver'
@@ -489,13 +490,38 @@ function installDaemonCrashGuards(): void {
 }
 
 /**
+ * The daemon's gate for reactive issuance from a plaintext hit: the same
+ * {@link reactiveIssuanceAllowed} the gateway (`startProxies`) applies, so a
+ * host covered by a loaded wildcard route certificate (deeper names included)
+ * never spends the domain's Let's Encrypt quota, and an unrouted host is not
+ * issued for. One difference: with on-demand sites an unrouted host may be a
+ * site about to boot, so it stays eligible unless a wildcard route covers it.
+ */
+export function daemonReactiveIssuanceAllowed(
+  hostname: string,
+  routeHosts: Set<string>,
+  hasServerName: (name: string) => boolean,
+  onDemandSites = false,
+): boolean {
+  if (reactiveIssuanceAllowed(hostname, routeHosts, hasServerName))
+    return true
+  return onDemandSites && ![...routeHosts].some(pattern => matchesWildcard(hostname, pattern))
+}
+
+/**
  * The shared `:80` handler: serve ACME http-01 challenges, kick off on-demand
  * issuance for an approved-but-uncovered host, then 301 to HTTPS. The request
  * target is parsed defensively — scanners constantly send malformed/relative
  * targets, and a thrown `new URL` would reject the fetch handler and make Bun
  * drop the connection with no response. A bad target becomes a 400 instead.
+ * `shouldEnsureCert` gates that issuance (see {@link daemonReactiveIssuanceAllowed}).
  */
-export function handleHttpRedirect(req: Request, onDemand: OnDemandCertManager | null, acmeChallengeWebroot?: string): Response {
+export function handleHttpRedirect(
+  req: Request,
+  onDemand: OnDemandCertManager | null,
+  acmeChallengeWebroot?: string,
+  shouldEnsureCert?: (host: string) => boolean,
+): Response {
   let u: URL
   try {
     u = new URL(req.url)
@@ -526,7 +552,7 @@ export function handleHttpRedirect(req: Request, onDemand: OnDemandCertManager |
 
   // First plaintext hit for an approved-but-uncovered host: kick off issuance so
   // the cert exists for the subsequent HTTPS request (don't block the redirect).
-  if (onDemand && !onDemand.hasCert(host))
+  if (onDemand && !onDemand.hasCert(host) && (!shouldEnsureCert || shouldEnsureCert(host)))
     onDemand.ensureCert(host).catch(() => {})
 
   return new Response(null, {
@@ -660,6 +686,10 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     if (verbose)
       log.info(`Local CA: ${local.leafMinted ? `minted leaf (${local.renewalReason})` : 'reusing leaf'} for ${[...localHosts].join(', ')}; valid until ${local.notAfter.toISOString()}`)
   }
+  // Real certs: a name none of them matches gets a neutral certificate, never
+  // whichever tenant's certificate Bun would otherwise default to.
+  if (!defaultTls && !plainHttp && (sniTls.length > 0 || opts.onDemandTls?.enabled))
+    defaultTls = await fallbackTlsContext(verbose)
 
   // On-demand sites (opt-in): when a request finds no live route, resolve the
   // host to a project, boot its dev server, and hold the request behind a
@@ -888,7 +918,8 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
       port: httpPort,
       hostname,
       fetch(req: Request) {
-        return handleHttpRedirect(req, onDemand, opts.acmeChallengeWebroot)
+        return handleHttpRedirect(req, onDemand, opts.acmeChallengeWebroot, host =>
+          daemonReactiveIssuanceAllowed(host, new Set(routingTable.keys()), name => !!onDemand?.hasServerName(name), !!supervisor))
       },
       error() {
         return new Response('Bad Request', { status: 400 })
@@ -1233,6 +1264,8 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
     sniTls = [...local.entries, ...sniTls.filter(e => !localHosts.has(e.serverName))]
     defaultTls = local.defaultTls
   }
+  if (!defaultTls && (sniTls.length > 0 || opts.onDemandTls?.enabled))
+    defaultTls = await fallbackTlsContext(verbose)
   let devSslConfig: SSLConfig | null = null
   if (sniTls.length === 0)
     devSslConfig = await bootstrapTls(opts, registryDir)
@@ -1279,6 +1312,8 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
 
   // DNS + hosts + registry GC (workers handle routing themselves).
   const initialEntries = await readAll(registryDir, verbose)
+  // Routed hosts, for the reactive-issuance gate on :80 (workers route).
+  let routeHosts = new Set(initialEntries.map(e => e.to).filter(Boolean))
   await reconcileStaleDevelopmentDns({ rpxDir, verbose }).catch((err) => {
     debugLog('daemon', `DNS reconcile on start failed: ${err}`, verbose)
   })
@@ -1289,6 +1324,7 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
   await removeStaleRpxHosts({ verbose }).catch(() => {})
   const watcher = watchRegistry(
     (entries) => {
+      routeHosts = new Set(entries.map(e => e.to).filter(Boolean))
       syncDevelopmentDnsFromRegistry(entries, { rpxDir, verbose, ownerPid: process.pid }).catch((err) => {
         debugLog('daemon', `DNS sync on registry change failed: ${err}`, verbose)
       })
@@ -1308,7 +1344,8 @@ async function runDaemonCoordinator(opts: DaemonOptions, ctx: CoordinatorCtx): P
       port: httpPort,
       hostname,
       fetch(req: Request) {
-        return handleHttpRedirect(req, onDemand, opts.acmeChallengeWebroot)
+        return handleHttpRedirect(req, onDemand, opts.acmeChallengeWebroot, host =>
+          daemonReactiveIssuanceAllowed(host, routeHosts, name => !!onDemand?.hasServerName(name)))
       },
       error() {
         return new Response('Bad Request', { status: 400 })

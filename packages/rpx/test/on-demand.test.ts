@@ -385,3 +385,40 @@ describe('reactiveIssuanceAllowed', () => {
     expect((await load())('evil.test', routes, has)).toBe(false)
   })
 })
+
+describe('daemon reactive issuance gate', () => {
+  const routes = new Set(['example.com', '*.example.com', '*.other.com'])
+  const loaded = new Set(['*.example.com'])
+  const has = (name: string) => loaded.has(name)
+
+  it('matches the gateway gate', async () => {
+    const { daemonReactiveIssuanceAllowed } = await import('../src/daemon')
+    expect(daemonReactiveIssuanceAllowed('example.com', routes, has)).toBe(true)
+    expect(daemonReactiveIssuanceAllowed('made-up.example.com', routes, has)).toBe(false)
+    expect(daemonReactiveIssuanceAllowed('a.b.example.com', routes, has)).toBe(false)
+    expect(daemonReactiveIssuanceAllowed('tenant.other.com', routes, has)).toBe(true)
+    expect(daemonReactiveIssuanceAllowed('evil.test', routes, has)).toBe(false)
+  })
+
+  it('with on-demand sites keeps an unrouted host eligible, but not one a wildcard covers', async () => {
+    const { daemonReactiveIssuanceAllowed } = await import('../src/daemon')
+    expect(daemonReactiveIssuanceAllowed('booting.test', routes, has, true)).toBe(true)
+    expect(daemonReactiveIssuanceAllowed('a.b.example.com', routes, has, true)).toBe(false)
+  })
+
+  it('handleHttpRedirect only starts issuance the gate allows', async () => {
+    const { handleHttpRedirect } = await import('../src/daemon')
+    const asked: string[] = []
+    const onDemand = {
+      challengeStore: { handlePath: () => undefined },
+      hasCert: () => false,
+      ensureCert: async (host: string) => { asked.push(host); return true },
+    } as unknown as OnDemandCertManager
+    const gate = (host: string) => host === 'example.com'
+    expect(handleHttpRedirect(new Request('http://a.b.example.com/'), onDemand, undefined, gate).status).toBe(301)
+    expect(handleHttpRedirect(new Request('http://example.com/'), onDemand, undefined, gate).status).toBe(301)
+    // No gate: the old behaviour, every uncovered host is tried.
+    handleHttpRedirect(new Request('http://other.test/'), onDemand)
+    expect(asked).toEqual(['example.com', 'other.test'])
+  })
+})
