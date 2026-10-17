@@ -16,7 +16,7 @@ no-per-request-alloc** native proxy should already match nginx and crush Bun.
 
 ## Architecture: control plane (TS) + dataplane (native)
 
-```
+```text
 Bun / TypeScript control plane            Zig dataplane (this)
 ─ zero-config, rpx.config.ts              ─ accept + (later) TLS termination
 ─ cert issuance / ACME / SNI              ─ TCP proxy, no GC, no per-request alloc

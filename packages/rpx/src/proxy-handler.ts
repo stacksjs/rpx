@@ -577,6 +577,9 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
             headers,
             body: req.body,
             redirect: 'manual',
+            // Forward the encoded wire body with its Content-Encoding header.
+            // Bun otherwise decodes it here and the client tries to decode it again.
+            decompress: false,
           })
           if (pool)
             markSuccess(pool, upstream)

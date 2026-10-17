@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fsp from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { brotliCompressSync } from 'node:zlib'
 import { compressResponseForClient, createProxyFetchHandler, stripBasePath } from '../src/proxy-handler'
 import { resolveStaticRoute } from '../src/static-files'
 
@@ -57,6 +58,43 @@ describe('proxy response compression', () => {
 
     expect(compressResponseForClient(request, upstream)).toBe(upstream)
   })
+})
+
+describe('compressed MCP responses through the streaming fallback', () => {
+  for (const encoding of ['gzip', 'br'] as const) {
+    it(`preserves ${encoding} bytes and headers for JSON clients accepting event streams`, async () => {
+      const payload = { jsonrpc: '2.0', id: 1, result: { instructions: 'Coach context. '.repeat(300) } }
+      const json = JSON.stringify(payload)
+      const bytes = encoding === 'gzip' ? Bun.gzipSync(json) : brotliCompressSync(json)
+      const requests: unknown[] = []
+      const upstream = Bun.serve({
+        hostname: '127.0.0.1',
+        port: 0,
+        async fetch(request) {
+          requests.push(await request.json())
+          return new Response(bytes, { headers: { 'content-type': 'application/json', 'content-encoding': encoding, 'content-length': String(bytes.length) } })
+        },
+      })
+      const handler = createProxyFetchHandler(() => ({ sourceHost: `127.0.0.1:${upstream.port}` }))
+      const gateway = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async request => await handler(request) ?? new Response('Unexpected upgrade', { status: 400 }) })
+      const message = { jsonrpc: '2.0', id: 1, method: 'initialize' }
+      try {
+        const response = await fetch(`http://127.0.0.1:${gateway.port}/api/mcp`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream', 'accept-encoding': encoding },
+          body: JSON.stringify(message),
+        })
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-encoding')).toBe(encoding)
+        expect(await response.json()).toEqual(payload)
+        expect(requests).toEqual([message])
+      }
+      finally {
+        gateway.stop(true)
+        upstream.stop(true)
+      }
+    })
+  }
 })
 
 describe('createProxyFetchHandler routing', () => {
