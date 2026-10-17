@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.58...v0.11.59)
+
+## 🐛 Bug Fixes
+
+- **proxy**: preserve compressed streaming fallback responses ([4daac6d](https://github.com/stacksjs/rpx/commit/4daac6d)) _(by Chris Breuer <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.11.59 ([e7e1e2e](https://github.com/stacksjs/rpx/commit/e7e1e2e)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Chris Breuer <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.57...v0.11.58)
 
 ## 🐛 Bug Fixes
