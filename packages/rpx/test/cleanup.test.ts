@@ -23,7 +23,9 @@ const processOverrides: Record<string | symbol, unknown> = {
   exit: mockProcessExit,
   on: () => {},
   once: () => {},
-  env: { ...realProcess.env, NODE_ENV: 'test' },
+  // Cluster tests set RPX_WORKER_BIN after this module is evaluated. Keep the
+  // real environment live instead of hiding later per-worker settings.
+  env: realProcess.env,
 }
 const processMock = new Proxy(realProcess, {
   get(target, prop) {
