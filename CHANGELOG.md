@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.59...v0.11.60)
+
+## ✨ Features
+
+- **proxy**: opt-in HTTP/2 on TLS listeners (RPX_HTTP2) ([07eea2a](https://github.com/stacksjs/rpx/commit/07eea2a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## ✅ Tests
+
+- keep process environment live for cluster workers ([6e7c9c3](https://github.com/stacksjs/rpx/commit/6e7c9c3)) _(by Chris Breuer <chris@stacksjs.com>)_
+
+## 🔧 Chores
+
+- release v0.11.60 ([1182945](https://github.com/stacksjs/rpx/commit/1182945)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Chris Breuer <chris@stacksjs.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.58...v0.11.59)
 
 ## 🐛 Bug Fixes
