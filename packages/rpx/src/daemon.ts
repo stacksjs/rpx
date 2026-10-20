@@ -59,7 +59,7 @@ import {
   syncDevelopmentDnsFromRegistry,
   tearDownDevelopmentDns,
 } from './dns'
-import { debugLog, execSudoSync, shouldReusePort } from './utils'
+import { debugLog, execSudoSync, http2ServeOptions, shouldReusePort } from './utils'
 
 export interface DaemonOptions {
   verbose?: boolean
@@ -801,13 +801,16 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
 
   /** (Re)create the :443 listener. Factored so on-demand can rebuild it. */
   function serveHttps(entries: Array<{ serverName: string, cert: string, key: string }>): ReturnType<typeof Bun.serve> {
+    const tls = tlsFor(entries)
     return serveDualStack({
       port: httpsPort,
       hostname,
       // Opt-in (RPX_REUSE_PORT): multi-instance :443 sharing on Linux. Off by
       // default — see shouldReusePort(). rpx never spawns its own cluster.
       reusePort: shouldReusePort(),
-      tls: tlsFor(entries),
+      tls,
+      // Opt-in (RPX_HTTP2): h2 over ALPN beside HTTP/1.1. See shouldServeHttp2().
+      ...http2ServeOptions(tls),
       fetch(req: Request, server: unknown) {
         return fetchHandler(req, server as ProxyServerLike)
       },
@@ -1150,11 +1153,12 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
   const wsHandler = createProxyWebSocketHandler(verbose)
 
   let stopped = false
-  const serve = (cfg: ClusterSni): ReturnType<typeof Bun.serve> => Bun.serve({
+  const serve = (cfg: ClusterSni, tls = clusterTlsFor(cfg)): ReturnType<typeof Bun.serve> => Bun.serve({
     port: httpsPort,
     hostname,
     reusePort: true, // workers share :443; the kernel load-balances (on Linux)
-    tls: clusterTlsFor(cfg),
+    tls,
+    ...http2ServeOptions(tls),
     fetch(req: Request, server: unknown) {
       return fetchHandler(req, server as ProxyServerLike)
     },

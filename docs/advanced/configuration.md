@@ -133,6 +133,7 @@ has a safe default.
 | --- | --- | --- |
 | `RPX_WORKERS` | `1` | `rpx daemon:start` cluster size. Above `1` a coordinator spawns that many worker processes that share the HTTPS port (Linux; see [performance](/advanced/performance)). |
 | `RPX_REUSE_PORT` | `0` | Set `1` to bind listeners with `SO_REUSEPORT` so several independent rpx instances can share one port behind your own supervisor. Off by default so a stray second instance fails loudly. |
+| `RPX_HTTP2` | `0` | Set `1` to offer HTTP/2 over ALPN on TLS listeners. Browsers then share one connection per origin instead of queueing on six HTTP/1.1 sockets; HTTP/1.1 clients and WebSocket upgrades keep working on the same port. Off by default while Bun marks HTTP/2 serving experimental. |
 | `RPX_BIND_HOSTNAME` | dual-stack (`::`, or `0.0.0.0` without IPv6) | Force the listener bind address. |
 | `RPX_VERBOSE` | `true` for gateways | `RPX_VERBOSE=false` silences the gateway's TLS and routing diagnostics. |
 | `RPX_UPSTREAM_TIMEOUT` | off | Seconds of upstream inactivity before a request answers `504`; resets on every byte. |

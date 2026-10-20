@@ -34,7 +34,7 @@ import type { DefaultTlsContext, SniTlsEntry } from './sni'
 import { ensureLocalCa, resolveLocalCaConfig } from './local-ca'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { resolveStaticRoute } from './static-files'
-import { debugLog, getSudoPassword, proxyIdleTimeout, safeStringify, shouldReusePort } from './utils'
+import { debugLog, getSudoPassword, http2ServeOptions, proxyIdleTimeout, safeStringify, shouldReusePort } from './utils'
 import { version } from './version'
 
 const processManager = new ProcessManager()
@@ -1580,6 +1580,8 @@ export function createSharedProxyServer(opts: {
                 }),
           }
         : {}),
+      // Opt-in (RPX_HTTP2): h2 over ALPN beside HTTP/1.1. See shouldServeHttp2().
+      ...http2ServeOptions(sslConfig),
       fetch(req: Request, server: unknown) {
         return sharedFetchHandler(req, server as ProxyServerLike)
       },

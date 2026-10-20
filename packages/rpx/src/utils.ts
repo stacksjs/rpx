@@ -114,6 +114,28 @@ export function shouldReusePort(): boolean {
 }
 
 /**
+ * Whether TLS listeners should also offer HTTP/2. Off by default while Bun
+ * marks `Bun.serve({ http2 })` experimental. With it on, a browser that offers
+ * "h2" over ALPN gets one multiplexed connection per origin instead of six
+ * queued HTTP/1.1 sockets, and every other client (curl --http1.1, a
+ * WebSocket upgrade, an old proxy) keeps HTTP/1.1 on the same port. Opt in
+ * with `RPX_HTTP2=1`; plain-HTTP listeners never change.
+ */
+export function shouldServeHttp2(): boolean {
+  const v = process.env.RPX_HTTP2
+  return v === '1' || v === 'true'
+}
+
+/**
+ * The `Bun.serve` options that turn HTTP/2 on for a listener, or none. Only a
+ * TLS listener qualifies: without TLS, Bun would answer HTTP/2 "prior
+ * knowledge" connections, which no browser opens.
+ */
+export function http2ServeOptions(tls: unknown): { http2?: true } {
+  return tls && shouldServeHttp2() ? { http2: true } : {}
+}
+
+/**
  * How long, in seconds, a proxied request may go without a byte before the
  * listener closes it. Bun's own default is 10, which for a reverse proxy is
  * the time an upstream gets to *answer*: a sync, an import or a report that

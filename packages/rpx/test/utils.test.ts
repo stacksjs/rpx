@@ -75,6 +75,39 @@ describe('utils', () => {
     })
   })
 
+  describe('shouldServeHttp2', () => {
+    const original = process.env.RPX_HTTP2
+    const restore = () => {
+      if (original === undefined)
+        delete process.env.RPX_HTTP2
+      else
+        process.env.RPX_HTTP2 = original
+    }
+
+    it('is off by default and adds nothing to the listener', () => {
+      delete process.env.RPX_HTTP2
+      expect(utils.shouldServeHttp2()).toBe(false)
+      expect(utils.http2ServeOptions({ cert: 'c', key: 'k' })).toEqual({})
+      restore()
+    })
+
+    it('opts in on "1" or "true" only, and only for a TLS listener', () => {
+      process.env.RPX_HTTP2 = '1'
+      expect(utils.shouldServeHttp2()).toBe(true)
+      expect(utils.http2ServeOptions({ cert: 'c', key: 'k' })).toEqual({ http2: true })
+      expect(utils.http2ServeOptions([{ serverName: 'a.test', cert: 'c', key: 'k' }])).toEqual({ http2: true })
+      expect(utils.http2ServeOptions(null)).toEqual({})
+      expect(utils.http2ServeOptions(undefined)).toEqual({})
+      process.env.RPX_HTTP2 = 'true'
+      expect(utils.shouldServeHttp2()).toBe(true)
+      process.env.RPX_HTTP2 = 'yes'
+      expect(utils.shouldServeHttp2()).toBe(false)
+      process.env.RPX_HTTP2 = '0'
+      expect(utils.shouldServeHttp2()).toBe(false)
+      restore()
+    })
+  })
+
   describe('proxyIdleTimeout', () => {
     const original = process.env.RPX_IDLE_TIMEOUT
     const restore = () => {
