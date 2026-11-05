@@ -59,7 +59,7 @@ import {
   syncDevelopmentDnsFromRegistry,
   tearDownDevelopmentDns,
 } from './dns'
-import { debugLog, execSudoSync, http2ServeOptions, shouldReusePort } from './utils'
+import { debugLog, execSudoSync, http2ServeOptions, proxyMaxRequestBodySize, shouldReusePort } from './utils'
 
 export interface DaemonOptions {
   verbose?: boolean
@@ -803,6 +803,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
   function serveHttps(entries: Array<{ serverName: string, cert: string, key: string }>): ReturnType<typeof Bun.serve> {
     const tls = tlsFor(entries)
     return serveDualStack({
+      maxRequestBodySize: proxyMaxRequestBodySize(),
       port: httpsPort,
       hostname,
       // Opt-in (RPX_REUSE_PORT): multi-instance :443 sharing on Linux. Off by
@@ -903,6 +904,7 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle>
     // Plain-HTTP gateway: the proxy handler itself answers on `httpPort` (0 =
     // an ephemeral port, reported through the handle). No redirect, no :443.
     httpServer = serveDualStack({
+      maxRequestBodySize: proxyMaxRequestBodySize(),
       port: httpPort,
       hostname,
       reusePort: shouldReusePort(),
@@ -1154,6 +1156,7 @@ export async function runDaemonWorker(ctx: WorkerCtx): Promise<DaemonHandle> {
 
   let stopped = false
   const serve = (cfg: ClusterSni, tls = clusterTlsFor(cfg)): ReturnType<typeof Bun.serve> => Bun.serve({
+    maxRequestBodySize: proxyMaxRequestBodySize(),
     port: httpsPort,
     hostname,
     reusePort: true, // workers share :443; the kernel load-balances (on Linux)

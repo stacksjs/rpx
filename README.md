@@ -702,3 +702,7 @@ Made with 💙
 
 <!-- [codecov-src]: https://img.shields.io/codecov/c/gh/stacksjs/rpx/main?style=flat-square
 [codecov-href]: https://codecov.io/gh/stacksjs/rpx -->
+
+### Upload transport ceiling
+
+Proxy listeners accept request bodies up to 512 MiB by default, including multipart framing. Applications must still validate and authorize files. Set `RPX_MAX_REQUEST_BODY_SIZE` to a positive safe integer of bytes to change the listener ceiling. Invalid values fail startup.

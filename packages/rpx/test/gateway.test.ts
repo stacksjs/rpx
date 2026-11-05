@@ -373,7 +373,7 @@ describe('rpx gateway (CLI, end to end)', () => {
   }, 60_000)
 
   it('serves a fragment\'s route over plain HTTP with --no-https on the given port', async () => {
-    const upstream = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: req => new Response(`gateway-upstream ${req.headers.get('x-forwarded-host')}`) })
+    const upstream = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) { return new Response(req.method === 'POST' ? String((await req.arrayBuffer()).byteLength) : `gateway-upstream ${req.headers.get('x-forwarded-host')}`) } })
     const httpPort = await freePort()
     // Two routes so the fragment looks like a real box (and the shared
     // listener is exercised with Host-header routing).
@@ -392,7 +392,7 @@ describe('rpx gateway (CLI, end to end)', () => {
     const cli = path.join(import.meta.dir, '..', 'bin', 'cli.ts')
     const child = spawn(process.execPath, [cli, 'gateway', '--sites-dir', sitesDir, '--no-https', '--http-port', String(httpPort), '--https-port', String(httpPort + 1)], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, RPX_VERBOSE: 'false', RPX_BIND_HOSTNAME: '127.0.0.1' },
+      env: { ...process.env, RPX_VERBOSE: 'false', RPX_BIND_HOSTNAME: '127.0.0.1', RPX_MAX_REQUEST_BODY_SIZE: '1024' },
     })
     let output = ''
     let spawnError: string | null = null
@@ -429,6 +429,13 @@ describe('rpx gateway (CLI, end to end)', () => {
         `child output: ${output || '(nothing)'}`,
       ].join('\n')
       expect(body, `gateway never served a response.\n${why}`).toBe('gateway-upstream gw.test')
+
+      const accepted = await fetch(`http://127.0.0.1:${httpPort}/upload`, { method: 'POST', headers: { host: 'gw.test' }, body: 'x'.repeat(512) })
+      expect(accepted.status).toBe(200)
+      expect(await accepted.text()).toBe('512')
+      const oversized = await fetch(`http://127.0.0.1:${httpPort}/upload`, { method: 'POST', headers: { host: 'gw.test' }, body: 'x'.repeat(2048) })
+      expect(oversized.status).toBe(413)
+      await oversized.body?.cancel()
 
       const redirected = await fetch(`http://127.0.0.1:${httpPort}/deep?x=1`, { headers: { host: 'www.gw.test' }, redirect: 'manual', signal: AbortSignal.timeout(5000) })
       expect(redirected.status).toBe(301)

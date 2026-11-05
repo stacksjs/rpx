@@ -3,6 +3,28 @@ import { describe, expect, it, spyOn } from 'bun:test'
 import * as utils from '../src/utils'
 
 describe('utils', () => {
+  describe('proxyMaxRequestBodySize', () => {
+    it('defaults to a bounded 512 MiB and validates operator overrides', () => {
+      const original = process.env.RPX_MAX_REQUEST_BODY_SIZE
+      try {
+        delete process.env.RPX_MAX_REQUEST_BODY_SIZE
+        expect(utils.proxyMaxRequestBodySize()).toBe(512 * 1024 * 1024)
+        process.env.RPX_MAX_REQUEST_BODY_SIZE = '301989888'
+        expect(utils.proxyMaxRequestBodySize()).toBe(301989888)
+        for (const value of ['0', '-1', 'NaN', 'Infinity', '1.5', '9007199254740992']) {
+          process.env.RPX_MAX_REQUEST_BODY_SIZE = value
+          expect(() => utils.proxyMaxRequestBodySize()).toThrow('positive safe integer')
+        }
+      }
+      finally {
+        if (original === undefined)
+          delete process.env.RPX_MAX_REQUEST_BODY_SIZE
+        else
+          process.env.RPX_MAX_REQUEST_BODY_SIZE = original
+      }
+    })
+  })
+
   describe('authorizeSystemAccess', () => {
     it('accepts cached sudo credentials without prompting', () => {
       const commands: string[] = []

@@ -152,6 +152,22 @@ export function proxyIdleTimeout(): number {
   return Math.min(255, Math.floor(value))
 }
 
+/**
+ * A bounded transport ceiling for streamed uploads, including multipart framing.
+ * Applications enforce their own file limits. Bun's 128 MiB default otherwise
+ * rejects valid larger files before they reach the upstream application.
+ * Operators may set RPX_MAX_REQUEST_BODY_SIZE to a positive safe integer of bytes.
+ */
+export function proxyMaxRequestBodySize(): number {
+  const raw = process.env.RPX_MAX_REQUEST_BODY_SIZE
+  if (raw === undefined || raw.trim() === '')
+    return 512 * 1024 * 1024
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new RangeError('RPX_MAX_REQUEST_BODY_SIZE must be a positive safe integer of bytes')
+  return value
+}
+
 const REDACTED = '[redacted]'
 const SENSITIVE_KEYS = new Set([
   'certificate',

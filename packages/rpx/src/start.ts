@@ -34,7 +34,7 @@ import type { DefaultTlsContext, SniTlsEntry } from './sni'
 import { ensureLocalCa, resolveLocalCaConfig } from './local-ca'
 import { OnDemandCertManager, resolveCertificateReloadStrategy } from './on-demand'
 import { resolveStaticRoute } from './static-files'
-import { debugLog, getSudoPassword, http2ServeOptions, proxyIdleTimeout, safeStringify, shouldReusePort } from './utils'
+import { debugLog, getSudoPassword, http2ServeOptions, proxyMaxRequestBodySize, proxyIdleTimeout, safeStringify, shouldReusePort } from './utils'
 import { version } from './version'
 
 const processManager = new ProcessManager()
@@ -1553,6 +1553,7 @@ export function createSharedProxyServer(opts: {
 
   try {
     const bunServer = Bun.serve({
+      maxRequestBodySize: proxyMaxRequestBodySize(),
       port: listenPort,
       /*
        * Dual-stack. `0.0.0.0` is IPv4 only, so every site behind this listener
