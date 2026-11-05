@@ -1,5 +1,24 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.60...v0.11.61)
+
+## 🐛 Bug Fixes
+
+- **proxy**: support bounded uploads beyond the Bun default ([dc222c4](https://github.com/stacksjs/rpx/commit/dc222c4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📝 Documentation
+
+- correct the RPX_HTTP2 note with the paired measurements ([f1b8e8f](https://github.com/stacksjs/rpx/commit/f1b8e8f)) _(by Chris <chrisbreuer93@gmail.com>)_
+- note the measured HTTP/2 document delay before enabling RPX_HTTP2 ([e97b18b](https://github.com/stacksjs/rpx/commit/e97b18b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.11.61 ([e656027](https://github.com/stacksjs/rpx/commit/e656027)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.59...v0.11.60)
 
 ## ✨ Features
