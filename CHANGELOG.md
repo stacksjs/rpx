@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.61...v0.11.62)
+
+## 🐛 Bug Fixes
+
+- **proxy**: deliver event streams without gzip buffering ([a05f7c4](https://github.com/stacksjs/rpx/commit/a05f7c4)) _(by Chris Breuer <chrisbreuer93@gmail.com>)_
+- validate the commit message path supplied by Git ([33b841a](https://github.com/stacksjs/rpx/commit/33b841a)) _(by Chris Breuer <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.11.62 ([6824290](https://github.com/stacksjs/rpx/commit/6824290)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Chris Breuer <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.60...v0.11.61)
 
 ## 🐛 Bug Fixes
