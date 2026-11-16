@@ -50,6 +50,27 @@ describe('proxy response compression', () => {
     expect(compressResponseForClient(optedOut, new Response('small', { headers: { ...headers, 'content-length': '5' } })).headers.get('content-encoding')).toBeNull()
   })
 
+  it('delivers event-stream frames before the upstream closes, without compression buffering', async () => {
+    for (const contentType of ['text/event-stream; charset=utf-8', 'TEXT/EVENT-STREAM']) {
+      let send!: ReadableStreamDefaultController<Uint8Array>
+      const encoder = new TextEncoder()
+      const body = new ReadableStream<Uint8Array>({ start(controller) { send = controller } })
+      const response = compressResponseForClient(
+        req('https://site.test/events', { 'accept-encoding': 'gzip, br' }),
+        new Response(body, { headers: { 'content-type': contentType } }),
+      )
+      const reader = response.body!.getReader()
+      try {
+        expect(response.headers.get('content-encoding')).toBeNull()
+        send.enqueue(encoder.encode(': connected\n\n'))
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe(': connected\n\n')
+        send.enqueue(encoder.encode(': heartbeat\n\n'))
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe(': heartbeat\n\n')
+      }
+      finally { await reader.cancel() }
+    }
+  })
+
   it('does not recompress an encoded upstream response', () => {
     const request = req('https://site.test/', { 'accept-encoding': 'gzip' })
     const upstream = new Response('encoded bytes', {

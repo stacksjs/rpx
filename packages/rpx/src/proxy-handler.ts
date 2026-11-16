@@ -287,6 +287,11 @@ export function compressResponseForClient(request: Request, response: Response):
     return response
 
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  // Event streams must deliver small frames while the response stays open.
+  // CompressionStream buffers them until its block fills or the stream ends,
+  // hiding heartbeats and leaving an otherwise healthy connection idle.
+  if (contentType.split(';', 1)[0]?.trim() === 'text/event-stream')
+    return response
   if (!COMPRESSIBLE_RESPONSE_TYPES.some(type => contentType.startsWith(type)))
     return response
 
