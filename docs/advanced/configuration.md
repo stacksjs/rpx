@@ -136,7 +136,7 @@ has a safe default.
 | `RPX_HTTP2` | `0` | Set `1` to offer HTTP/2 over ALPN on TLS listeners. Browsers then share one connection per origin instead of queueing on six HTTP/1.1 sockets; HTTP/1.1 clients and WebSocket upgrades keep working on the same port. Off by default while Bun marks HTTP/2 serving experimental. Measured on a production gateway with Bun 1.4.2: every site answered identically, and Chrome page loads were 15–35% faster over h2 across a 185 ms link. Bun sends h2 response headers together with the first body chunk, so a slow upstream shows a later first byte but no later document. |
 | `RPX_BIND_HOSTNAME` | dual-stack (`::`, or `0.0.0.0` without IPv6) | Force the listener bind address. |
 | `RPX_VERBOSE` | `true` for gateways | `RPX_VERBOSE=false` silences the gateway's TLS and routing diagnostics. |
-| `RPX_UPSTREAM_TIMEOUT` | off | Seconds of upstream inactivity before a request answers `504`; resets on every byte. |
+| `RPX_UPSTREAM_TIMEOUT` | off | Seconds a request may go without hearing from the upstream: the wait for the response headers (→ `504`) or any silent gap in the body (→ the response is cut off). Counted per request from when it is sent, reset by every upstream byte, never by how long the pooled connection has been open. |
 | `RPX_MAX_UPSTREAM_CONNS` | `256` | Cap on pooled keep-alive connections per upstream host. |
 | `RPX_MAX_QUEUED` / `RPX_QUEUE_WAIT_MS` | pool defaults | Depth and wait bound of the per-upstream request queue. |
 | `RPX_MAX_WS_PENDING_BYTES` | pool default | Backpressure limit for a proxied WebSocket. |

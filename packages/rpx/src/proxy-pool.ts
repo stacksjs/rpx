@@ -99,9 +99,17 @@ function checkoutIdleMs(): number {
  * Upstream inactivity timeout in seconds, from `RPX_UPSTREAM_TIMEOUT`. `0`
  * (the default) disables it — rpx commonly fronts dev servers doing SSE/HMR/
  * long-poll, where an inactivity timeout would sever legitimately-quiet streams.
- * The timer resets on every byte, so a streaming response that emits data
- * periodically never trips it; only a fully-stalled upstream does. Set a value
- * (e.g. `RPX_UPSTREAM_TIMEOUT=60`) in production to bound hung upstreams.
+ * Set a value (e.g. `RPX_UPSTREAM_TIMEOUT=60`) in production to bound hung
+ * upstreams.
+ *
+ * It bounds how long *one request* goes without hearing from the upstream: the
+ * clock starts when the request is written and restarts on every upstream byte,
+ * so it caps the wait for the response headers and any silent gap in the body,
+ * and a streaming response that emits data periodically never trips it. Time
+ * spent waiting on a slow *client* does not count, and it stops when the
+ * connection is released. See {@link Conn.armUpstreamTimer}: Bun's
+ * `socket.timeout()` is a deadline from when it is set rather than an
+ * inactivity timer, so it must not be used for this (stacksjs/rpx#2277).
  */
 function upstreamTimeoutSeconds(): number {
   const v = Number.parseInt(process.env.RPX_UPSTREAM_TIMEOUT ?? '', 10)
@@ -217,6 +225,11 @@ class Conn {
   /** Epoch ms of the last I/O on this connection while checked out — drives the
    *  checked-out reclaim (a stuck conn whose client vanished sees no I/O). */
   lastActivityAt = 0
+  /** Epoch ms of the last byte from the upstream, or of when rpx last started
+   *  waiting on it — drives the per-request `RPX_UPSTREAM_TIMEOUT` bound. */
+  private upstreamActivityAt = 0
+  /** Pending upstream-inactivity check for the in-flight request, if armed. */
+  private upstreamTimer: ReturnType<typeof setTimeout> | null = null
   /** Resolves the in-flight reader when new bytes arrive or the socket closes. */
   private waiter: (() => void) | null = null
   /** Resolves the in-flight writer when the socket's send buffer drains. */
@@ -230,8 +243,51 @@ class Conn {
       if (this.closed)
         throw STALE
       // Send buffer full — wait for drain before writing the remainder.
+      this.upstreamActivityAt = Date.now() // the upstream owes us progress from now
       await new Promise<void>((resolve) => { this.drainWaiter = resolve })
       off += socket.write(bytes.subarray(off))
+    }
+  }
+
+  /**
+   * Start the upstream inactivity bound for the request about to be written on
+   * this connection. It fails the request only while rpx is actually blocked on
+   * the upstream (a reader waiting for bytes, or a writer waiting for it to read
+   * the request) and has heard nothing for `ms`. Unread bytes held up by a slow
+   * client, including a socket paused for backpressure, are never blamed on the
+   * upstream.
+   *
+   * Rather than resetting a timer per byte (timer churn on the hot path), one
+   * timer checks {@link upstreamActivityAt} when it fires and re-arms for the
+   * remaining time. Cleared on release/close, so an idle pooled socket never
+   * carries it into its next request.
+   */
+  armUpstreamTimer(ms: number): void {
+    this.clearUpstreamTimer()
+    if (ms <= 0)
+      return
+    this.upstreamActivityAt = Date.now()
+    const check = (): void => {
+      this.upstreamTimer = null
+      if (this.closed)
+        return
+      const waitingOnUpstream = this.waiter !== null || this.drainWaiter !== null
+      const quiet = Date.now() - this.upstreamActivityAt
+      if (waitingOnUpstream && quiet >= ms) {
+        this.markTimedOut()
+        return
+      }
+      this.upstreamTimer = setTimeout(check, waitingOnUpstream ? ms - quiet : ms)
+      this.upstreamTimer.unref?.()
+    }
+    this.upstreamTimer = setTimeout(check, ms)
+    this.upstreamTimer.unref?.()
+  }
+
+  clearUpstreamTimer(): void {
+    if (this.upstreamTimer) {
+      clearTimeout(this.upstreamTimer)
+      this.upstreamTimer = null
     }
   }
 
@@ -258,13 +314,13 @@ class Conn {
       if (n < chunk.length) // bytes past the body (pipelined/over-long) — keep for finish logic
         this.appendToBuf(chunk.subarray(n))
       this.maybePause()
-      this.lastActivityAt = Date.now()
+      this.lastActivityAt = this.upstreamActivityAt = Date.now()
       this.wake()
       return
     }
     this.appendToBuf(chunk)
     this.maybePause()
-    this.lastActivityAt = Date.now()
+    this.lastActivityAt = this.upstreamActivityAt = Date.now()
     this.wake()
   }
 
@@ -318,6 +374,7 @@ class Conn {
 
   markClosed(): void {
     this.closed = true
+    this.clearUpstreamTimer()
     // Release both a pending reader and a pending writer — neither can make
     // progress on a closed socket.
     this.wake()
@@ -349,6 +406,7 @@ class Conn {
   waitForData(seen: number): Promise<void> {
     if (this.len > seen || this.closed)
       return Promise.resolve()
+    this.upstreamActivityAt = Date.now() // the upstream owes us bytes from now
     return new Promise<void>((resolve) => { this.waiter = resolve })
   }
 
@@ -356,6 +414,7 @@ class Conn {
   waitForBody(): Promise<void> {
     if ((this.bodyQueue !== null && this.bodyQueue.length > 0) || this.closed)
       return Promise.resolve()
+    this.upstreamActivityAt = Date.now() // the upstream owes us bytes from now
     return new Promise<void>((resolve) => { this.waiter = resolve })
   }
 
@@ -375,6 +434,7 @@ class Conn {
 
   destroy(): void {
     this.closed = true
+    this.clearUpstreamTimer()
     try { this.socket?.end() }
     catch { /* already gone */ }
     this.socket = null
@@ -412,6 +472,8 @@ class UpstreamPool {
   private readonly checkoutIdleMs = checkoutIdleMs()
   /** Currently checked-out connections — watched by the sweeper for stuck slots. */
   private readonly inUse = new Set<Conn>()
+  /** Per-request upstream inactivity bound in ms; `0` disables (see {@link upstreamTimeoutSeconds}). */
+  readonly upstreamTimeoutMs = upstreamTimeoutSeconds() * 1000
 
   constructor(private host: string, private port: number, private maxTotal: number, private readonly key: string = '') {
     this.maxWaiters = maxQueued(maxTotal)
@@ -439,20 +501,16 @@ class UpstreamPool {
         end: () => conn.markClosed(),
         error: () => conn.markClosed(),
         connectError: () => conn.markClosed(),
-        timeout: () => conn.markTimedOut(),
       },
     }).then((socket) => {
-      const s = socket as unknown as {
-        setNoDelay?: (v: boolean) => void
-        timeout?: (seconds: number) => void
-      }
+      const s = socket as unknown as { setNoDelay?: (v: boolean) => void }
       // Disable Nagle: proxy writes a complete request in one shot and wants it
       // on the wire immediately, not coalesced.
       s.setNoDelay?.(true)
-      // Bound a fully-stalled upstream (opt-in; resets on every byte).
-      const t = upstreamTimeoutSeconds()
-      if (t > 0)
-        s.timeout?.(t)
+      // No socket.timeout() here: in Bun it is a deadline from when it is set,
+      // not an inactivity timer, so arming it at dial 504'd any request still in
+      // flight once the pooled socket got old enough (stacksjs/rpx#2277). The
+      // upstream timeout is armed per request instead (Conn.armUpstreamTimer).
       conn.socket = socket as unknown as import('bun').Socket<undefined>
       return conn
     })
@@ -541,6 +599,7 @@ class UpstreamPool {
   /** Hand a healthy connection to the next waiter, or return it to the idle set. */
   release(conn: Conn): void {
     this.inUse.delete(conn) // no longer checked out (may be re-tracked below if reused)
+    conn.clearUpstreamTimer() // the request is done; the next one arms its own
     if (conn.closed) {
       this.open--
       this.wakeWaiter()
@@ -865,6 +924,7 @@ export async function proxyViaPool(reqOpts: PoolRequest): Promise<Response> {
     }
 
     try {
+      conn.armUpstreamTimer(pool.upstreamTimeoutMs)
       const written = conn.socket!.write(payload)
       if (written < payload.length)
         await conn.writeAll(payload.subarray(written))

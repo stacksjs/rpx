@@ -281,3 +281,80 @@ describe('pooled transport — failure modes', () => {
     }
   }, 10_000)
 })
+
+/** Run `fn` with `RPX_UPSTREAM_TIMEOUT` set, restoring the previous value after. */
+async function withUpstreamTimeout(seconds: string, fn: () => Promise<void>): Promise<void> {
+  const prev = process.env.RPX_UPSTREAM_TIMEOUT
+  process.env.RPX_UPSTREAM_TIMEOUT = seconds
+  try {
+    await fn()
+  }
+  finally {
+    if (prev === undefined)
+      delete process.env.RPX_UPSTREAM_TIMEOUT
+    else
+      process.env.RPX_UPSTREAM_TIMEOUT = prev
+  }
+}
+
+// stacksjs/rpx#2277: the timeout used to be a single deadline counted from when
+// the pooled socket was dialed, so a busy reused socket 504'd mid-request once it
+// was older than the limit, however fast its current request was.
+describe('pooled transport — RPX_UPSTREAM_TIMEOUT measures inactivity, not socket age', () => {
+  it('never 504s a reused socket whose requests each answer under the limit', async () => {
+    await withUpstreamTimeout('1', async () => {
+      const o = origin((s) => {
+        setTimeout(() => s.write('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'), 700)
+      })
+      // 9 × 700 ms ≈ 6.3 s on one socket: far past the 1 s limit in total (and past
+      // the few seconds Bun's coarse socket timer takes to fire), yet each
+      // request's own wait is under it.
+      for (let i = 0; i < 9; i++) {
+        const res = await call(o.hostPort)
+        expect(res.status).toBe(200)
+        expect(await res.text()).toBe('ok')
+      }
+      expect(o.conns()).toBe(1) // every request really did reuse the same socket
+    })
+  }, 15_000)
+
+  it('keeps a body that trickles bytes alive past the limit', async () => {
+    await withUpstreamTimeout('1', async () => {
+      const o = origin(async (s) => {
+        s.write('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n')
+        for (let i = 0; i < 5; i++) {
+          await sleep(400)
+          s.write('1\r\nx\r\n')
+        }
+        s.write('0\r\n\r\n')
+      })
+      const res = await call(o.hostPort)
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('xxxxx') // 2 s in all, never 1 s quiet
+    })
+  }, 10_000)
+
+  it('does not blame the upstream for a client that reads the body late', async () => {
+    await withUpstreamTimeout('1', async () => {
+      const o = origin((s) => {
+        s.write('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n')
+      })
+      const res = await call(o.hostPort)
+      await sleep(1500) // the whole body is sent; only the client is slow
+      expect(await res.text()).toBe('hello')
+      expect((await call(o.hostPort)).status).toBe(200)
+      expect(o.conns()).toBe(1) // the socket was not torn down as "timed out"
+    })
+  }, 10_000)
+
+  it('still fails a body that goes quiet past the limit', async () => {
+    await withUpstreamTimeout('1', async () => {
+      const o = origin((s) => {
+        s.write('HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort') // then stall
+      })
+      const res = await call(o.hostPort)
+      expect(res.status).toBe(200)
+      await expect(res.text()).rejects.toBeDefined()
+    })
+  }, 10_000)
+})

@@ -576,8 +576,9 @@ churn. The payoff is staying flat under load where a `fetch` proxy falls over:
 (At 400 concurrent the pool held **10** `TIME_WAIT` sockets vs fetch's ~11,000.)
 The pool declines what it can't cleanly handle — streaming/large uploads,
 `Expect:`, protocol upgrades — falling back to `fetch()` transparently. Optional
-`RPX_UPSTREAM_TIMEOUT=<seconds>` (default off) bounds a stalled upstream → `504`,
-resetting on every byte so it never severs a live stream (SSE/HMR/long-poll).
+`RPX_UPSTREAM_TIMEOUT=<seconds>` (default off) bounds a stalled upstream → `504`.
+It is counted per request and reset by every upstream byte, so it never severs a
+live stream (SSE/HMR/long-poll) or a busy reused connection.
 
 See [`bench/README.md`](./packages/rpx/bench/README.md) and
 [`bench/FINDINGS.md`](./packages/rpx/bench/FINDINGS.md) for methodology, the
