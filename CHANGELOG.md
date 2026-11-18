@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.62...v0.11.63)
+
+## 🐛 Bug Fixes
+
+- **proxy-pool**: time RPX_UPSTREAM_TIMEOUT per request, not from dial ([51aa789](https://github.com/stacksjs/rpx/commit/51aa789)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#2277](https://github.com/stacksjs/rpx/issues/2277))
+
+## 🔧 Chores
+
+- release v0.11.63 ([6aa30ce](https://github.com/stacksjs/rpx/commit/6aa30ce)) _(by Chris Breuer <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris Breuer <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.61...v0.11.62)
 
 ## 🐛 Bug Fixes
