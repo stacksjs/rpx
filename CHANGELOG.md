@@ -1,5 +1,11 @@
 # Changelog
 
+[Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.63...v0.11.64)
+
+## 🐛 Bug Fixes
+
+- **proxy**: strip upstream connection-scoped response headers ([6411a7b](https://github.com/stacksjs/rpx/commit/6411a7b9))
+
 [Compare changes](https://github.com/stacksjs/rpx/compare/v0.11.62...v0.11.63)
 
 ## 🐛 Bug Fixes
