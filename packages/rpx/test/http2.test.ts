@@ -58,6 +58,7 @@ describe('HTTP/2 on the shared TLS listener (RPX_HTTP2)', () => {
   let upstream: Server
   let proxy: Server
   let plainProxy: Server
+  const eventRelease = Promise.withResolvers<void>()
   const original = process.env.RPX_HTTP2
 
   beforeAll(async () => {
@@ -78,6 +79,18 @@ describe('HTTP/2 on the shared TLS listener (RPX_HTTP2)', () => {
         const url = new URL(req.url)
         if (url.pathname === '/ws')
           return server.upgrade(req, { data: undefined }) ? undefined : new Response('expected websocket upgrade', { status: 426 })
+        if (url.pathname === '/open-events') {
+          const headers = new Headers({ 'content-type': 'text/event-stream', 'connection': 'x-hop', 'x-hop': 'only for the upstream link' })
+          headers.append('set-cookie', 'stream=1; Path=/')
+          headers.append('set-cookie', 'session=2; Path=/')
+          return new Response(new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: ready\n\n'))
+              await eventRelease.promise
+              controller.close()
+            },
+          }), { headers })
+        }
         if (url.pathname === '/events') {
           let sent = 0
           return new Response(new ReadableStream({
@@ -94,12 +107,12 @@ describe('HTTP/2 on the shared TLS listener (RPX_HTTP2)', () => {
         if (url.pathname === '/upload')
           return req.text().then(text => Response.json({ length: text.length }))
         if (url.pathname === '/cookies') {
-          const headers = new Headers({ 'connection': 'keep-alive', 'keep-alive': 'timeout=5' })
+          const headers = new Headers({ 'connection': 'keep-alive, X-Hop', 'keep-alive': 'timeout=5', 'x-hop': 'only for the upstream link' })
           headers.append('set-cookie', 'a=1; Path=/')
           headers.append('set-cookie', 'b=2; Path=/')
           return new Response('cookies', { headers })
         }
-        return Response.json({ host: req.headers.get('host'), forwardedHost: req.headers.get('x-forwarded-host'), method: req.method, path: url.pathname })
+        return Response.json({ host: req.headers.get('host'), forwardedHost: req.headers.get('x-forwarded-host'), method: req.method, path: url.pathname, peer: req.headers.get('x-forwarded-for') })
       },
       websocket: {
         message(ws: ServerWebSocket, msg) {
@@ -166,6 +179,50 @@ describe('HTTP/2 on the shared TLS listener (RPX_HTTP2)', () => {
       // HTTP/2 forbids connection-specific headers; the proxy must not pass them on.
       expect(cookies.headers.connection).toBeUndefined()
       expect(cookies.headers['keep-alive']).toBeUndefined()
+      expect(cookies.headers['x-hop']).toBeUndefined()
+    }
+    finally {
+      session.close()
+    }
+  })
+
+  it('delivers the first HTTP/2 event through the fetch fallback while the upstream remains open', async () => {
+    const session = http2.connect(`https://${HOSTS[0]}:${proxy.port}`, {
+      createConnection: () => tls.connect({ host: '127.0.0.1', port: proxy.port as number, servername: HOSTS[0], ALPNProtocols: ['h2'], rejectUnauthorized: false }),
+    })
+    const stream = session.request({ ':path': '/open-events', ':authority': HOSTS[0], 'accept': 'text/event-stream', 'accept-encoding': 'gzip' })
+    try {
+      const response = new Promise<http2.IncomingHttpHeaders>(resolve => stream.once('response', resolve))
+      const chunk = new Promise<string>((resolve, reject) => {
+        stream.once('data', data => resolve(data.toString()))
+        stream.once('error', reject)
+        stream.once('end', () => reject(new Error('Event stream ended before the first event')))
+      })
+      stream.end()
+      const [headers, first] = await Promise.race([
+        Promise.all([response, chunk]),
+        Bun.sleep(2_000).then(() => { throw new Error('Event stream did not send its first event') }),
+      ])
+      expect(first).toBe('data: ready\n\n')
+      expect(headers['content-encoding']).toBeUndefined()
+      expect(headers.connection).toBeUndefined()
+      expect(headers['x-hop']).toBeUndefined()
+      expect(headers['set-cookie']).toEqual(['stream=1; Path=/', 'session=2; Path=/'])
+    }
+    finally {
+      eventRelease.resolve()
+      stream.close()
+      session.close()
+    }
+  })
+
+  it('forwards the real IPv6 socket peer on HTTP/2', async () => {
+    const session = http2.connect(`https://${HOSTS[0]}:${proxy.port}`, {
+      createConnection: () => tls.connect({ host: '::1', port: proxy.port as number, servername: HOSTS[0], ALPNProtocols: ['h2'], rejectUnauthorized: false }),
+    })
+    try {
+      const answer = await h2Request(session, { ':path': '/peer', ':authority': HOSTS[0], 'x-forwarded-for': '198.51.100.5' })
+      expect(JSON.parse(answer.body).peer).toBe('::1')
     }
     finally {
       session.close()

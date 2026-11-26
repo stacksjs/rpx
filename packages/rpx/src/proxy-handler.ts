@@ -23,7 +23,7 @@ import type { PathRewrite } from './types'
 import { enforceBasicAuth } from './auth'
 import { applyImgxTransform } from './imgx'
 import { markFailure, markSuccess, selectUpstream } from './load-balancer'
-import { FALLBACK, POOL_BUSY, proxyViaPool, TIMEOUT } from './proxy-pool'
+import { connectionOptions, FALLBACK, POOL_BUSY, proxyViaPool, TIMEOUT } from './proxy-pool'
 import { buildRedirectLocation } from './redirect'
 import { serveStaticFile } from './static-files'
 import { debugLog, resolvePathRewrite } from './utils'
@@ -206,6 +206,17 @@ const HOP_BY_HOP = new Set([
   'sec-websocket-version',
   'sec-websocket-extensions',
 ])
+
+/** Strip upstream connection metadata before sending a fetch fallback response. */
+function forwardFetchResponse(response: Response): Response {
+  const headers = new Headers(response.headers)
+  for (const field of connectionOptions(headers.get('connection') ?? ''))
+    headers.delete(field)
+  for (const field of HOP_BY_HOP)
+    headers.delete(field)
+  headers.delete('proxy-connection')
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
 
 const COMPRESSIBLE_RESPONSE_TYPES = [
   'text/',
@@ -588,7 +599,7 @@ export function createProxyFetchHandler(getRoute: GetRoute, verbose?: boolean, o
           })
           if (pool)
             markSuccess(pool, upstream)
-          return await applyImgxTransform(req, pathname, search, route.imgx, res, verbose)
+          return await applyImgxTransform(req, pathname, search, route.imgx, forwardFetchResponse(res), verbose)
         }
         catch (fetchErr) {
           debugLog('request', `Proxy error for ${hostname}: ${fetchErr}`, verbose)

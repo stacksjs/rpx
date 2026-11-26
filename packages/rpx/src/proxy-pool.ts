@@ -194,6 +194,11 @@ const STRIP_REQUEST = new Set([
   'x-real-ip',
 ])
 
+/** Parse the valid, case-insensitive header names nominated by Connection. */
+export function connectionOptions(value: string): string[] {
+  return value.split(',').map(option => option.trim().toLowerCase()).filter(option => /^[!#$%&'*+.^_`|~\w-]+$/.test(option))
+}
+
 /**
  * One pooled upstream socket. A connection serves a single request at a time
  * (HTTP/1.1, no pipelining); it is checked out of the pool for the duration of a
@@ -745,6 +750,7 @@ function parseHead(buf: Uint8Array, start: number, headerEnd: number): ParsedHea
   let chunked = false
   let closeConn = http10
   let keepAliveSeen = false
+  let scopedHeaders: Set<string> | undefined
   let malformed = false
 
   let pos = firstEol === -1 ? text.length : firstEol + 2
@@ -785,11 +791,23 @@ function parseHead(buf: Uint8Array, start: number, headerEnd: number): ParsedHea
         continue
       }
       if (lower === 'connection') {
-        const v = value.toLowerCase()
-        if (v.includes('close'))
+        const option = value.toLowerCase()
+        if (option === 'close') {
           closeConn = true
-        if (v.includes('keep-alive'))
+        }
+        else if (option === 'keep-alive') {
           keepAliveSeen = true
+        }
+        else {
+          for (const field of connectionOptions(option)) {
+            if (field === 'close')
+              closeConn = true
+            else if (field === 'keep-alive')
+              keepAliveSeen = true
+            else
+              (scopedHeaders ??= new Set()).add(field)
+          }
+        }
         continue
       }
       if (lower === 'keep-alive')
@@ -805,7 +823,15 @@ function parseHead(buf: Uint8Array, start: number, headerEnd: number): ParsedHea
   if (chunked && contentLength >= 0)
     contentLength = -1
 
-  return { status, headerEnd, headers, contentLength, chunked, closeConn, malformed }
+  return {
+    status,
+    headerEnd,
+    headers: scopedHeaders ? headers.filter(([name]) => !scopedHeaders.has(name.toLowerCase())) : headers,
+    contentLength,
+    chunked,
+    closeConn,
+    malformed,
+  }
 }
 
 /**
